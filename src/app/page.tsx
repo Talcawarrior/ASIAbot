@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   AreaChart,
   Area,
@@ -10,6 +10,12 @@ import {
   Tooltip,
   BarChart,
   Bar,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 import {
@@ -33,20 +39,47 @@ import {
   openPositions,
   activityFeed,
   edgeDistribution,
+  tradeHistory,
+  modelScores,
+  modelComparisonData,
+  slippageData,
+  slippageSummary,
   type ActivityItem,
+  type TradeHistoryEntry,
+  type ModelScore,
+  type SlippageEntry,
 } from "@/lib/mock-data";
-import { TrendingUp, Moon, Wallet, Activity, Target, BarChart3 } from "lucide-react";
+import {
+  TrendingUp,
+  TrendingDown,
+  Moon,
+  Wallet,
+  Activity,
+  Target,
+  BarChart3,
+  History,
+  Brain,
+  ArrowRightLeft,
+  Filter,
+  Search,
+  ArrowUpRight,
+  ArrowDownRight,
+  Minus,
+} from "lucide-react";
 
 // ---- Color constants ----
 const TEAL = "#20B2AA";
 const TEAL_LIGHT = "rgba(32, 178, 170, 0.15)";
 const RED = "#FF6B6B";
 const RED_LIGHT = "rgba(255, 107, 107, 0.15)";
+const GREEN = "#22C55E";
+const GREEN_LIGHT = "rgba(34, 197, 94, 0.15)";
 const TEXT_PRIMARY = "#374151";
 const TEXT_MUTED = "#9CA3AF";
 const BORDER = "#E5E7EB";
 
-// ---- Activity dot color map ----
+const MODEL_COLORS = ["#20B2AA", "#3B82F6", "#8B5CF6", "#F59E0B", "#EF4444", "#EC4899", "#06B6D4", "#6B7280"];
+
 const dotColorMap: Record<ActivityItem["color"], string> = {
   blue: "#3B82F6",
   purple: "#8B5CF6",
@@ -56,13 +89,32 @@ const dotColorMap: Record<ActivityItem["color"], string> = {
   red: "#FF6B6B",
 };
 
-// ---- Formatters ----
 function fmtUsd(v: number) {
   const sign = v >= 0 ? "+" : "";
   return `${sign}$${v.toFixed(2)}`;
 }
 
-// ---- Custom tooltip for portfolio chart ----
+// ---- Client-only wrapper ----
+function ClientOnly({ children }: { children: React.ReactNode }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) return <div className="w-full flex items-center justify-center" style={{ minHeight: 200 }}><span className="text-xs text-gray-400">Yükleniyor...</span></div>;
+  return <>{children}</>;
+}
+
+// ---- Tab type ----
+type TabId = "overview" | "trades" | "models" | "slippage";
+
+const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+  { id: "overview", label: "Genel Bakış", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+  { id: "trades", label: "İşlem Geçmişi", icon: <History className="h-3.5 w-3.5" /> },
+  { id: "models", label: "Model Performansı", icon: <Brain className="h-3.5 w-3.5" /> },
+  { id: "slippage", label: "Slippage", icon: <ArrowRightLeft className="h-3.5 w-3.5" /> },
+];
+
+// ==========================================
+// Tooltip Components
+// ==========================================
 function PortfolioTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
@@ -75,131 +127,57 @@ function PortfolioTooltip({ active, payload, label }: { active?: boolean; payloa
   );
 }
 
-// ---- Custom tooltip for edge chart ----
 function EdgeTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
       <p className="font-medium text-gray-500 mb-1">Edge: {label}</p>
-      <p className="font-mono font-semibold" style={{ color: "#22C55E" }}>
-        {payload[0].value} trade
-      </p>
+      <p className="font-mono font-semibold" style={{ color: GREEN }}>{payload[0].value} trade</p>
     </div>
   );
 }
 
-// ---- Client-only wrapper for Recharts ----
-function ClientOnly({ children }: { children: React.ReactNode }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
-  if (!mounted) {
-    return (
-      <div className="w-full flex items-center justify-center" style={{ minHeight: 200 }}>
-        <span className="text-xs text-gray-400">Yükleniyor...</span>
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
+// ==========================================
+// OVERVIEW TAB
+// ==========================================
+function OverviewTab() {
+  const winLossData = [
+    { name: "Kazanan", value: kpiData.wins, color: TEAL },
+    { name: "Kaybeden", value: kpiData.losses, color: RED },
+  ];
 
-// ==========================================
-// Main Dashboard
-// ==========================================
-export default function DashboardPage() {
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50/50" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
-      {/* ---- HEADER ---- */}
-      <header className="sticky top-0 z-50 bg-white border-b" style={{ borderColor: BORDER }}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold tracking-tight" style={{ color: TEXT_PRIMARY }}>
-              ASIAbot
-            </h1>
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-              </span>
-              <span className="text-xs font-medium text-green-600">ÇALIŞIYOR</span>
-            </div>
-          </div>
-          <button className="p-2 rounded-md hover:bg-gray-100 transition-colors" aria-label="Dark mode">
-            <Moon className="h-4 w-4 text-gray-500" />
-          </button>
-        </div>
-      </header>
-
-      {/* ---- MAIN CONTENT ---- */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-        {/* KPI Cards */}
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Portfolio Value */}
-          <Card className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+    <div className="space-y-6">
+      {/* KPI Cards */}
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: "Portföy Değeri", value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, icon: <Wallet className="h-4 w-4" />, color: TEAL, sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}` },
+          { label: "Bugünkü PnL", value: `▲ ${fmtUsd(kpiData.dailyPnl)}`, icon: <TrendingUp className="h-4 w-4" />, color: "#16A34A", sub: "" },
+          { label: "Açık Bahisler", value: `${kpiData.openPositions}`, icon: <Activity className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
+          { label: "Win Rate", value: `%${kpiData.winRate}`, icon: <Target className="h-4 w-4" />, color: TEXT_PRIMARY, sub: `${kpiData.wins}W / ${kpiData.losses}L` },
+          { label: "Sharpe Ratio", value: kpiData.sharpeRatio.toFixed(2), icon: <TrendingUp className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
+          { label: "Max Drawdown", value: `%${kpiData.maxDrawdown}`, icon: <TrendingDown className="h-4 w-4" />, color: RED, sub: "" },
+        ].map((kpi) => (
+          <Card key={kpi.label} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
             <CardContent className="px-4 pb-0 pt-0">
-              <p className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Portföy Değeri</p>
+              <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
               <div className="flex items-center gap-2 mt-1">
-                <Wallet className="h-4 w-4" style={{ color: TEAL }} />
-                <span className="text-xl font-bold tabular-nums" style={{ color: TEAL }}>
-                  ${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-                </span>
+                <span style={{ color: kpi.color }}>{kpi.icon}</span>
+                <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
               </div>
+              {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
             </CardContent>
           </Card>
+        ))}
+      </section>
 
-          {/* Daily PnL */}
-          <Card className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-            <CardContent className="px-4 pb-0 pt-0">
-              <p className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Bugünkü PnL</p>
-              <div className="flex items-center gap-2 mt-1">
-                <TrendingUp className="h-4 w-4 text-green-500" />
-                <span className="text-xl font-bold tabular-nums text-green-600">
-                  ▲ {fmtUsd(kpiData.dailyPnl)}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Open Positions */}
-          <Card className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-            <CardContent className="px-4 pb-0 pt-0">
-              <p className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Açık Bahisler</p>
-              <div className="flex items-center gap-2 mt-1">
-                <Activity className="h-4 w-4" style={{ color: TEXT_PRIMARY }} />
-                <span className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>
-                  {kpiData.openPositions}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Win Rate */}
-          <Card className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-            <CardContent className="px-4 pb-0 pt-0">
-              <p className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Win Rate</p>
-              <div className="flex items-center gap-2 mt-1">
-                <Target className="h-4 w-4" style={{ color: TEXT_PRIMARY }} />
-                <span className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>
-                  {kpiData.winRate}%
-                </span>
-                <Badge
-                  className="text-[10px] px-1.5 py-0 h-5 font-semibold"
-                  style={{ backgroundColor: TEAL_LIGHT, color: TEAL, border: `1px solid ${TEAL}33` }}
-                >
-                  {kpiData.winRateLabel}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Portfolio Value Chart */}
-        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+      {/* Portfolio Chart + Win/Loss Donut */}
+      <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
             <div className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" style={{ color: TEXT_MUTED }} />
-              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
-                Portföy Değeri (30 Gün)
-              </CardTitle>
+              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Portföy Değeri (30 Gün)</CardTitle>
             </div>
           </CardHeader>
           <CardContent className="px-4">
@@ -214,30 +192,10 @@ export default function DashboardPage() {
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fontSize: 11, fill: TEXT_MUTED }}
-                      axisLine={{ stroke: BORDER }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      domain={[9200, 10100]}
-                      tick={{ fontSize: 11, fill: TEXT_MUTED }}
-                      axisLine={false}
-                      tickLine={false}
-                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`}
-                      width={45}
-                    />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                    <YAxis domain={[9200, 10100]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} width={45} />
                     <Tooltip content={<PortfolioTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="value"
-                      stroke={TEAL}
-                      strokeWidth={2}
-                      fill="url(#portfolioGradient)"
-                      dot={false}
-                      activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }}
-                    />
+                    <Area type="monotone" dataKey="value" stroke={TEAL} strokeWidth={2} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }} />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -245,16 +203,46 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        {/* Open Positions + Activity Feed */}
-        <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* Open Positions Table — 3/5 */}
-          <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
-            <CardHeader className="pb-0 pt-0 px-5">
-              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
-                Açık Pozisyonlar
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-3">
+        {/* Win/Loss Donut */}
+        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Win / Loss</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 flex flex-col items-center justify-center">
+            <ClientOnly>
+              <div style={{ width: 180, height: 180 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={winLossData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0}>
+                      {winLossData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </ClientOnly>
+            <div className="flex gap-6 mt-3 text-xs">
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TEAL }} />
+                <span style={{ color: TEXT_MUTED }}>Kazanan: <b style={{ color: TEXT_PRIMARY }}>{kpiData.wins}</b></span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: RED }} />
+                <span style={{ color: TEXT_MUTED }}>Kaybeden: <b style={{ color: TEXT_PRIMARY }}>{kpiData.losses}</b></span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Open Positions + Activity Feed */}
+      <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Açık Pozisyonlar</CardTitle>
+          </CardHeader>
+          <CardContent className="px-3">
+            <div className="max-h-[380px] overflow-y-auto custom-scroll">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -270,108 +258,542 @@ export default function DashboardPage() {
                 <TableBody>
                   {openPositions.map((pos) => (
                     <TableRow key={pos.id}>
-                      <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>
-                        {pos.city}
-                      </TableCell>
+                      <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{pos.city}</TableCell>
                       <TableCell>
-                        <Badge
-                          className="text-[10px] font-bold px-2 py-0.5 h-5"
-                          style={{
-                            backgroundColor: pos.side === "YES" ? TEAL_LIGHT : RED_LIGHT,
-                            color: pos.side === "YES" ? TEAL : RED,
-                            border: `1px solid ${pos.side === "YES" ? TEAL : RED}33`,
-                          }}
-                        >
-                          {pos.side}
-                        </Badge>
+                        <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: pos.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: pos.side === "YES" ? TEAL : RED, border: `1px solid ${pos.side === "YES" ? TEAL : RED}33` }}>{pos.side}</Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>
-                        {pos.entryPrice.toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>
-                        {pos.currentPrice.toFixed(2)}
-                      </TableCell>
-                      <TableCell
-                        className="text-right font-mono text-sm font-semibold tabular-nums"
-                        style={{ color: pos.pnl >= 0 ? TEAL : RED }}
-                      >
-                        {fmtUsd(pos.pnl)}
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>
-                        {pos.edge}%
-                      </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums" style={{ color: TEXT_MUTED }}>
-                        {pos.timeLeft}
-                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.entryPrice.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.currentPrice.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
+                      <TableCell className="text-right text-sm tabular-nums" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-
-          {/* Activity Feed — 2/5 */}
-          <Card className="lg:col-span-2 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
-            <CardHeader className="pb-0 pt-0 px-5">
-              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
-                Aktivite Akışı
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="px-4">
-              <div className="space-y-0 max-h-[340px] overflow-y-auto pr-1 custom-scroll">
-                {activityFeed.map((item) => (
-                  <div key={item.id} className="flex gap-3 py-2.5 border-b last:border-0" style={{ borderColor: `${BORDER}80` }}>
-                    <div className="flex flex-col items-center gap-1 pt-1 shrink-0">
-                      <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: dotColorMap[item.color] }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs leading-relaxed" style={{ color: TEXT_PRIMARY }}>
-                        {item.message}
-                      </p>
-                    </div>
-                    <span className="text-[10px] tabular-nums shrink-0 pt-0.5" style={{ color: TEXT_MUTED }}>
-                      {item.time}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Edge Distribution Chart */}
-        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
-          <CardHeader className="pb-0 pt-0 px-5">
-            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
-              Edge Dağılımı
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="px-4">
-            <ClientOnly>
-              <div className="w-full" style={{ height: 220 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                    <XAxis
-                      dataKey="range"
-                      tick={{ fontSize: 11, fill: TEXT_MUTED }}
-                      axisLine={{ stroke: BORDER }}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11, fill: TEXT_MUTED }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={30}
-                    />
-                    <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                    <Bar dataKey="count" fill="#22C55E" radius={[4, 4, 0, 0]} barSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </ClientOnly>
+            </div>
           </CardContent>
         </Card>
+
+        <Card className="lg:col-span-2 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Aktivite Akışı</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4">
+            <div className="space-y-0 max-h-[380px] overflow-y-auto pr-1 custom-scroll">
+              {activityFeed.map((item) => (
+                <div key={item.id} className="flex gap-3 py-2.5 border-b last:border-0" style={{ borderColor: `${BORDER}80` }}>
+                  <div className="flex flex-col items-center gap-1 pt-1 shrink-0">
+                    <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: dotColorMap[item.color] }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs leading-relaxed" style={{ color: TEXT_PRIMARY }}>{item.message}</p>
+                  </div>
+                  <span className="text-[10px] tabular-nums shrink-0 pt-0.5" style={{ color: TEXT_MUTED }}>{item.time}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Edge Distribution */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4">
+          <ClientOnly>
+            <div className="w-full" style={{ height: 220 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+                  <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </ClientOnly>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==========================================
+// TRADE HISTORY TAB
+// ==========================================
+function TradesTab() {
+  const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS">("ALL");
+  const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"date" | "pnl" | "edge">("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const filtered = useMemo(() => {
+    let data = [...tradeHistory];
+    if (filterResult !== "ALL") data = data.filter((t) => t.result === filterResult);
+    if (filterSide !== "ALL") data = data.filter((t) => t.side === filterSide);
+    if (search) data = data.filter((t) => t.city.toLowerCase().includes(search.toLowerCase()) || t.strategy.toLowerCase().includes(search.toLowerCase()));
+    data.sort((a, b) => {
+      let cmp = 0;
+      if (sortBy === "date") cmp = 0; // already sorted
+      else if (sortBy === "pnl") cmp = a.pnl - b.pnl;
+      else if (sortBy === "edge") cmp = a.edge - b.edge;
+      return sortDir === "desc" ? -cmp : cmp;
+    });
+    return data;
+  }, [filterResult, filterSide, search, sortBy, sortDir]);
+
+  const totalPnl = filtered.reduce((s, t) => s + t.pnl, 0);
+  const winCount = filtered.filter((t) => t.result === "WIN").length;
+
+  function toggleSort(col: "date" | "pnl" | "edge") {
+    if (sortBy === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    else { setSortBy(col); setSortDir("desc"); }
+  }
+
+  const SortIcon = ({ col }: { col: "date" | "pnl" | "edge" }) => {
+    if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
+    return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Summary cards */}
+      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+          <CardContent className="px-4 pb-0 pt-0">
+            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam İşlem</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{filtered.length}</p>
+          </CardContent>
+        </Card>
+        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+          <CardContent className="px-4 pb-0 pt-0">
+            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Filtrelenmiş PnL</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: totalPnl >= 0 ? TEAL : RED }}>{fmtUsd(totalPnl)}</p>
+          </CardContent>
+        </Card>
+        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+          <CardContent className="px-4 pb-0 pt-0">
+            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Win Oranı (filtre)</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{filtered.length > 0 ? ((winCount / filtered.length) * 100).toFixed(1) : 0}%</p>
+          </CardContent>
+        </Card>
+        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+          <CardContent className="px-4 pb-0 pt-0">
+            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Edge</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{filtered.length > 0 ? (filtered.reduce((s, t) => s + t.edge, 0) / filtered.length).toFixed(1) : 0}%</p>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Filters */}
+      <Card className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+        <CardContent className="px-4 pt-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[180px] max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Şehir veya strateji ara..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-teal-300"
+                style={{ borderColor: BORDER, color: TEXT_PRIMARY }}
+              />
+            </div>
+            <div className="flex items-center gap-1.5">
+              <Filter className="h-3.5 w-3.5" style={{ color: TEXT_MUTED }} />
+              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Sonuç:</span>
+              {(["ALL", "WIN", "LOSS"] as const).map((v) => (
+                <button key={v} onClick={() => setFilterResult(v)}
+                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+                  style={{
+                    borderColor: filterResult === v ? TEAL : BORDER,
+                    backgroundColor: filterResult === v ? TEAL_LIGHT : "transparent",
+                    color: filterResult === v ? TEAL : TEXT_MUTED,
+                  }}>
+                  {v === "ALL" ? "Tümü" : v === "WIN" ? "Kazanan" : "Kaybeden"}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Taraf:</span>
+              {(["ALL", "YES", "NO"] as const).map((v) => (
+                <button key={v} onClick={() => setFilterSide(v)}
+                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+                  style={{
+                    borderColor: filterSide === v ? TEAL : BORDER,
+                    backgroundColor: filterSide === v ? TEAL_LIGHT : "transparent",
+                    color: filterSide === v ? TEAL : TEXT_MUTED,
+                  }}>
+                  {v === "ALL" ? "Tümü" : v}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Table */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
+            İşlem Geçmişi
+            <span className="ml-2 text-[11px] font-normal" style={{ color: TEXT_MUTED }}>({filtered.length} kayıt)</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-3">
+          <div className="max-h-[500px] overflow-y-auto custom-scroll">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("date")}>Tarih <SortIcon col="date" /></TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Taraf</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Çıkış</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL <SortIcon col="pnl" /></TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sonuç</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("edge")}>Edge <SortIcon col="edge" /></TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Süre</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Strateji</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filtered.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>{t.timestamp}</TableCell>
+                    <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{t.city}</TableCell>
+                    <TableCell>
+                      <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: t.side === "YES" ? TEAL : RED, border: `1px solid ${t.side === "YES" ? TEAL : RED}33` }}>{t.side}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.entryPrice.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.exitPrice.toFixed(2)}</TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: t.pnl >= 0 ? TEAL : RED }}>{fmtUsd(t.pnl)}</TableCell>
+                    <TableCell>
+                      <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.result === "WIN" ? GREEN_LIGHT : RED_LIGHT, color: t.result === "WIN" ? "#16A34A" : RED, border: `1px solid ${t.result === "WIN" ? "#16A34A" : RED}33` }}>
+                        {t.result === "WIN" ? "✓ WIN" : "✗ LOSS"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.edge}%</TableCell>
+                    <TableCell className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>{t.duration}</TableCell>
+                    <TableCell className="text-xs" style={{ color: TEXT_MUTED }}>{t.strategy}</TableCell>
+                  </TableRow>
+                ))}
+                {filtered.length === 0 && (
+                  <TableRow><TableCell colSpan={10} className="text-center py-8 text-sm" style={{ color: TEXT_MUTED }}>Filtreye uygun işlem bulunamadı.</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==========================================
+// MODEL PERFORMANCE TAB
+// ==========================================
+function ModelsTab() {
+  return (
+    <div className="space-y-6">
+      {/* Model Score Cards */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        {modelScores.map((m, i) => (
+          <Card key={m.name} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+            <CardContent className="px-4 pb-0 pt-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: MODEL_COLORS[i] }} />
+                  <p className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>{m.name}</p>
+                </div>
+                {m.trend === "up" && <ArrowUpRight className="h-4 w-4 text-green-500" />}
+                {m.trend === "down" && <ArrowDownRight className="h-4 w-4 text-red-500" />}
+                {m.trend === "stable" && <Minus className="h-4 w-4" style={{ color: TEXT_MUTED }} />}
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Brier Score</p>
+                  <p className="text-sm font-bold font-mono tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
+                    {m.brierScore.toFixed(3)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Accuracy</p>
+                  <p className="text-sm font-bold font-mono tabular-nums" style={{ color: TEXT_PRIMARY }}>
+                    %{m.accuracy.toFixed(1)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Ağırlık</p>
+                  <p className="text-sm font-bold font-mono tabular-nums" style={{ color: TEXT_PRIMARY }}>%{m.weight}</p>
+                </div>
+                <div>
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Örnek</p>
+                  <p className="text-sm font-bold font-mono tabular-nums" style={{ color: TEXT_MUTED }}>{m.sampleCount}</p>
+                </div>
+              </div>
+              {/* Weight bar */}
+              <div className="mt-2 w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${m.weight}%`, backgroundColor: MODEL_COLORS[i] }} />
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      {/* Brier Score Comparison Chart */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <div className="flex items-center gap-2">
+            <Brain className="h-4 w-4" style={{ color: TEXT_MUTED }} />
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Brier Score Zaman İçinde (Düşük = İyi)</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4">
+          <ClientOnly>
+            <div className="w-full" style={{ height: 340 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={modelComparisonData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                  <YAxis domain={[0.12, 0.24]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => v.toFixed(2)} width={40} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                  {modelScores.map((m, i) => (
+                    <Line key={m.name} type="monotone" dataKey={m.name.toLowerCase()} stroke={MODEL_COLORS[i]} strokeWidth={m.weight >= 18 ? 2.5 : 1.5} dot={false} activeDot={{ r: 3 }} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </ClientOnly>
+        </CardContent>
+      </Card>
+
+      {/* Detailed Comparison Table */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Model Karşılaştırma Tablosu</CardTitle>
+        </CardHeader>
+        <CardContent className="px-3">
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Model</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Brier Score</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Accuracy</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Ağırlık</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Örnek Sayısı</TableHead>
+                <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Trend</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {modelScores
+                .sort((a, b) => a.brierScore - b.brierScore)
+                .map((m, idx) => (
+                <TableRow key={m.name}>
+                  <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-bold tabular-nums w-4" style={{ color: TEXT_MUTED }}>#{idx + 1}</span>
+                      <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: MODEL_COLORS[modelScores.findIndex((ms) => ms.name === m.name)] }} />
+                      {m.name}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
+                    {m.brierScore.toFixed(3)}
+                  </TableCell>
+                  <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>%{m.accuracy.toFixed(1)}</TableCell>
+                  <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>%{m.weight}</TableCell>
+                  <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_MUTED }}>{m.sampleCount.toLocaleString()}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-1">
+                      {m.trend === "up" && <ArrowUpRight className="h-3.5 w-3.5 text-green-500" />}
+                      {m.trend === "down" && <ArrowDownRight className="h-3.5 w-3.5 text-red-500" />}
+                      {m.trend === "stable" && <Minus className="h-3.5 w-3.5" style={{ color: TEXT_MUTED }} />}
+                      <span className="text-xs" style={{ color: TEXT_MUTED }}>
+                        {m.trend === "up" ? "Yükseliyor" : m.trend === "down" ? "Düşüyor" : "Stabil"}
+                      </span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==========================================
+// SLIPPAGE TAB
+// ==========================================
+function SlippageTab() {
+  const chartData = slippageData.map((s) => ({
+    city: s.city,
+    estimated: +(s.estimatedSlippage * 100).toFixed(2),
+    actual: +(s.actualSlippage * 100).toFixed(2),
+  }));
+
+  return (
+    <div className="space-y-6">
+      {/* Summary KPIs */}
+      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: "Ort. Tahmini Slippage", value: `%${(slippageSummary.avgEstimatedSlippage * 100).toFixed(2)}`, color: TEXT_PRIMARY },
+          { label: "Ort. Gerçek Slippage", value: `%${(slippageSummary.avgActualSlippage * 100).toFixed(2)}`, color: TEXT_PRIMARY },
+          { label: "Toplam Maliyet", value: `-$${slippageSummary.totalSlippageCost.toFixed(2)}`, color: RED },
+          { label: "En Kötü Slippage", value: `%${(slippageSummary.worstSlippage * 100).toFixed(1)}`, color: RED },
+          { label: "En İyi Slippage", value: `%${(slippageSummary.bestSlippage * 100).toFixed(1)}`, color: TEAL },
+          { label: "Vuruş Oranı", value: `%${slippageSummary.slippageHitRate.toFixed(1)}`, color: "#F59E0B" },
+        ].map((kpi) => (
+          <Card key={kpi.label} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+            <CardContent className="px-4 pb-0 pt-0">
+              <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
+              <p className="text-lg font-bold tabular-nums mt-1" style={{ color: kpi.color }}>{kpi.value}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      {/* Comparison Chart */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <div className="flex items-center gap-2">
+            <ArrowRightLeft className="h-4 w-4" style={{ color: TEXT_MUTED }} />
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Tahmini vs Gerçek Slippage (%)</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4">
+          <ClientOnly>
+            <div className="w-full" style={{ height: 300 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="city" tick={{ fontSize: 10, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} angle={-30} textAnchor="end" height={50} />
+                  <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `%${v}`} width={40} />
+                  <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} />
+                  <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+                  <Bar dataKey="estimated" name="Tahmini" fill={TEAL} radius={[3, 3, 0, 0]} barSize={20} />
+                  <Bar dataKey="actual" name="Gerçek" fill={RED} radius={[3, 3, 0, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </ClientOnly>
+        </CardContent>
+      </Card>
+
+      {/* Slippage Table */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Slippage Detayları</CardTitle>
+        </CardHeader>
+        <CardContent className="px-3">
+          <div className="max-h-[400px] overflow-y-auto custom-scroll">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Tarih</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Taraf</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Beklenen</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Gerçek</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Tahmini Slip.</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Gerçek Slip.</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Maliyet</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Boyut</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {slippageData.map((s) => {
+                  const overSlip = s.actualSlippage > s.estimatedSlippage;
+                  return (
+                    <TableRow key={s.id}>
+                      <TableCell className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>{s.timestamp}</TableCell>
+                      <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{s.city}</TableCell>
+                      <TableCell>
+                        <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: s.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: s.side === "YES" ? TEAL : RED, border: `1px solid ${s.side === "YES" ? TEAL : RED}33` }}>{s.side}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{s.expectedPrice.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{s.actualPrice.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>%{(s.estimatedSlippage * 100).toFixed(1)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: overSlip ? RED : TEAL }}>%{(s.actualSlippage * 100).toFixed(1)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: s.slippageCost > 0 ? RED : TEAL }}>
+                        {s.slippageCost > 0 ? `-$${s.slippageCost.toFixed(2)}` : "$0.00"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_MUTED }}>{s.size}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==========================================
+// MAIN DASHBOARD
+// ==========================================
+export default function DashboardPage() {
+  const [activeTab, setActiveTab] = useState<TabId>("overview");
+
+  return (
+    <div className="min-h-screen flex flex-col bg-gray-50/50" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+      {/* ---- HEADER ---- */}
+      <header className="sticky top-0 z-50 bg-white border-b" style={{ borderColor: BORDER }}>
+        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14">
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold tracking-tight" style={{ color: TEXT_PRIMARY }}>ASIAbot</h1>
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+              </span>
+              <span className="text-xs font-medium text-green-600">ÇALIŞIYOR</span>
+            </div>
+          </div>
+          <button className="p-2 rounded-md hover:bg-gray-100 transition-colors" aria-label="Dark mode">
+            <Moon className="h-4 w-4 text-gray-500" />
+          </button>
+        </div>
+      </header>
+
+      {/* ---- TAB NAVIGATION ---- */}
+      <nav className="bg-white border-b sticky top-14 z-40" style={{ borderColor: BORDER }}>
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <div className="flex gap-0 overflow-x-auto">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
+                style={{
+                  borderColor: activeTab === tab.id ? TEAL : "transparent",
+                  color: activeTab === tab.id ? TEAL : TEXT_MUTED,
+                }}
+              >
+                {tab.icon}
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </nav>
+
+      {/* ---- MAIN CONTENT ---- */}
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+        {activeTab === "overview" && <OverviewTab />}
+        {activeTab === "trades" && <TradesTab />}
+        {activeTab === "models" && <ModelsTab />}
+        {activeTab === "slippage" && <SlippageTab />}
       </main>
 
       {/* ---- FOOTER ---- */}
