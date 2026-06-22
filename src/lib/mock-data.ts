@@ -246,5 +246,103 @@ export const slippageSummary = {
   totalSlippageCost: 1.25,
   worstSlippage: 0.020,
   bestSlippage: 0.000,
-  slippageHitRate: 91.7, // % of trades where actual > estimated
+  slippageHitRate: 91.7,
+};
+
+// ---- Health Check ----
+
+export type HealthVerdict = "healthy" | "degraded" | "critical" | "error";
+export type FlagSeverity = "critical" | "warning" | "info";
+
+export interface RedFlag {
+  severity: FlagSeverity;
+  message: string;
+  action: string;
+}
+
+export interface PassReason {
+  market_id: string;
+  edge_pct: number;
+  reason: string;
+  time: string;
+}
+
+export interface DailyPnlPoint {
+  date: string;
+  pnl: number;
+  trades: number;
+}
+
+export interface HealthData {
+  verdict: HealthVerdict;
+  verdict_text: string;
+  verdict_color: string;
+  activity_24h: {
+    bets_opened: number;
+    pass_reasons: PassReason[];
+    total_analyses: number;
+  };
+  edge_distribution: {
+    avg_net_edge_pct: number;
+    min_net_edge_pct: number;
+    max_net_edge_pct: number;
+    count: number;
+  };
+  summary_3day: {
+    total_settled: number;
+    wins: number;
+    losses: number;
+    win_rate_pct: number;
+    total_pnl: number;
+    total_stake: number;
+    roi_pct: number;
+    avg_net_edge_pct: number;
+  };
+  red_flags: RedFlag[];
+  daily_pnl_timeline: DailyPnlPoint[];
+}
+
+export const healthData: HealthData = {
+  verdict: "healthy",
+  verdict_text: "SAĞLIKLI",
+  verdict_color: "#22c55e",
+  activity_24h: {
+    bets_opened: 5,
+    total_analyses: 42,
+    pass_reasons: [
+      { market_id: "0x7a3f…e91d", edge_pct: 3.2, reason: "Edge düşük (minimum %5 gerekli)", time: "15 Oca 10:15" },
+      { market_id: "0x2b1c…a4f2", edge_pct: 2.8, reason: "Risk limiti aşılıyor (city_cap=4)", time: "15 Oca 09:40" },
+      { market_id: "0x9d4e…b7c3", edge_pct: 1.5, reason: "Edge düşük (minimum %5 gerekli)", time: "15 Oca 08:05" },
+      { market_id: "0x1f8a…d5e9", edge_pct: 4.1, reason: "Kelly boyutu $1.20 altında", time: "14 Oca 17:30" },
+      { market_id: "0x6c2b…f1a7", edge_pct: 2.3, reason: "Edge düşük (minimum %5 gerekli)", time: "14 Oca 15:10" },
+    ],
+  },
+  edge_distribution: {
+    avg_net_edge_pct: 6.8,
+    min_net_edge_pct: 2.1,
+    max_net_edge_pct: 14.5,
+    count: 38,
+  },
+  summary_3day: {
+    total_settled: 18,
+    wins: 14,
+    losses: 4,
+    win_rate_pct: 77.8,
+    total_pnl: 245.60,
+    total_stake: 450.00,
+    roi_pct: 54.6,
+    avg_net_edge_pct: 6.8,
+  },
+  red_flags: [
+    { severity: "info", message: "Son 24 saatte 42 analiz, sadece 5 bet açıldı (%11.9 conversion).", action: "Normal aralıkta, takip et." },
+  ],
+  daily_pnl_timeline: [
+    { date: "09 Oca", pnl: 28.50, trades: 4 },
+    { date: "10 Oca", pnl: 42.00, trades: 5 },
+    { date: "11 Oca", pnl: 18.37, trades: 4 },
+    { date: "12 Oca", pnl: 31.50, trades: 3 },
+    { date: "13 Oca", pnl: -8.35, trades: 4 },
+    { date: "14 Oca", pnl: 14.15, trades: 3 },
+    { date: "15 Oca", pnl: 45.20, trades: 5 },
+  ],
 };

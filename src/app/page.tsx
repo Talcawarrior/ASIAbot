@@ -44,10 +44,13 @@ import {
   modelComparisonData,
   slippageData,
   slippageSummary,
+  healthData,
   type ActivityItem,
   type TradeHistoryEntry,
   type ModelScore,
   type SlippageEntry,
+  type RedFlag,
+  type PassReason,
 } from "@/lib/mock-data";
 import {
   TrendingUp,
@@ -65,6 +68,13 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Minus,
+  HeartPulse,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
+  AlertTriangle,
+  Info,
+  XCircle,
 } from "lucide-react";
 
 // ---- Color constants ----
@@ -103,13 +113,14 @@ function ClientOnly({ children }: { children: React.ReactNode }) {
 }
 
 // ---- Tab type ----
-type TabId = "overview" | "trades" | "models" | "slippage";
+type TabId = "overview" | "trades" | "models" | "slippage" | "health";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "overview", label: "Genel Bakış", icon: <BarChart3 className="h-3.5 w-3.5" /> },
   { id: "trades", label: "İşlem Geçmişi", icon: <History className="h-3.5 w-3.5" /> },
   { id: "models", label: "Model Performansı", icon: <Brain className="h-3.5 w-3.5" /> },
   { id: "slippage", label: "Slippage", icon: <ArrowRightLeft className="h-3.5 w-3.5" /> },
+  { id: "health", label: "Sağlık", icon: <HeartPulse className="h-3.5 w-3.5" /> },
 ];
 
 // ==========================================
@@ -631,6 +642,222 @@ function ModelsTab() {
 }
 
 // ==========================================
+// HEALTH TAB
+// ==========================================
+function HealthTab() {
+  const h = healthData;
+  const verdictConfig: Record<string, { bg: string; border: string; icon: React.ReactNode }> = {
+    healthy: { bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.3)", icon: <ShieldCheck className="h-6 w-6" style={{ color: "#22c55e" }} /> },
+    degraded: { bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.3)", icon: <ShieldAlert className="h-6 w-6" style={{ color: "#f59e0b" }} /> },
+    critical: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.3)", icon: <ShieldX className="h-6 w-6" style={{ color: "#ef4444" }} /> },
+    error: { bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.3)", icon: <XCircle className="h-6 w-6" style={{ color: "#ef4444" }} /> },
+  };
+  const vc = verdictConfig[h.verdict] ?? verdictConfig.healthy;
+  const flagStyle: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
+    critical: { bg: RED_LIGHT, color: RED, icon: <XCircle className="h-3.5 w-3.5" /> },
+    warning: { bg: "rgba(245,158,11,0.12)", color: "#d97706", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+    info: { bg: "rgba(59,130,246,0.1)", color: "#3b82f6", icon: <Info className="h-3.5 w-3.5" /> },
+  };
+
+  function PnlTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload?: { trades: number } }>; label?: string }) {
+    if (!active || !payload?.length) return null;
+    const trades = payload[0].payload?.trades ?? 0;
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
+        <p className="font-medium text-gray-500 mb-1">{label}</p>
+        <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
+          {fmtUsd(payload[0].value)}
+        </p>
+        <p className="text-gray-400">{trades} işlem</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Verdict Banner */}
+      <div className="rounded-xl border-2 p-5 flex items-center gap-4" style={{ backgroundColor: vc.bg, borderColor: vc.border }}>
+        {vc.icon}
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-bold" style={{ color: h.verdict_color }}>{h.verdict_text}</h2>
+            <Badge className="text-[10px] px-2 py-0.5 h-5 font-semibold" style={{ backgroundColor: `${h.verdict_color}20`, color: h.verdict_color, border: `1px solid ${h.verdict_color}40` }}>
+              {h.verdict === "healthy" ? "Tüm sistemler normal" : h.verdict === "degraded" ? "Dikkat gerekiyor" : h.verdict === "critical" ? "Acil müdahale" : "Sistem hatası"}
+            </Badge>
+          </div>
+          <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>
+            Son kontrol: 15 Oca 2026, 14:30 — {h.red_flags.length === 0 ? "aktif uyarı yok" : `${h.red_flags.length} aktif uyarı`}
+          </p>
+        </div>
+      </div>
+
+      {/* 3-Day Summary + 24h Activity + Edge Stats */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* 3-Day Summary */}
+        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>3 Günlük Özet</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4">
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { label: "Sonuçlanan", value: h.summary_3day.total_settled.toString(), color: TEXT_PRIMARY },
+                { label: "Kazanan", value: h.summary_3day.wins.toString(), color: "#16A34A" },
+                { label: "Kaybeden", value: h.summary_3day.losses.toString(), color: RED },
+                { label: "Win Rate", value: `%${h.summary_3day.win_rate_pct}`, color: TEXT_PRIMARY },
+                { label: "Toplam PnL", value: fmtUsd(h.summary_3day.total_pnl), color: h.summary_3day.total_pnl >= 0 ? TEAL : RED },
+                { label: "ROI", value: `%${h.summary_3day.roi_pct}`, color: TEAL },
+              ].map((item) => (
+                <div key={item.label}>
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>{item.label}</p>
+                  <p className="text-sm font-bold tabular-nums" style={{ color: item.color }}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* 24h Activity */}
+        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>24 Saatlik Aktivite</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4">
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Açılan Bahis</p>
+                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{h.activity_24h.bets_opened}</p>
+              </div>
+              <div>
+                <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Toplam Analiz</p>
+                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{h.activity_24h.total_analyses}</p>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Pas Geçme Nedenleri</p>
+              {h.activity_24h.pass_reasons.map((pr, i) => (
+                <div key={i} className="flex items-start gap-2 text-[11px] py-1 border-b last:border-0" style={{ borderColor: `${BORDER}60` }}>
+                  <span className="tabular-nums shrink-0 pt-0.5 font-mono" style={{ color: TEXT_MUTED, fontSize: 10 }}>{pr.time.split(" ")[1]}</span>
+                  <span style={{ color: TEXT_PRIMARY }} className="flex-1">{pr.reason}</span>
+                  <Badge className="text-[9px] px-1.5 py-0 h-4 font-mono shrink-0" style={{ backgroundColor: TEAL_LIGHT, color: TEAL }}>
+                    %{pr.edge_pct}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Edge Stats */}
+        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+          <CardHeader className="pb-0 pt-0 px-5">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge İstatistikleri</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4">
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between items-baseline mb-1">
+                  <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Ort. Net Edge</p>
+                  <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>%{h.edge_distribution.avg_net_edge_pct}</p>
+                </div>
+                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(h.edge_distribution.avg_net_edge_pct * 7, 100)}%`, backgroundColor: TEAL }} />
+                </div>
+              </div>
+              {[
+                { label: "Min Net Edge", value: `%${h.edge_distribution.min_net_edge_pct}`, color: TEXT_MUTED },
+                { label: "Max Net Edge", value: `%${h.edge_distribution.max_net_edge_pct}`, color: TEAL },
+                { label: "Toplam İşlem", value: h.edge_distribution.count.toString(), color: TEXT_PRIMARY },
+              ].map((item) => (
+                <div key={item.label} className="flex justify-between items-baseline">
+                  <p className="text-[11px]" style={{ color: TEXT_MUTED }}>{item.label}</p>
+                  <p className="text-sm font-bold tabular-nums" style={{ color: item.color }}>{item.value}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Daily PnL Timeline */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" style={{ color: TEXT_MUTED }} />
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Günlük PnL Zaman Çizelgesi (7 Gün)</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4">
+          <ClientOnly>
+            <div className="w-full" style={{ height: 260 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={h.daily_pnl_timeline} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v}`} width={50} />
+                  <Tooltip content={<PnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]} barSize={36}>
+                    {h.daily_pnl_timeline.map((entry, i) => (
+                      <Cell key={i} fill={entry.pnl >= 0 ? TEAL : RED} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </ClientOnly>
+        </CardContent>
+      </Card>
+
+      {/* Red Flags */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Uyarılar ve Bayraklar</CardTitle>
+            <Badge className="text-[10px] px-2 py-0.5 h-5" style={{
+              backgroundColor: h.red_flags.length === 0 ? GREEN_LIGHT : RED_LIGHT,
+              color: h.red_flags.length === 0 ? "#16A34A" : RED,
+            }}>
+              {h.red_flags.length === 0 ? "Temiz" : `${h.red_flags.length} uyarı`}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="px-4">
+          {h.red_flags.length === 0 ? (
+            <div className="text-center py-6">
+              <ShieldCheck className="h-8 w-8 mx-auto mb-2" style={{ color: "#22c55e" }} />
+              <p className="text-sm" style={{ color: TEXT_PRIMARY }}>Tüm sistemler sağlıklı</p>
+              <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>Aktif uyarı veya kırmızı bayrak bulunmuyor.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {h.red_flags.map((flag, i) => {
+                const fs = flagStyle[flag.severity] ?? flagStyle.info;
+                return (
+                  <div key={i} className="flex gap-3 p-3 rounded-lg border" style={{ backgroundColor: fs.bg, borderColor: `${fs.color}30` }}>
+                    <div className="shrink-0 pt-0.5">{fs.icon}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Badge className="text-[9px] px-1.5 py-0 h-4 font-bold uppercase" style={{ backgroundColor: fs.bg, color: fs.color, border: `1px solid ${fs.color}40` }}>
+                          {flag.severity === "critical" ? "KRİTİK" : flag.severity === "warning" ? "UYARI" : "BİLGİ"}
+                        </Badge>
+                      </div>
+                      <p className="text-xs" style={{ color: TEXT_PRIMARY }}>{flag.message}</p>
+                      <p className="text-[11px] mt-1" style={{ color: fs.color }}>
+                        <span className="font-semibold">Önerilen aksiyon:</span> {flag.action}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ==========================================
 // SLIPPAGE TAB
 // ==========================================
 function SlippageTab() {
@@ -794,6 +1021,7 @@ export default function DashboardPage() {
         {activeTab === "trades" && <TradesTab />}
         {activeTab === "models" && <ModelsTab />}
         {activeTab === "slippage" && <SlippageTab />}
+        {activeTab === "health" && <HealthTab />}
       </main>
 
       {/* ---- FOOTER ---- */}
