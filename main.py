@@ -684,8 +684,8 @@ async def get_history():
     try:
         settled_bets = (
             db.query(Bet)
-            .filter(Bet.status.in_(["settled", "won", "lost"]))
-            .order_by(Bet.settled_at.desc())
+            .filter(Bet.status.in_(["settled", "won", "lost", "closed_early"]))
+            .order_by(Bet.settled_at.desc(), Bet.closed_at.desc(), Bet.placed_at.desc())
             .limit(50)
             .all()
         )
@@ -697,17 +697,18 @@ async def get_history():
         total_win_pnl = 0.0
         total_loss_pnl = 0.0
         for bet in settled_bets:
-            if bet.pnl > 0:
+            pnl = bet.pnl or bet.realized_pnl or 0.0
+            if pnl > 0:
                 total_won += 1
-                total_win_pnl += bet.pnl
+                total_win_pnl += pnl
             else:
                 total_lost += 1
-                total_loss_pnl += abs(bet.pnl or 0.0)
+                total_loss_pnl += abs(pnl)
             stake = bet.amount or 0.0
-            pnl = bet.pnl or 0.0
             total_stake_all += stake
             total_pnl_all += pnl
             roi = (pnl / stake * 100) if stake > 0 else 0.0
+            close_ts = bet.settled_at or bet.closed_at
             history.append(
                 {
                     "id": bet.id,
@@ -717,11 +718,9 @@ async def get_history():
                     "stake_amount": stake,
                     "realized_pnl": pnl,
                     "roi": round(roi, 2),
-                    "result": "WIN" if bet.pnl > 0 else "LOSS",
+                    "result": "WIN" if pnl > 0 else "LOSS",
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
-                    "settled_at": (
-                        bet.settled_at.isoformat() if bet.settled_at else None
-                    ),
+                    "settled_at": (close_ts.isoformat() if close_ts else None),
                 }
             )
         win_rate = (
@@ -775,14 +774,22 @@ async def get_slippage():
         )
         # Batch-load market prices to avoid N+1
         market_ids = list({r[0].market_id for r in rows})
-        mkt_prices = {
-            wm.id: float(wm.yes_price)
-            for wm in db.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all()
-        } if market_ids else {}
+        mkt_prices = (
+            {
+                wm.id: float(wm.yes_price)
+                for wm in db.query(WeatherMarket)
+                .filter(WeatherMarket.id.in_(market_ids))
+                .all()
+            }
+            if market_ids
+            else {}
+        )
 
         entries = []
         for analysis, city, side, entry_price, bet_pnl, bet_status in rows:
-            current_price = mkt_prices.get(analysis.market_id) or analysis.market_implied_prob
+            current_price = (
+                mkt_prices.get(analysis.market_id) or analysis.market_implied_prob
+            )
             entries.append(
                 {
                     "id": str(analysis.id),
