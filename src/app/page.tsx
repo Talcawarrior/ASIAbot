@@ -101,12 +101,26 @@ function fmtUsd(v: number) {
   return `${sign}$${v.toFixed(2)}`;
 }
 
-// ---- Client-only wrapper ----
-function ClientOnly({ children }: { children: React.ReactNode }) {
+// ---- Loading skeleton ----
+function Skeleton({ className = "" }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-gray-200 ${className}`} />;
+}
+function MetricSkeleton() {
+  return <Card className="py-4 gap-2 shadow-sm"><CardContent className="px-4 pb-0 pt-0 space-y-2"><Skeleton className="h-3 w-16" /><Skeleton className="h-5 w-24" /></CardContent></Card>;
+}
+function MiniMetricSkeleton() {
+  return <Card className="py-2 gap-0 shadow-sm"><CardContent className="px-3 pb-0 pt-0 space-y-1.5"><Skeleton className="h-2.5 w-14" /><Skeleton className="h-4 w-20" /></CardContent></Card>;
+}
+function ChartSkeleton({ height }: { height?: number }) {
+  return <div className="flex items-center justify-center w-full" style={{ height: height ?? 260 }}><Skeleton className="w-full h-full rounded-lg" /></div>;
+}
+
+// ---- Client-only chart wrapper (skeleton until hydrated) ----
+function ChartWrapper({ children, height, width }: { children: React.ReactNode; height?: number; width?: number }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
-  if (!mounted) return <div className="w-full flex items-center justify-center" style={{ minHeight: 200 }}><span className="text-xs text-gray-400">Yükleniyor...</span></div>;
-  return <>{children}</>;
+  if (!mounted) return <ChartSkeleton height={height} />;
+  return <div className="w-full" style={{ height: height ?? 260, width: width ?? "100%" }}>{children}</div>;
 }
 
 // ---- Tab type ----
@@ -148,12 +162,13 @@ function EdgeTooltip({ active, payload, label }: { active?: boolean; payload?: A
 // ==========================================
 // OVERVIEW TAB
 // ==========================================
-function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edgeDistribution }: {
+function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edgeDistribution, isLoading }: {
   kpiData: KpiData;
   portfolioData: PortfolioPoint[];
   openPositions: OpenPosition[];
   activityFeed: ActivityItem[];
   edgeDistribution: EdgeBucket[];
+  isLoading?: boolean;
 }) {
   const winLossData = [
     { name: "Kazanan", value: kpiData.wins, color: TEAL },
@@ -162,51 +177,64 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
 
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
-      <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {[
-          { label: "Portföy Değeri", value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, icon: <Wallet className="h-4 w-4" />, color: TEAL, sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}` },
-          { label: "Bugünkü PnL", value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, icon: <TrendingUp className="h-4 w-4" />, color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, sub: "" },
-          { label: "Açık Bahisler", value: `${kpiData.openPositions}`, icon: <Activity className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
-          { label: "Win Rate", value: `%${kpiData.winRate}`, icon: <Target className="h-4 w-4" />, color: TEXT_PRIMARY, sub: `${kpiData.wins}W / ${kpiData.losses}L` },
-          { label: "Sharpe Ratio", value: kpiData.sharpeRatio.toFixed(2), icon: <TrendingUp className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
-          { label: "Max Drawdown", value: `%${kpiData.maxDrawdown}`, icon: <TrendingDown className="h-4 w-4" />, color: RED, sub: "" },
-        ].map((kpi) => (
-          <Card key={kpi.label} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-            <CardContent className="px-4 pb-0 pt-0">
-              <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span style={{ color: kpi.color }}>{kpi.icon}</span>
-                <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
-              </div>
-              {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+      {/* KPI Cards — skeleton while loading */}
+      {isLoading ? (
+        <>
+          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {Array.from({ length: 6 }).map((_, i) => <MetricSkeleton key={i} />)}
+          </section>
+          <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {Array.from({ length: 6 }).map((_, i) => <MiniMetricSkeleton key={i} />)}
+          </section>
+        </>
+      ) : (
+        <>
+          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            {[
+              { label: "Portföy Değeri", value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, icon: <Wallet className="h-4 w-4" />, color: TEAL, sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}` },
+              { label: "Bugünkü PnL", value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, icon: <TrendingUp className="h-4 w-4" />, color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, sub: "" },
+              { label: "Açık Bahisler", value: `${kpiData.openPositions}`, icon: <Activity className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
+              { label: "Win Rate", value: `%${kpiData.winRate}`, icon: <Target className="h-4 w-4" />, color: TEXT_PRIMARY, sub: `${kpiData.wins}W / ${kpiData.losses}L` },
+              { label: "Sharpe Ratio", value: kpiData.sharpeRatio.toFixed(2), icon: <TrendingUp className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
+              { label: "Max Drawdown", value: `%${kpiData.maxDrawdown}`, icon: <TrendingDown className="h-4 w-4" />, color: RED, sub: "" },
+            ].map((kpi) => (
+              <Card key={kpi.label} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+                <CardContent className="px-4 pb-0 pt-0">
+                  <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
+                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+                  </div>
+                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
+                </CardContent>
+              </Card>
+            ))}
+          </section>
 
-      {/* Second-row Metric Cards (smaller) */}
-      <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-        {[
-          { label: "Total PnL", value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}${kpiData.totalPnlValue.toFixed(2)} USD`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED, sub: "" },
-          { label: "Total ROI", value: `${kpiData.totalRoi >= 0 ? "+" : ""}${kpiData.totalRoi.toFixed(2)}%`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalRoi >= 0 ? TEAL : RED, sub: "" },
-          { label: "Kapalı Bahis", value: `${kpiData.closedBets}`, icon: <BarChart3 className="h-3 w-3" />, color: TEXT_PRIMARY, sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L` },
-          { label: "Expectancy", value: `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}`, icon: <Target className="h-3 w-3" />, color: kpiData.expectancy >= 0 ? "#16A34A" : RED, sub: "ortalama/bahis" },
-          { label: "Ort. Bahis", value: `$${kpiData.avgBetSize.toFixed(2)}`, icon: <Wallet className="h-3 w-3" />, color: TEXT_PRIMARY, sub: "" },
-          { label: "Profit Factor", value: kpiData.profitFactor.toFixed(2), icon: <ArrowRightLeft className="h-3 w-3" />, color: kpiData.profitFactor >= 1.5 ? TEAL : TEXT_PRIMARY, sub: kpiData.profitFactor >= 1.5 ? "✅ İyi" : "" },
-        ].map((kpi) => (
-          <Card key={kpi.label} className="py-2 gap-0 shadow-sm" style={{ borderColor: BORDER }}>
-            <CardContent className="px-3 pb-0 pt-0">
-              <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span style={{ color: kpi.color }}>{kpi.icon}</span>
-                <span className="text-sm font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
-              </div>
-              {kpi.sub && <p className="text-[9px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
-            </CardContent>
-          </Card>
-        ))}
-      </section>
+          {/* Second-row Metric Cards (smaller) */}
+          <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            {[
+              { label: "Total PnL", value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}${kpiData.totalPnlValue.toFixed(2)} USD`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED, sub: "" },
+              { label: "Total ROI", value: `${kpiData.totalRoi >= 0 ? "+" : ""}${kpiData.totalRoi.toFixed(2)}%`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalRoi >= 0 ? TEAL : RED, sub: "" },
+              { label: "Kapalı Bahis", value: `${kpiData.closedBets}`, icon: <BarChart3 className="h-3 w-3" />, color: TEXT_PRIMARY, sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L` },
+              { label: "Expectancy", value: `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}`, icon: <Target className="h-3 w-3" />, color: kpiData.expectancy >= 0 ? "#16A34A" : RED, sub: "ortalama/bahis" },
+              { label: "Ort. Bahis", value: `$${kpiData.avgBetSize.toFixed(2)}`, icon: <Wallet className="h-3 w-3" />, color: TEXT_PRIMARY, sub: "" },
+              { label: "Profit Factor", value: kpiData.profitFactor.toFixed(2), icon: <ArrowRightLeft className="h-3 w-3" />, color: kpiData.profitFactor >= 1.5 ? TEAL : TEXT_PRIMARY, sub: kpiData.profitFactor >= 1.5 ? "✅ İyi" : "" },
+            ].map((kpi) => (
+              <Card key={kpi.label} className="py-2 gap-0 shadow-sm" style={{ borderColor: BORDER }}>
+                <CardContent className="px-3 pb-0 pt-0">
+                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
+                    <span className="text-sm font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+                  </div>
+                  {kpi.sub && <p className="text-[9px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
+                </CardContent>
+              </Card>
+            ))}
+          </section>
+        </>
+      )}
 
       {/* Portfolio Chart + Win/Loss Donut */}
       <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -218,25 +246,23 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
             </div>
           </CardHeader>
           <CardContent className="px-4">
-            <ClientOnly>
-              <div className="w-full" style={{ height: 280 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={portfolioData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <defs>
-                      <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={TEAL} stopOpacity={0.25} />
-                        <stop offset="95%" stopColor={TEAL} stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                    <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} width={45} />
-                    <Tooltip content={<PortfolioTooltip />} />
-                    <Area type="monotone" dataKey="value" stroke={TEAL} strokeWidth={2} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-            </ClientOnly>
+            <ChartWrapper height={280}>
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={portfolioData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <defs>
+                    <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={TEAL} stopOpacity={0.25} />
+                      <stop offset="95%" stopColor={TEAL} stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} width={45} />
+                  <Tooltip content={<PortfolioTooltip />} />
+                  <Area type="monotone" dataKey="value" stroke={TEAL} strokeWidth={2} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </ChartWrapper>
           </CardContent>
         </Card>
 
@@ -246,18 +272,16 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
             <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Win / Loss</CardTitle>
           </CardHeader>
           <CardContent className="px-4 flex flex-col items-center justify-center">
-            <ClientOnly>
-              <div style={{ width: 180, height: 180 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={winLossData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0}>
-                      {winLossData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </ClientOnly>
+            <ChartWrapper height={180} width={180}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={winLossData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0}>
+                    {winLossData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            </ChartWrapper>
             <div className="flex gap-6 mt-3 text-xs">
               <div className="flex items-center gap-1.5">
                 <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TEAL }} />
@@ -350,19 +374,17 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
           <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı</CardTitle>
         </CardHeader>
         <CardContent className="px-4">
-          <ClientOnly>
-            <div className="w-full" style={{ height: 220 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                  <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
-                  <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                  <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </ClientOnly>
+          <ChartWrapper height={220}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartWrapper>
         </CardContent>
       </Card>
     </div>
@@ -600,23 +622,21 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
               </div>
             </CardHeader>
             <CardContent className="px-4">
-              <ClientOnly>
-                <div className="w-full" style={{ height: 300 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={modelScores.map(m => ({ name: m.name, weight: m.weight }))} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                      <XAxis dataKey="name" tick={{ fontSize: 10, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} angle={-20} textAnchor="end" height={60} />
-                      <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `%${v}`} width={40} />
-                      <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} />
-                      <Bar dataKey="weight" radius={[4, 4, 0, 0]} barSize={36}>
-                        {modelScores.map((_, i) => (
-                          <Cell key={i} fill={MODEL_COLORS[i % MODEL_COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </ClientOnly>
+              <ChartWrapper height={300}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={modelScores.map(m => ({ name: m.name, weight: m.weight }))} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 10, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} angle={-20} textAnchor="end" height={60} />
+                    <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `%${v}`} width={40} />
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} />
+                    <Bar dataKey="weight" radius={[4, 4, 0, 0]} barSize={36}>
+                      {modelScores.map((_, i) => (
+                        <Cell key={i} fill={MODEL_COLORS[i % MODEL_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartWrapper>
             </CardContent>
           </Card>
 
@@ -832,27 +852,25 @@ function HealthTab({ health }: { health: HealthResponse | null }) {
           </div>
         </CardHeader>
         <CardContent className="px-4">
-          <ClientOnly>
-            <div className="w-full" style={{ height: 260 }}>
-              {h.daily_pnl_timeline.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-sm" style={{ color: TEXT_MUTED }}>Henüz veri yok</div>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={h.daily_pnl_timeline} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                    <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v}`} width={50} />
-                    <Tooltip content={<PnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                    <Bar dataKey="pnl" radius={[4, 4, 0, 0]} barSize={36}>
-                      {h.daily_pnl_timeline.map((entry, i) => (
-                        <Cell key={i} fill={entry.pnl >= 0 ? TEAL : RED} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-          </ClientOnly>
+          <ChartWrapper height={260}>
+            {h.daily_pnl_timeline.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-sm" style={{ color: TEXT_MUTED }}>Henüz veri yok</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={h.daily_pnl_timeline} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v}`} width={50} />
+                  <Tooltip content={<PnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                  <Bar dataKey="pnl" radius={[4, 4, 0, 0]} barSize={36}>
+                    {h.daily_pnl_timeline.map((entry, i) => (
+                      <Cell key={i} fill={entry.pnl >= 0 ? TEAL : RED} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartWrapper>
         </CardContent>
       </Card>
 
@@ -1093,6 +1111,7 @@ export default function DashboardPage() {
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
         {activeTab === "overview" && (
           <OverviewTab
+            isLoading={data.isLoading && !data.status}
             kpiData={data.kpiData}
             portfolioData={data.portfolioData}
             openPositions={data.openPositions}
