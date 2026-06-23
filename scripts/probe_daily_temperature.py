@@ -41,11 +41,22 @@ print(f"markets returned: {len(ms) if isinstance(ms, list) else 'n/a'}")
 if isinstance(ms, list) and ms:
     print("first 3:")
     for i, m in enumerate(ms[:3]):
-        keys = ["condition_id", "id", "slug", "question", "category", "end_date", "closed_date", "active"]
+        keys = [
+            "condition_id",
+            "id",
+            "slug",
+            "question",
+            "category",
+            "end_date",
+            "closed_date",
+            "active",
+        ]
         present = {k: m.get(k) for k in keys if k in m}
         print(f"  [{i}] {present}")
     # save all daily-temperature conditionIds
-    daily_temp_cids = [m.get("condition_id") or m.get("id") for m in ms if isinstance(m, dict)]
+    daily_temp_cids = [
+        m.get("condition_id") or m.get("id") for m in ms if isinstance(m, dict)
+    ]
     daily_temp_cids = [c for c in daily_temp_cids if c]
     print(f"\nTotal daily-temperature cids: {len(daily_temp_cids)}")
     if daily_temp_cids:
@@ -64,7 +75,15 @@ if isinstance(ms, list) and ms:
         print(f"  snapshots returned: {n}")
         if n > 0:
             print(f"  snapshot[0] keys: {list(snaps[0].keys())}")
-            for k in ("timestamp", "ts", "mid", "mid_price", "yes_price", "best_bid", "best_ask"):
+            for k in (
+                "timestamp",
+                "ts",
+                "mid",
+                "mid_price",
+                "yes_price",
+                "best_bid",
+                "best_ask",
+            ):
                 if k in snaps[0]:
                     print(f"    {k}: {snaps[0][k]}")
 
@@ -98,7 +117,15 @@ for i, row in enumerate(sample.itertuples(index=False)):
     if r.ok:
         j = r.json()
         if isinstance(j, dict):
-            keys = ["condition_id", "id", "slug", "question", "category", "end_date", "active"]
+            keys = [
+                "condition_id",
+                "id",
+                "slug",
+                "question",
+                "category",
+                "end_date",
+                "active",
+            ]
             present = {k: j.get(k) for k in keys if k in j}
             print(f"       body: {present}")
         else:
@@ -128,11 +155,21 @@ print(f"markets: {len(ms) if isinstance(ms, list) else 'n/a'}")
 if isinstance(ms, list) and ms:
     print("\nFirst 5 weather history markets:")
     for i, m in enumerate(ms[:5]):
-        keys = ["condition_id", "id", "slug", "question", "category", "end_date", "closed_date"]
+        keys = [
+            "condition_id",
+            "id",
+            "slug",
+            "question",
+            "category",
+            "end_date",
+            "closed_date",
+        ]
         present = {k: m.get(k) for k in keys if k in m}
         print(f"  [{i}] {present}")
     # show all distinct slugs
-    slugs = sorted({m.get("slug", "") for m in ms if isinstance(m, dict) and m.get("slug")})
+    slugs = sorted(
+        {m.get("slug", "") for m in ms if isinstance(m, dict) and m.get("slug")}
+    )
     print(f"\nDistinct weather slugs ({len(slugs)}):")
     for s in slugs[:20]:
         print(f"  - {s}")

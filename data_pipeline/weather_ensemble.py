@@ -50,7 +50,9 @@ OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 # Historical Forecast API: returns per-model 0-day-ahead (analysis) forecasts
 # for past dates. Free, no API key. Docs:
 # https://open-meteo.com/en/docs/historical-forecast-api
-OPEN_METEO_HISTORICAL_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+OPEN_METEO_HISTORICAL_FORECAST_URL = (
+    "https://historical-forecast-api.open-meteo.com/v1/forecast"
+)
 
 DEFAULT_MODELS = (
     "gfs_seamless",
@@ -134,14 +136,18 @@ def fetch_forecast_ensemble(
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
-        logger.warning("Ensemble fetch failed for (%s, %s): %s", latitude, longitude, exc)
+        logger.warning(
+            "Ensemble fetch failed for (%s, %s): %s", latitude, longitude, exc
+        )
         return None
 
     # Open-Meteo returns a SINGLE `daily` dict. Per-model values are encoded
     # as "<variable>_<model>" keys (e.g. temperature_2m_max_gfs_seamless).
     daily = payload.get("daily", {})
     if not isinstance(daily, dict) or "time" not in daily:
-        logger.warning("Empty daily block from Open-Meteo for (%s, %s)", latitude, longitude)
+        logger.warning(
+            "Empty daily block from Open-Meteo for (%s, %s)", latitude, longitude
+        )
         return None
 
     times = daily["time"]
@@ -152,8 +158,12 @@ def fetch_forecast_ensemble(
     if target_date is None:
         target_date = times[0]
     if target_date not in times:
-        logger.warning("target_date=%s not in forecast range (%s..%s)",
-                       target_date, times[0], times[-1])
+        logger.warning(
+            "target_date=%s not in forecast range (%s..%s)",
+            target_date,
+            times[0],
+            times[-1],
+        )
         return None
 
     target_idx = times.index(target_date)
@@ -167,11 +177,13 @@ def fetch_forecast_ensemble(
             if series is None or target_idx >= len(series):
                 continue
             val = series[target_idx]
-            rows.append({
-                "model": model,
-                "variable": var,
-                "value": float(val) if val is not None else None,
-            })
+            rows.append(
+                {
+                    "model": model,
+                    "variable": var,
+                    "value": float(val) if val is not None else None,
+                }
+            )
 
     if not rows:
         logger.warning("No rows matched target_date=%s for (%s)", target_date, latitude)
@@ -225,7 +237,9 @@ def fetch_archive_actuals(
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
-        logger.warning("Archive fetch failed for (%s, %s): %s", latitude, longitude, exc)
+        logger.warning(
+            "Archive fetch failed for (%s, %s): %s", latitude, longitude, exc
+        )
         return pd.DataFrame()
 
     daily = payload.get("daily", {})
@@ -260,8 +274,12 @@ def backfill_archive_many(
     frames = []
     for city, lat, lon in locations:
         df = fetch_archive_actuals(
-            lat, lon, start_date=start_date, end_date=end_date,
-            city=city, variables=variables,
+            lat,
+            lon,
+            start_date=start_date,
+            end_date=end_date,
+            city=city,
+            variables=variables,
         )
         if not df.empty:
             frames.append(df)
@@ -327,7 +345,11 @@ def fetch_historical_forecast_ensemble(
     except Exception as exc:
         logger.warning(
             "Historical forecast fetch failed for (%s, %s) %s..%s: %s",
-            latitude, longitude, start_date, end_date, exc,
+            latitude,
+            longitude,
+            start_date,
+            end_date,
+            exc,
         )
         return pd.DataFrame()
 
@@ -335,7 +357,8 @@ def fetch_historical_forecast_ensemble(
     if not isinstance(daily, dict) or "time" not in daily:
         logger.warning(
             "Empty daily block from Historical Forecast API for (%s, %s)",
-            latitude, longitude,
+            latitude,
+            longitude,
         )
         return pd.DataFrame()
 
@@ -355,15 +378,17 @@ def fetch_historical_forecast_ensemble(
             for dt, val in zip(times, series):
                 if val is None:
                     continue
-                rows.append({
-                    "city": city,
-                    "latitude": latitude,
-                    "longitude": longitude,
-                    "date": dt,
-                    "model": model,
-                    "variable": var,
-                    "value": float(val),
-                })
+                rows.append(
+                    {
+                        "city": city,
+                        "latitude": latitude,
+                        "longitude": longitude,
+                        "date": dt,
+                        "model": model,
+                        "variable": var,
+                        "value": float(val),
+                    }
+                )
 
     if not rows:
         return pd.DataFrame()
@@ -386,9 +411,13 @@ def backfill_historical_forecasts_many(
     frames = []
     for city, lat, lon in locations:
         df = fetch_historical_forecast_ensemble(
-            lat, lon,
-            start_date=start_date, end_date=end_date,
-            city=city, models=models, variables=variables,
+            lat,
+            lon,
+            start_date=start_date,
+            end_date=end_date,
+            city=city,
+            models=models,
+            variables=variables,
         )
         if not df.empty:
             frames.append(df)
@@ -407,7 +436,7 @@ NWS_MODEL_NAME = "nws_deterministic"
 # Continental US bounding box (rough): lat 24..50, lon -125..-66
 # Plus Alaska/Hawaii bbox approximation:
 NWS_US_BBOX = (
-    (24.0, 50.0, -125.0, -66.0),   # continental US
+    (24.0, 50.0, -125.0, -66.0),  # continental US
     (51.0, 71.0, -180.0, -130.0),  # Alaska
     (18.0, 22.0, -160.0, -154.0),  # Hawaii
 )
@@ -447,10 +476,16 @@ def fetch_nws_forecast(
     try:
         r = requests.get(
             f"{NWS_API_BASE}/points/{latitude:.4f},{longitude:.4f}",
-            headers=headers, timeout=timeout,
+            headers=headers,
+            timeout=timeout,
         )
         if r.status_code != 200:
-            logger.debug("NWS /points returned %s for (%s,%s)", r.status_code, latitude, longitude)
+            logger.debug(
+                "NWS /points returned %s for (%s,%s)",
+                r.status_code,
+                latitude,
+                longitude,
+            )
             return pd.DataFrame()
         props = r.json().get("properties", {})
         forecast_url = props.get("forecast")
@@ -483,24 +518,28 @@ def fetch_nws_forecast(
 
     rows = []
     for date, temps in by_date.items():
-        rows.append({
-            "city": city,
-            "latitude": latitude,
-            "longitude": longitude,
-            "date": date,
-            "model": NWS_MODEL_NAME,
-            "variable": "temperature_2m_max",
-            "value": temps["max"],
-        })
-        rows.append({
-            "city": city,
-            "latitude": latitude,
-            "longitude": longitude,
-            "date": date,
-            "model": NWS_MODEL_NAME,
-            "variable": "temperature_2m_min",
-            "value": temps["min"],
-        })
+        rows.append(
+            {
+                "city": city,
+                "latitude": latitude,
+                "longitude": longitude,
+                "date": date,
+                "model": NWS_MODEL_NAME,
+                "variable": "temperature_2m_max",
+                "value": temps["max"],
+            }
+        )
+        rows.append(
+            {
+                "city": city,
+                "latitude": latitude,
+                "longitude": longitude,
+                "date": date,
+                "model": NWS_MODEL_NAME,
+                "variable": "temperature_2m_min",
+                "value": temps["min"],
+            }
+        )
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame(rows)
@@ -526,14 +565,23 @@ def brier_score_per_model(
         return {}
 
     # Pivot forecasts to wide
-    var_col = forecasts_df["variable"].iloc[0] if "variable" in forecasts_df.columns else "temperature_2m_max"
-    fc_wide = forecasts_df[forecasts_df["variable"] == var_col].pivot_table(
-        index=["city", "date"], columns="model", values="value", aggfunc="first"
-    ).reset_index()
+    var_col = (
+        forecasts_df["variable"].iloc[0]
+        if "variable" in forecasts_df.columns
+        else "temperature_2m_max"
+    )
+    fc_wide = (
+        forecasts_df[forecasts_df["variable"] == var_col]
+        .pivot_table(
+            index=["city", "date"], columns="model", values="value", aggfunc="first"
+        )
+        .reset_index()
+    )
 
     merged = fc_wide.merge(
         actuals_df[["city", "date", var_col]].rename(columns={var_col: "actual"}),
-        on=["city", "date"], how="inner",
+        on=["city", "date"],
+        how="inner",
     )
     if merged.empty:
         return {}
@@ -548,7 +596,9 @@ def brier_score_per_model(
     # (this is a simplified scorer; full calibration uses normal CDF in
     # utils/probability.py — here we just measure raw model spread)
     scores: dict[str, float] = {}
-    model_cols = [c for c in merged.columns if c not in {"city", "date", "actual", "outcome"}]
+    model_cols = [
+        c for c in merged.columns if c not in {"city", "date", "actual", "outcome"}
+    ]
     for m in model_cols:
         series = merged[m]
         if series.isna().all():
@@ -568,7 +618,9 @@ def brier_score_per_model(
 # ---------------------------------------------------------------------------
 
 
-def _normalize_weights(weights: dict[str, float], models: Iterable[str]) -> dict[str, float]:
+def _normalize_weights(
+    weights: dict[str, float], models: Iterable[str]
+) -> dict[str, float]:
     """Ensure weights are non-negative and sum to 1, covering all models."""
     out = {m: max(0.0, weights.get(m, 0.0)) for m in models}
     total = sum(out.values())
@@ -578,7 +630,9 @@ def _normalize_weights(weights: dict[str, float], models: Iterable[str]) -> dict
     return {m: v / total for m, v in out.items()}
 
 
-def _weighted_stats(df: pd.DataFrame, weights: dict[str, float]) -> tuple[dict[str, float], dict[str, float]]:
+def _weighted_stats(
+    df: pd.DataFrame, weights: dict[str, float]
+) -> tuple[dict[str, float], dict[str, float]]:
     """Compute weighted mean and std per variable across models."""
     wmean: dict[str, float] = {}
     wstd: dict[str, float] = {}
@@ -602,7 +656,9 @@ def _weighted_stats(df: pd.DataFrame, weights: dict[str, float]) -> tuple[dict[s
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
 
     # Quick smoke test: 1 city, 7 days backfill
     print("\n=== Live ensemble forecast (Miami) ===")
@@ -615,19 +671,29 @@ if __name__ == "__main__":
     print("\n=== Archive actuals (Miami, last 7 days) ===")
     end = datetime.now(UTC).strftime("%Y-%m-%d")
     start = pd.Timestamp(end) - pd.Timedelta(days=7)
-    df = fetch_archive_actuals(25.7617, -80.1918, city="Miami",
-                               start_date=start.strftime("%Y-%m-%d"), end_date=end)
+    df = fetch_archive_actuals(
+        25.7617,
+        -80.1918,
+        city="Miami",
+        start_date=start.strftime("%Y-%m-%d"),
+        end_date=end,
+    )
     print(df.head(10) if not df.empty else "(empty)")
 
     print("\n=== Historical forecast ensemble (Miami, last 14 days, per-model) ===")
     hist = fetch_historical_forecast_ensemble(
-        25.7617, -80.1918,
-        start_date=start.strftime("%Y-%m-%d"), end_date=end,
+        25.7617,
+        -80.1918,
+        start_date=start.strftime("%Y-%m-%d"),
+        end_date=end,
         city="Miami",
     )
     if not hist.empty:
         print(f"rows={len(hist)} models={sorted(hist['model'].unique())}")
-        print(hist.pivot_table(index="date", columns="model", values="value",
-                               aggfunc="first").head(15))
+        print(
+            hist.pivot_table(
+                index="date", columns="model", values="value", aggfunc="first"
+            ).head(15)
+        )
     else:
         print("(empty)")

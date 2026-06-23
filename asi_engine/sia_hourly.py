@@ -242,8 +242,19 @@ class TargetAgent:
         new_weights = _normalise(new_weights)
 
         # Also randomly nudge min_edge / kelly by a tiny amount
-        new_min_edge = max(0.01, min(0.15, parent.min_edge + self.rng.choice([-0.01, -0.005, 0, 0.005, 0.01])))
-        new_kelly = max(0.05, min(0.30, parent.kelly_fraction + self.rng.choice([-0.02, -0.01, 0, 0.01, 0.02])))
+        new_min_edge = max(
+            0.01,
+            min(
+                0.15, parent.min_edge + self.rng.choice([-0.01, -0.005, 0, 0.005, 0.01])
+            ),
+        )
+        new_kelly = max(
+            0.05,
+            min(
+                0.30,
+                parent.kelly_fraction + self.rng.choice([-0.02, -0.01, 0, 0.01, 0.02]),
+            ),
+        )
 
         return Hypothesis(
             description=f"SIA hourly: +{delta:.3f} {boost} / -{delta:.3f} {trim}",
@@ -259,7 +270,9 @@ class TargetAgent:
             source="sia_weight_mutation",
         )
 
-    def propose_harness_patch(self, parent: Hypothesis, stats: dict[str, float]) -> str | None:
+    def propose_harness_patch(
+        self, parent: Hypothesis, stats: dict[str, float]
+    ) -> str | None:
         """Ask the LLM for a patched harness source.
 
         Returns the new full source code, or None on failure / no LLM.
@@ -321,17 +334,24 @@ class FeedbackAgent:
         self.splits = splits
 
     def evaluate_weight_mutation(self, hyp: Hypothesis) -> dict[str, float]:
-        per_split = [evaluate_hypothesis_oos(self.brier_df, s["test_indices"], hyp) for s in self.splits]
+        per_split = [
+            evaluate_hypothesis_oos(self.brier_df, s["test_indices"], hyp)
+            for s in self.splits
+        ]
         return _mean_stats(per_split)
 
-    def evaluate_harness_patch(self, patched_src: str) -> tuple[dict[str, float] | None, str]:
+    def evaluate_harness_patch(
+        self, patched_src: str
+    ) -> tuple[dict[str, float] | None, str]:
         """Evaluate a harness patch by writing to a temp file and importing.
 
         Returns (stats, error_message). If stats is None, the patch was
         rejected (syntax error, runtime error, or import failure).
         """
         # Write to a temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as tmp:
             tmp.write(patched_src)
             tmp_path = tmp.name
 
@@ -346,7 +366,9 @@ class FeedbackAgent:
             # Load the patched module in an isolated namespace
             import importlib.util
 
-            spec = importlib.util.spec_from_file_location("sia_harness_patched", tmp_path)
+            spec = importlib.util.spec_from_file_location(
+                "sia_harness_patched", tmp_path
+            )
             if spec is None or spec.loader is None:
                 return None, "Could not load patched module"
             mod = importlib.util.module_from_spec(spec)
@@ -446,7 +468,10 @@ class FeedbackAgent:
             # this is a degraded signal but it's what we have without
             # the full temp-forecast join. The harness is still being
             # tested on its functional form.)
-            forecasts = {DEFAULT_MODELS[i]: probs[i] if i < len(probs) else 0.5 for i in range(len(DEFAULT_MODELS))}
+            forecasts = {
+                DEFAULT_MODELS[i]: probs[i] if i < len(probs) else 0.5
+                for i in range(len(DEFAULT_MODELS))
+            }
             try:
                 p_yes = mod.predict_yes_probability(
                     forecasts=forecasts,
@@ -510,7 +535,9 @@ def _load_best() -> tuple[Hypothesis | None, dict[str, float] | None]:
             data = json.load(f)
         stats = data.pop("stats", {})
         data.pop("saved_at", "")
-        hyp = Hypothesis(**{k: v for k, v in data.items() if k in Hypothesis.__dataclass_fields__})
+        hyp = Hypothesis(
+            **{k: v for k, v in data.items() if k in Hypothesis.__dataclass_fields__}
+        )
         return hyp, stats
     except Exception as e:
         logger.warning("Could not load SIA best: %s", e)
@@ -656,7 +683,8 @@ def run_sia_hourly(
 
             improved = (
                 cand_stats["sharpe"] > best_stats.get("sharpe", -1e9)
-                and cand_stats["brier_score"] <= best_stats.get("brier_score", 1.0) * 1.05
+                and cand_stats["brier_score"]
+                <= best_stats.get("brier_score", 1.0) * 1.05
                 and cand_stats["total_trades"] >= 3
             )
 
@@ -684,7 +712,9 @@ def run_sia_hourly(
                     cand_stats["sharpe"],
                     best_stats.get("sharpe", 0.0),
                 )
-                _append_results_tsv(1, "weight_mutation", cand_hyp, cand_stats, "reject")
+                _append_results_tsv(
+                    1, "weight_mutation", cand_hyp, cand_stats, "reject"
+                )
                 actions_taken.append(
                     {
                         "action": "weight_mutation",
@@ -728,7 +758,9 @@ def run_sia_hourly(
                 continue
 
             # Accept harness patch only if Brier improves meaningfully
-            improved = cand_stats["brier_score"] < best_stats.get("brier_score", 1.0) * 0.95
+            improved = (
+                cand_stats["brier_score"] < best_stats.get("brier_score", 1.0) * 0.95
+            )
             if improved:
                 logger.info(
                     "  [harness_patch] ✓ brier %.4f < %.4f — persisting patched harness",
@@ -757,7 +789,9 @@ def run_sia_hourly(
                     cand_stats["brier_score"],
                     best_stats.get("brier_score", 1.0) * 0.95,
                 )
-                _append_results_tsv(1, "harness_patch", parent_hyp, cand_stats, "reject")
+                _append_results_tsv(
+                    1, "harness_patch", parent_hyp, cand_stats, "reject"
+                )
                 actions_taken.append(
                     {
                         "action": "harness_patch",
@@ -795,8 +829,12 @@ if __name__ == "__main__":
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    parser = argparse.ArgumentParser(description="SIA hourly weight + harness update loop")
-    parser.add_argument("--llm", action="store_true", help="Use LLM for harness patches")
+    parser = argparse.ArgumentParser(
+        description="SIA hourly weight + harness update loop"
+    )
+    parser.add_argument(
+        "--llm", action="store_true", help="Use LLM for harness patches"
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

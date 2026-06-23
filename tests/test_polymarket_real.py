@@ -65,7 +65,9 @@ class TestExtractCity:
         assert scraper._extract_city("Will miami have temperature above 90F?") == "KMIA"
 
     def test_finds_multiword_city(self, scraper):
-        assert scraper._extract_city("Will new york have temperature above 90F?") == "KLGA"
+        assert (
+            scraper._extract_city("Will new york have temperature above 90F?") == "KLGA"
+        )
 
     def test_returns_empty_for_unknown_city(self, scraper):
         assert scraper._extract_city("Will Atlantis have temperature above 90F?") == ""
@@ -76,7 +78,9 @@ class TestExtractCity:
 
 class TestExtractDate:
     def test_parses_full_date_with_year(self, scraper):
-        d = scraper._extract_date("Will NYC have temperature above 90F on June 9, 2026?")
+        d = scraper._extract_date(
+            "Will NYC have temperature above 90F on June 9, 2026?"
+        )
         assert d is not None
         assert d.year == 2026
         assert d.month == 6
@@ -111,19 +115,29 @@ class TestExtractDate:
 
 class TestDetermineMarketType:
     def test_above_is_high(self, scraper):
-        assert scraper._determine_market_type("Will temperature be above 90F?") == "HIGH"
+        assert (
+            scraper._determine_market_type("Will temperature be above 90F?") == "HIGH"
+        )
 
     def test_higher_is_high(self, scraper):
-        assert scraper._determine_market_type("Will temperature be higher than 90F?") == "HIGH"
+        assert (
+            scraper._determine_market_type("Will temperature be higher than 90F?")
+            == "HIGH"
+        )
 
     def test_below_is_low(self, scraper):
         assert scraper._determine_market_type("Will temperature be below 32F?") == "LOW"
 
     def test_lower_is_low(self, scraper):
-        assert scraper._determine_market_type("Will temperature be lower than 32F?") == "LOW"
+        assert (
+            scraper._determine_market_type("Will temperature be lower than 32F?")
+            == "LOW"
+        )
 
     def test_neutral_is_range(self, scraper):
-        assert scraper._determine_market_type("What will the temperature be?") == "RANGE"
+        assert (
+            scraper._determine_market_type("What will the temperature be?") == "RANGE"
+        )
 
 
 class TestParseMarket:
@@ -155,7 +169,9 @@ class TestParseMarket:
         assert result["target_date"].month == 6
         assert result["target_date"].day == 9
 
-    def test_parse_handles_missing_tokens_uses_lastTradePrice(self, scraper):
+    def test_parse_handles_missing_tokens_uses_lastTradePrice(
+        self, scraper
+    ):  # noqa: N802
         raw = {
             "id": "test-002",
             "title": "Highest temperature in Miami above 90F on June 9, 2026?",

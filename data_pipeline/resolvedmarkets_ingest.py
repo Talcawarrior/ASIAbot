@@ -67,7 +67,9 @@ class ResolvedMarketsConfig:
     base_url: str = BASE_URL
     timeout: float = DEFAULT_TIMEOUT
     # Rate limiter: minimum seconds between requests
-    min_interval_s: float = float(os.environ.get("RESOLVEDMARKETS_MIN_INTERVAL", str(DEFAULT_MIN_INTERVAL_S)))
+    min_interval_s: float = float(
+        os.environ.get("RESOLVEDMARKETS_MIN_INTERVAL", str(DEFAULT_MIN_INTERVAL_S))
+    )
     # Max retries on 429 / 5xx
     max_retries: int = 5
     # Where to cache snapshot responses (parquet per market_id + day)
@@ -140,7 +142,7 @@ class ResolvedMarketsClient:
 
                 # 429 Too Many Requests — backoff exponentially
                 if resp.status_code == 429:
-                    backoff = min(60.0, 2.0 * (2 ** attempt))
+                    backoff = min(60.0, 2.0 * (2**attempt))
                     retry_after = resp.headers.get("Retry-After")
                     if retry_after:
                         try:
@@ -149,7 +151,11 @@ class ResolvedMarketsClient:
                             pass
                     logger.warning(
                         "ResolvedMarkets 429 on %s %s — backing off %.1fs (attempt %d/%d)",
-                        method, path, backoff, attempt + 1, self.cfg.max_retries,
+                        method,
+                        path,
+                        backoff,
+                        attempt + 1,
+                        self.cfg.max_retries,
                     )
                     time.sleep(backoff)
                     continue
@@ -157,10 +163,13 @@ class ResolvedMarketsClient:
                 # 5xx — retry
                 if 500 <= resp.status_code < 600:
                     if attempt < self.cfg.max_retries:
-                        backoff = 0.5 * (2 ** attempt)
+                        backoff = 0.5 * (2**attempt)
                         logger.warning(
                             "ResolvedMarkets %d on %s %s — retry in %.2fs",
-                            resp.status_code, method, path, backoff,
+                            resp.status_code,
+                            method,
+                            path,
+                            backoff,
                         )
                         time.sleep(backoff)
                         continue
@@ -188,10 +197,13 @@ class ResolvedMarketsClient:
 
             except (requests.Timeout, requests.ConnectionError) as exc:
                 if attempt < self.cfg.max_retries:
-                    backoff = 0.5 * (2 ** attempt)
+                    backoff = 0.5 * (2**attempt)
                     logger.warning(
                         "ResolvedMarkets network error on %s %s: %s — retry in %.2fs",
-                        method, path, exc, backoff,
+                        method,
+                        path,
+                        exc,
+                        backoff,
                     )
                     time.sleep(backoff)
                     continue
@@ -344,7 +356,9 @@ class ResolvedMarketsClient:
             params["end"] = end
         if cursor:
             params["cursor"] = cursor
-        data = self._request("GET", f"/v1/markets/{condition_id}/snapshots", params=params)
+        data = self._request(
+            "GET", f"/v1/markets/{condition_id}/snapshots", params=params
+        )
         if isinstance(data, dict):
             records = data.get("snapshots", data.get("data", []))
             next_cursor = data.get("next_cursor", "") or ""
@@ -366,7 +380,11 @@ class ResolvedMarketsClient:
         cursor = ""
         for page in range(max_pages):
             df, cursor = self.get_market_snapshots(
-                condition_id, start=start, end=end, interval=interval, cursor=cursor,
+                condition_id,
+                start=start,
+                end=end,
+                interval=interval,
+                cursor=cursor,
             )
             if df.empty:
                 break
@@ -383,15 +401,22 @@ class ResolvedMarketsClient:
         interval: str = "5m",
     ) -> pd.DataFrame:
         """Convenience: fetch all snapshots and concatenate into one DataFrame."""
-        frames = list(self.iter_all_snapshots(
-            condition_id, start=start, end=end, interval=interval,
-        ))
+        frames = list(
+            self.iter_all_snapshots(
+                condition_id,
+                start=start,
+                end=end,
+                interval=interval,
+            )
+        )
         if not frames:
             return pd.DataFrame()
         df = pd.concat(frames, ignore_index=True)
         # Cache to disk for offline replay
         os.makedirs(self.cfg.cache_dir, exist_ok=True)
-        cache_path = os.path.join(self.cfg.cache_dir, f"{condition_id}_{interval}.parquet")
+        cache_path = os.path.join(
+            self.cfg.cache_dir, f"{condition_id}_{interval}.parquet"
+        )
         try:
             df.to_parquet(cache_path, index=False)
             logger.info("Cached %d snapshots to %s", len(df), cache_path)
@@ -467,7 +492,9 @@ def client_from_env() -> ResolvedMarketsClient:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-25s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-25s  %(message)s"
+    )
     client = client_from_env()
 
     print("\n=== Health check ===")

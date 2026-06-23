@@ -18,7 +18,9 @@ from engine.calculator import WeatherEngine
 
 
 def _market(hours_from_now: float) -> SimpleNamespace:
-    return SimpleNamespace(resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now))
+    return SimpleNamespace(
+        resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
+    )
 
 
 def test_above_window_returns_min_edge():
@@ -34,20 +36,26 @@ def test_boundary_returns_min_edge():
 def test_midpoint_returns_linear_interp():
     half = bot_config.strategy.edge_escalation_hours / 2
     m = _market(hours_from_now=half)
-    expected = bot_config.strategy.min_edge * (1.0 + (bot_config.strategy.edge_escalation_multiplier - 1.0) * 0.5)
+    expected = bot_config.strategy.min_edge * (
+        1.0 + (bot_config.strategy.edge_escalation_multiplier - 1.0) * 0.5
+    )
     actual = WeatherEngine._compute_effective_min_edge(m)
     assert abs(actual - expected) < 1e-6
 
 
 def test_at_close_returns_max_multiplier():
     m = _market(hours_from_now=0)
-    expected = bot_config.strategy.min_edge * bot_config.strategy.edge_escalation_multiplier
+    expected = (
+        bot_config.strategy.min_edge * bot_config.strategy.edge_escalation_multiplier
+    )
     assert abs(WeatherEngine._compute_effective_min_edge(m) - expected) < 1e-9
 
 
 def test_past_resolution_clamped_to_max():
     m = _market(hours_from_now=-5)
-    expected = bot_config.strategy.min_edge * bot_config.strategy.edge_escalation_multiplier
+    expected = (
+        bot_config.strategy.min_edge * bot_config.strategy.edge_escalation_multiplier
+    )
     assert abs(WeatherEngine._compute_effective_min_edge(m) - expected) < 1e-9
 
 

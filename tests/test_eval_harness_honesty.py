@@ -6,17 +6,18 @@ Sharpe/ROI numbers in the README).
 """
 
 import io
-import math
+
+# eval_harness.py is a top-level script in autoresearch/, not a package.
+# We add the autoresearch directory to sys.path so we can import it.
+import os
 import random
 import re
 import sys
 from contextlib import redirect_stdout
 
-# eval_harness.py is a top-level script in autoresearch/, not a package.
-# We add the autoresearch directory to sys.path so we can import it.
-import os
-
-_AUTORESEARCH_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "autoresearch"))
+_AUTORESEARCH_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "autoresearch")
+)
 if _AUTORESEARCH_DIR not in sys.path:
     sys.path.insert(0, _AUTORESEARCH_DIR)
 

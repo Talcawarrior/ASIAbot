@@ -11,7 +11,9 @@ import threading
 
 logger = logging.getLogger("ASI_COGNITION")
 
-COGNITION_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "asi_cognition.json"))
+COGNITION_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "asi_cognition.json")
+)
 
 _lock = threading.Lock()
 
@@ -141,7 +143,9 @@ class CognitionBase:
         try:
             os.makedirs(os.path.dirname(COGNITION_PATH), exist_ok=True)
             with open(COGNITION_PATH, "w", encoding="utf-8") as f:
-                json.dump([node.to_dict() for node in self.nodes], f, indent=2, sort_keys=True)
+                json.dump(
+                    [node.to_dict() for node in self.nodes], f, indent=2, sort_keys=True
+                )
             logger.info("Cognition Base successfully persisted to %s", COGNITION_PATH)
         except Exception as e:
             logger.error("Could not save cognition base to disk: %s", e)

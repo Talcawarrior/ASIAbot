@@ -53,7 +53,9 @@ def _insert_bets(session, n=5, status="won", prefix="test-api-bets"):
             realized_pnl=10.0 if status == "won" else -10.0,
             unrealized_pnl=0.0,
             placed_at=datetime.now(timezone.utc) - timedelta(hours=i),
-            settled_at=datetime.now(timezone.utc) if status in ("won", "lost") else None,
+            settled_at=(
+                datetime.now(timezone.utc) if status in ("won", "lost") else None
+            ),
         )
         session.add(b)
     session.commit()

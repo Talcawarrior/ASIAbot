@@ -15,7 +15,10 @@ class _SafeStreamHandler(logging.StreamHandler):
                 msg = self.format(record)
                 stream = self.stream
                 enc = getattr(stream, "encoding", None) or "utf-8"
-                stream.write(msg.encode(enc, errors="replace").decode(enc, errors="replace") + self.terminator)
+                stream.write(
+                    msg.encode(enc, errors="replace").decode(enc, errors="replace")
+                    + self.terminator
+                )
                 self.flush()
             except Exception:
                 pass
@@ -38,17 +41,26 @@ def setup_logging():
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
 
-    if any(isinstance(h, (logging.StreamHandler, RotatingFileHandler)) for h in root_logger.handlers):
+    if any(
+        isinstance(h, (logging.StreamHandler, RotatingFileHandler))
+        for h in root_logger.handlers
+    ):
         return
 
     console_handler = _SafeStreamHandler()
     console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    console_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     console_handler.setFormatter(console_formatter)
 
-    file_handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8")
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"
+    )
     file_handler.setLevel(logging.INFO)
-    file_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    file_formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
     file_handler.setFormatter(file_formatter)
 
     root_logger.addHandler(console_handler)

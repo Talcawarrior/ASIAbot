@@ -16,10 +16,10 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from asi_engine.cognition_base import CognitionBase
-from database.db import DB_PATH
-from utils.kelly import kelly_bet_amount
-from utils.probability import estimate_probability
+from asi_engine.cognition_base import CognitionBase  # noqa: E402
+from database.db import DB_PATH  # noqa: E402
+from utils.kelly import kelly_bet_amount  # noqa: E402
+from utils.probability import estimate_probability  # noqa: E402
 
 
 def diagnose(parameters: dict) -> dict:
@@ -64,19 +64,31 @@ def diagnose(parameters: dict) -> dict:
         if weight_sum <= 0:
             continue
 
-        weighted_temp = sum(model_weights.get(m, 0.0) * val for m, val in preds.items()) / weight_sum
+        weighted_temp = (
+            sum(model_weights.get(m, 0.0) * val for m, val in preds.items())
+            / weight_sum
+        )
         strike = rng.choice(strike_grid)
         outcome_yes = actual_val > strike
 
         pred_vals = list(preds.values())
         mean = sum(pred_vals) / len(pred_vals)
         std = (
-            max((sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5, 1.0)
+            max(
+                (sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5,
+                1.0,
+            )
             if len(pred_vals) > 1
             else 1.5
         )
 
-        prob = estimate_probability(mean=weighted_temp, std=std, threshold=strike, days_ahead=2, market_type="HIGH")
+        prob = estimate_probability(
+            mean=weighted_temp,
+            std=std,
+            threshold=strike,
+            days_ahead=2,
+            market_type="HIGH",
+        )
         brier_errors.append((prob - (1.0 if outcome_yes else 0.0)) ** 2)
 
         naive_z = (strike - mean) / max(std, 1.0)
@@ -103,10 +115,17 @@ def diagnose(parameters: dict) -> dict:
         if sim_edge >= min_edge and ev > 0:
             prob_win = prob if sim_side == "YES" else (1.0 - prob)
             bet_size = kelly_bet_amount(
-                bankroll, prob_win, entry_price, fraction=kelly_fraction, min_bet=1.0, max_bet_pct=0.03
+                bankroll,
+                prob_win,
+                entry_price,
+                fraction=kelly_fraction,
+                min_bet=1.0,
+                max_bet_pct=0.03,
             )
 
-            won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
+            won = (sim_side == "YES" and outcome_yes) or (
+                sim_side == "NO" and not outcome_yes
+            )
 
             if won:
                 payout = bet_size / entry_price
@@ -166,7 +185,9 @@ def diagnose(parameters: dict) -> dict:
         "avg_loss_pnl": avg_loss,
         "avg_win_size": avg_win_size,
         "avg_loss_size": avg_loss_size,
-        "loss_to_win_pnl_ratio": abs(avg_loss / avg_win) if avg_win != 0 else float("inf"),
+        "loss_to_win_pnl_ratio": (
+            abs(avg_loss / avg_win) if avg_win != 0 else float("inf")
+        ),
         "brier": sum(brier_errors) / len(brier_errors) if brier_errors else 0.25,
         "buckets": dict(buckets),
     }
@@ -191,13 +212,21 @@ if __name__ == "__main__":
     print(f"  Brier score:   {result['brier']:.4f}")
     print()
     print("=== Asymmetric payoff breakdown ===")
-    print(f"  Avg win  PnL: +${result['avg_win_pnl']:.2f} (avg stake ${result['avg_win_size']:.2f})")
-    print(f"  Avg loss PnL: ${result['avg_loss_pnl']:.2f} (avg stake ${result['avg_loss_size']:.2f})")
+    print(
+        f"  Avg win  PnL: +${result['avg_win_pnl']:.2f} (avg stake ${result['avg_win_size']:.2f})"
+    )
+    print(
+        f"  Avg loss PnL: ${result['avg_loss_pnl']:.2f} (avg stake ${result['avg_loss_size']:.2f})"
+    )
     print(f"  Loss/Win PnL ratio: {result['loss_to_win_pnl_ratio']:.2f}x")
     print()
     print("=== PnL by market price bucket ===")
-    print(f"  {'Price':>6}  {'N':>4}  {'WinR':>5}  {'PnL':>10}  {'Stake':>10}  {'ROI%':>6}")
+    print(
+        f"  {'Price':>6}  {'N':>4}  {'WinR':>5}  {'PnL':>10}  {'Stake':>10}  {'ROI%':>6}"
+    )
     for bucket in sorted(result["buckets"].keys()):
         b = result["buckets"][bucket]
         roi = (b["pnl"] / b["stake"] * 100) if b["stake"] > 0 else 0
-        print(f"  {bucket:>6.1f}  {b['n']:>4}  {b['won']/b['n']:>5.2f}  ${b['pnl']:>9.2f}  ${b['stake']:>9.2f}  {roi:>6.1f}")
+        print(
+            f"  {bucket:>6.1f}  {b['n']:>4}  {b['won'] / b['n']:>5.2f}  ${b['pnl']:>9.2f}  ${b['stake']:>9.2f}  {roi:>6.1f}"
+        )

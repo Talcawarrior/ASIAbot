@@ -41,17 +41,23 @@ def isolate_data_dir(tmp_path, monkeypatch):
     # Redirect orchestrator paths
     monkeypatch.setattr(orch, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(orch, "LIVE_WEIGHTS_PATH", str(tmp_path / "model_weights.json"))
-    monkeypatch.setattr(orch, "LIVE_STRATEGY_PATH", str(tmp_path / "strategy_params.json"))
+    monkeypatch.setattr(
+        orch, "LIVE_STRATEGY_PATH", str(tmp_path / "strategy_params.json")
+    )
     monkeypatch.setattr(orch, "ORCHESTRATOR_LOG", str(tmp_path / "llm_loop_runs.jsonl"))
 
     # Redirect each layer's best path
     monkeypatch.setattr(kw, "BEST_PATH", str(tmp_path / "karpathy_best.json"))
     monkeypatch.setattr(kw, "RESULTS_TSV_PATH", str(tmp_path / "karpathy_results.tsv"))
     monkeypatch.setattr(ae, "BEST_PATH", str(tmp_path / "asi_evolve_best.json"))
-    monkeypatch.setattr(ae, "RESULTS_TSV_PATH", str(tmp_path / "asi_evolve_results.tsv"))
+    monkeypatch.setattr(
+        ae, "RESULTS_TSV_PATH", str(tmp_path / "asi_evolve_results.tsv")
+    )
     monkeypatch.setattr(ae, "EXP_DB_PATH", str(tmp_path / "asi_evolve_experiments.db"))
     monkeypatch.setattr(sh, "BEST_PATH", str(tmp_path / "sia_hourly_best.json"))
-    monkeypatch.setattr(sh, "RESULTS_TSV_PATH", str(tmp_path / "sia_hourly_results.tsv"))
+    monkeypatch.setattr(
+        sh, "RESULTS_TSV_PATH", str(tmp_path / "sia_hourly_results.tsv")
+    )
 
     yield
 

@@ -118,7 +118,9 @@ class Hypothesis:
 # ---------------------------------------------------------------------------
 
 
-def _weighted_mean_prob(row: pd.Series, weights: dict[str, float], models: list[str]) -> float | None:
+def _weighted_mean_prob(
+    row: pd.Series, weights: dict[str, float], models: list[str]
+) -> float | None:
     """Return ensemble YES probability for one row.
 
     Expects `row` to contain columns named f"prob_{model}" for each model in
@@ -188,7 +190,7 @@ def evaluate_hypothesis_oos(
     total_staked = 0.0
     brier_errors: list[float] = []
 
-    INIT_BANKROLL = 10000.0
+    INIT_BANKROLL = 10000.0  # noqa: N806
     bankroll = INIT_BANKROLL
 
     for _, row in test_df.iterrows():
@@ -224,7 +226,9 @@ def evaluate_hypothesis_oos(
         # If a snapshot_yes_price column exists (from resolvedmarkets_ingest),
         # prefer that.
         market_yes_price: float | None = None
-        if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
+        if "snapshot_yes_price" in row and not pd.isna(
+            row.get("snapshot_yes_price", float("nan"))
+        ):
             market_yes_price = float(row["snapshot_yes_price"])
         elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
             # Use the resolved yes_price as a degraded market proxy.
@@ -288,16 +292,16 @@ def evaluate_hypothesis_oos(
         #     - Low liquidity (entry < 0.05): 3.0% of stake (thin books)
         #   Gas / on-chain cost: ~$0.10 flat per trade (Polygon tx)
         # These match data/strategy_params.json for single-source-of-truth.
-        FEE_PCT = 0.02          # 2% Polymarket taker fee on winnings
-        GAS_COST_USD = 0.10     # Polygon gas per trade
+        FEE_PCT = 0.02  # noqa: N806  # 2% Polymarket taker fee on winnings
+        GAS_COST_USD = 0.10  # noqa: N806  # Polygon gas per trade
 
         # Adaptive slippage based on entry price (liquidity proxy)
         if entry < 0.05:
-            SLIPPAGE_PCT = 0.03   # thin orderbook
+            SLIPPAGE_PCT = 0.03  # noqa: N806  # thin orderbook
         elif entry < 0.10:
-            SLIPPAGE_PCT = 0.01   # moderate
+            SLIPPAGE_PCT = 0.01  # noqa: N806  # moderate
         else:
-            SLIPPAGE_PCT = 0.005  # deep book
+            SLIPPAGE_PCT = 0.005  # noqa: N806  # deep book
 
         slippage_cost = stake * SLIPPAGE_PCT
         effective_stake = stake + slippage_cost  # you pay more than planned
@@ -306,11 +310,11 @@ def evaluate_hypothesis_oos(
 
         won = (realized_f >= 0.5) == side_yes
         if won:
-            gross_payout = effective_stake / effective_entry   # shares at worse price
+            gross_payout = effective_stake / effective_entry  # shares at worse price
             fee = gross_payout * FEE_PCT
             pnl = gross_payout - fee - effective_stake
         else:
-            pnl = -effective_stake - GAS_COST_USD   # lose stake + gas
+            pnl = -effective_stake - GAS_COST_USD  # lose stake + gas
 
         pnls.append(pnl)
         # NON-COMPOUNDING: use fixed bankroll to avoid exponential blowup
@@ -325,7 +329,9 @@ def evaluate_hypothesis_oos(
             "roi_pct": 0.0,
             "win_rate": 0.0,
             "total_trades": 0,
-            "brier_score": sum(brier_errors) / len(brier_errors) if brier_errors else 0.25,
+            "brier_score": (
+                sum(brier_errors) / len(brier_errors) if brier_errors else 0.25
+            ),
             "total_pnl": 0.0,
             "total_staked": 0.0,
         }
@@ -537,7 +543,9 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
 
     new_min_edge = max(0.01, min(0.15, parent.min_edge + mutation["min_edge_delta"]))
     new_kelly = max(0.05, min(0.30, parent.kelly_fraction + mutation["kelly_delta"]))
-    new_max_bet = max(0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0)))
+    new_max_bet = max(
+        0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0))
+    )
 
     return Hypothesis(
         description=mutation["description"],
@@ -545,7 +553,9 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
         min_edge=round(new_min_edge, 4),
         kelly_fraction=round(new_kelly, 4),
         max_bet_pct=round(new_max_bet, 4),
-        tail_filter_enabled=mutation.get("tail_filter_enabled", parent.tail_filter_enabled),
+        tail_filter_enabled=mutation.get(
+            "tail_filter_enabled", parent.tail_filter_enabled
+        ),
         tail_filter_threshold_high=parent.tail_filter_threshold_high,
         tail_filter_threshold_low=parent.tail_filter_threshold_low,
         tail_filter_correction_high=parent.tail_filter_correction_high,
@@ -559,7 +569,9 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
 # ---------------------------------------------------------------------------
 
 
-def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypothesis | None:
+def llm_propose_hypothesis(
+    parent: Hypothesis, context: dict[str, Any]
+) -> Hypothesis | None:
     """Ask the LLM to propose a hypothesis (optional).
 
     If no ``ZAI_API_KEY`` is set in the environment, returns None and the loop
@@ -630,15 +642,27 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
     try:
         # Validate and merge with parent defaults
         weights = data.get("model_weights", parent.model_weights)
-        weights = _normalise({m: float(weights.get(m, parent.model_weights.get(m, 0.125))) for m in DEFAULT_MODELS})
+        weights = _normalise(
+            {
+                m: float(weights.get(m, parent.model_weights.get(m, 0.125)))
+                for m in DEFAULT_MODELS
+            }
+        )
 
         return Hypothesis(
             description=str(data.get("description", "LLM proposal"))[:200],
             model_weights=weights,
             min_edge=max(0.02, min(0.15, float(data.get("min_edge", parent.min_edge)))),
-            kelly_fraction=max(0.05, min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction)))),
-            max_bet_pct=max(0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))),
-            tail_filter_enabled=bool(data.get("tail_filter_enabled", parent.tail_filter_enabled)),
+            kelly_fraction=max(
+                0.05,
+                min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction))),
+            ),
+            max_bet_pct=max(
+                0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))
+            ),
+            tail_filter_enabled=bool(
+                data.get("tail_filter_enabled", parent.tail_filter_enabled)
+            ),
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,
             tail_filter_correction_high=parent.tail_filter_correction_high,
@@ -761,7 +785,9 @@ def add_per_model_probabilities(
         forecasts_df["join_date"] = pd.to_datetime(
             forecasts_df["target_date"], utc=True, errors="coerce"
         ).dt.date.astype(str)
-        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
+        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna(
+            "temperature_2m_max"
+        )
         forecasts_df = forecasts_df[
             forecasts_df["variable_key"].astype(str).str.contains("max", na=False)
         ]
@@ -794,7 +820,9 @@ def add_per_model_probabilities(
             logger.info(
                 "Forecast join: %d (city, date) pairs needed, %d cached, "
                 "%d missing — fetching from Historical Forecast API",
-                len(needed_pairs), len(cached_pairs), len(missing_pairs),
+                len(needed_pairs),
+                len(cached_pairs),
+                len(missing_pairs),
             )
             try:
                 from data_pipeline.weather_ensemble import (
@@ -830,8 +858,10 @@ def add_per_model_probabilities(
                     end_date = max(dates)
                     try:
                         df = fetch_historical_forecast_ensemble(
-                            lat, lon,
-                            start_date=start_date, end_date=end_date,
+                            lat,
+                            lon,
+                            start_date=start_date,
+                            end_date=end_date,
                             city=city,
                         )
                         if not df.empty:
@@ -839,7 +869,10 @@ def add_per_model_probabilities(
                     except Exception as exc:
                         logger.warning(
                             "Historical forecast fetch failed for %s %s..%s: %s",
-                            city, start_date, end_date, exc,
+                            city,
+                            start_date,
+                            end_date,
+                            exc,
                         )
 
                 if fetched_frames:
@@ -851,15 +884,30 @@ def add_per_model_probabilities(
                         fetched_df["date"], utc=True, errors="coerce"
                     )
                     fetched_df["fetched_at"] = pd.Timestamp.utcnow()
-                    fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
+                    fetched_df["variable_key"] = fetched_df.get(
+                        "variable", "temperature_2m_max"
+                    )
                     fetched_df = fetched_df[
-                        fetched_df["variable_key"].astype(str).str.contains("max", na=False)
+                        fetched_df["variable_key"]
+                        .astype(str)
+                        .str.contains("max", na=False)
                     ]
                     # Append to in-memory forecasts_df for this join + persist
                     # back to disk so future runs hit the cache.
-                    cols = ["city", "latitude", "longitude", "target_date",
-                            "model", "variable", "value", "fetched_at", "join_date"]
-                    fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
+                    cols = [
+                        "city",
+                        "latitude",
+                        "longitude",
+                        "target_date",
+                        "model",
+                        "variable",
+                        "value",
+                        "fetched_at",
+                        "join_date",
+                    ]
+                    fetched_df = fetched_df[
+                        [c for c in cols if c in fetched_df.columns]
+                    ]
                     if forecasts_df.empty:
                         forecasts_df = fetched_df
                     else:
@@ -867,12 +915,15 @@ def add_per_model_probabilities(
                             [forecasts_df, fetched_df], ignore_index=True
                         )
                     try:
-                        ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
+                        ds.write_forecasts(
+                            forecasts_df.drop(columns=["join_date"], errors="ignore")
+                        )
                     except Exception as exc:
                         logger.warning("Failed to persist fetched forecasts: %s", exc)
                     logger.info(
                         "Fetched %d rows from Historical Forecast API across %d cities",
-                        len(fetched_df), len(missing_by_city),
+                        len(fetched_df),
+                        len(missing_by_city),
                     )
             except ImportError:
                 logger.warning(
@@ -1055,8 +1106,12 @@ def run_karpathy_weekly(
                 "split_n": 1,
                 "test_indices": brier_df.index.tolist(),
                 "train_indices": [],
-                "test_start": brier_df["target_date"].min() if "target_date" in brier_df else None,
-                "test_end": brier_df["target_date"].max() if "target_date" in brier_df else None,
+                "test_start": (
+                    brier_df["target_date"].min() if "target_date" in brier_df else None
+                ),
+                "test_end": (
+                    brier_df["target_date"].max() if "target_date" in brier_df else None
+                ),
             }
         ]
 
@@ -1065,7 +1120,10 @@ def run_karpathy_weekly(
     incumbent_stats: dict[str, float] | None = None
     if incumbent:
         # Re-evaluate incumbent on the current splits for a fair comparison
-        per_split = [evaluate_hypothesis_oos(brier_df, s["test_indices"], incumbent) for s in splits]
+        per_split = [
+            evaluate_hypothesis_oos(brier_df, s["test_indices"], incumbent)
+            for s in splits
+        ]
         incumbent_stats = _mean_stats(per_split)
         logger.info(
             "Loaded incumbent: sharpe=%.3f roi=%.2f%% brier=%.4f",
@@ -1111,7 +1169,9 @@ def run_karpathy_weekly(
         logger.info("Hypothesis: %s (source=%s)", hyp.description, hyp.source)
 
         # Evaluate on each split's test window
-        per_split = [evaluate_hypothesis_oos(brier_df, s["test_indices"], hyp) for s in splits]
+        per_split = [
+            evaluate_hypothesis_oos(brier_df, s["test_indices"], hyp) for s in splits
+        ]
         mean_stats = _mean_stats(per_split)
         logger.info(
             "  OOS mean: sharpe=%.3f roi=%.2f%% brier=%.4f trades=%d",
@@ -1132,7 +1192,11 @@ def run_karpathy_weekly(
             _save_best(hyp, mean_stats)
             _append_results_tsv(r, hyp, mean_stats, "keep")
         else:
-            logger.info("  ✗ rejected (sharpe %.3f ≤ incumbent %.3f)", mean_stats["sharpe"], best_stats["sharpe"])
+            logger.info(
+                "  ✗ rejected (sharpe %.3f ≤ incumbent %.3f)",
+                mean_stats["sharpe"],
+                best_stats["sharpe"],
+            )
             _append_results_tsv(r, hyp, mean_stats, "reject")
 
         # Small delay to be friendly to the LLM rate limit
@@ -1191,8 +1255,12 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Karpathy weekly hypothesis loop")
-    parser.add_argument("--rounds", type=int, default=6, help="Number of hypotheses to test")
-    parser.add_argument("--llm", action="store_true", help="Use LLM for hypothesis generation")
+    parser.add_argument(
+        "--rounds", type=int, default=6, help="Number of hypotheses to test"
+    )
+    parser.add_argument(
+        "--llm", action="store_true", help="Use LLM for hypothesis generation"
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

@@ -109,13 +109,19 @@ def test_settle_win_yes():
             assert results["loss"] == 0
             assert results["total_pnl"] > 0
         with get_session() as session:
-            bet_db = session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            bet_db = (
+                session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            )
             assert bet_db.status == "won"
             assert bet_db.realized_pnl > 0
             pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
             assert pf_db.cash_balance > 990.0
             assert pf_db.total_won == 1
-            mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-settle-123").first()
+            mkt = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id == "test-settle-123")
+                .first()
+            )
             assert mkt.status == "settled_win"
     finally:
         _clean()
@@ -134,12 +140,18 @@ def test_settle_loss_yes():
             assert results["loss"] == 1
             assert results["win"] == 0
         with get_session() as session:
-            bet_db = session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            bet_db = (
+                session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            )
             assert bet_db.status == "lost"
             assert bet_db.realized_pnl < 0
             pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
             assert pf_db.total_lost == 1
-            mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-settle-123").first()
+            mkt = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id == "test-settle-123")
+                .first()
+            )
             assert mkt.status == "settled_loss"
     finally:
         _clean()
@@ -158,7 +170,9 @@ def test_settle_win_no():
             assert results["win"] == 1
             assert results["total_pnl"] > 0
         with get_session() as session:
-            bet_db = session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            bet_db = (
+                session.query(Bet).filter(Bet.market_id == "test-settle-123").first()
+            )
             assert bet_db.status == "won"
             assert bet_db.realized_pnl > 0
     finally:
@@ -218,7 +232,11 @@ def test_no_open_bets_market_expired():
         engine = SettlementEngine()
         engine.settle_all()
         with get_session() as session:
-            mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-no-bets").first()
+            mkt = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id == "test-no-bets")
+                .first()
+            )
             assert mkt.status == "expired"
     finally:
         _clean()

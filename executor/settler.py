@@ -1,4 +1,5 @@
 """Settlement engine: resolves bets via Polymarket Gamma API resolution."""
+
 # pylint: disable=import-error,broad-exception-caught
 
 import json
@@ -83,11 +84,15 @@ class SettlementEngine:
         # Post-settlement portfolio sync
         if markets_to_settle:
             with get_session() as sync_session:
-                portfolio = sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
+                portfolio = (
+                    sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
+                )
                 if portfolio:
                     portfolio.total_value = portfolio.cash_balance
                     portfolio.current_value = portfolio.cash_balance
-                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)  # pyright: ignore
+                    portfolio.last_updated = datetime.now(timezone.utc).replace(
+                        tzinfo=None
+                    )  # pyright: ignore
                     sync_session.commit()
 
         logger.info(
@@ -106,7 +111,9 @@ class SettlementEngine:
 
     # ── Single-market settlement ───────────────────────────────────────────
 
-    def _settle_market(self, session, market) -> dict | None:  # pylint: disable=too-many-locals
+    def _settle_market(
+        self, session, market
+    ) -> dict | None:  # pylint: disable=too-many-locals
         """Settle a single market via Gamma API resolution.
 
         Returns ``{"won": bool, "pnl": float}`` on success,
@@ -129,7 +136,11 @@ class SettlementEngine:
 
         # ── Fetch resolution from Gamma API ────────────────────────────────
         outcome = self._fetch_market_resolution(market)
-        if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+        if (
+            outcome is None
+            and market.target_date
+            and (now_naive - market.target_date) > timedelta(hours=48)
+        ):
             # Fallback: resolution tarihi +48h geçmişse, outcomePrices'a bak
             outcome = self._fallback_price_resolution(market)
             if outcome:
@@ -190,11 +201,15 @@ class SettlementEngine:
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 if bet_won:
-                    credit_settlement(session, payout, fee, f"settle:{bet.market_id}:won")
+                    credit_settlement(
+                        session, payout, fee, f"settle:{bet.market_id}:won"
+                    )
                     portfolio.total_won = (portfolio.total_won or 0) + 1
                 else:
                     portfolio.total_lost = (portfolio.total_lost or 0) + 1
-                portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
+                portfolio.total_realized_pnl = (
+                    portfolio.total_realized_pnl or 0
+                ) + realized_pnl
 
         if any_settled:
             market.status = "settled_win" if outcome == "YES" else "settled_loss"
@@ -280,12 +295,14 @@ class SettlementEngine:
             outcome = "NO"
         else:
             return None
-        market.raw_data = json.dumps({
-            "source": "fallback_price",
-            "outcome": outcome,
-            "outcomePrices": prices,
-            "settled_at": datetime.now(timezone.utc).isoformat(),
-        })
+        market.raw_data = json.dumps(
+            {
+                "source": "fallback_price",
+                "outcome": outcome,
+                "outcomePrices": prices,
+                "settled_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         return outcome
 
     def _call_gamma_api(self, market) -> dict | None:
@@ -309,7 +326,9 @@ class SettlementEngine:
         if not raw_prices:
             return None
         try:
-            prices = json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+            prices = (
+                json.loads(raw_prices) if isinstance(raw_prices, str) else raw_prices
+            )
         except (json.JSONDecodeError, TypeError):
             logger.warning(
                 "Cannot parse outcomePrices for %s: %s",
@@ -331,7 +350,9 @@ class SettlementEngine:
     @staticmethod
     def _check_stale_pending(market, now_naive: datetime) -> None:
         """Log an ERROR if a market has been pending longer than 48 hours."""
-        if market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+        if market.target_date and (now_naive - market.target_date) > timedelta(
+            hours=48
+        ):
             logger.error(
                 "Market %s has been pending >48h (target=%s). Gamma API may not have resolved it yet.",
                 market.id,

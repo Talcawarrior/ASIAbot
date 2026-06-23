@@ -30,7 +30,7 @@ class PolymarketConfig:
     api_key: str = os.getenv("POLY_API_KEY", "")
     api_secret: str = os.getenv("POLY_API_SECRET", "")
     api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
-    weather_keywords: list = None
+    weather_keywords: list = None  # type: ignore[assignment]
 
     def __post_init__(self):
         self.weather_keywords = [
@@ -156,10 +156,10 @@ class RiskConfig:
 class BotConfig:
     """Combined configurations."""
 
-    polymarket: PolymarketConfig = None
-    meteo: MeteoConfig = None
-    strategy: StrategyConfig = None
-    risk: RiskConfig = None
+    polymarket: PolymarketConfig = None  # type: ignore[assignment]
+    meteo: MeteoConfig = None  # type: ignore[assignment]
+    strategy: StrategyConfig = None  # type: ignore[assignment]
+    risk: RiskConfig = None  # type: ignore[assignment]
 
     def __post_init__(self):
         self.polymarket = self.polymarket or PolymarketConfig()
@@ -196,23 +196,25 @@ class Config:
 
     MODEL_WEIGHTS = {
         "gfs_seamless": 0.30,
-        "ecmwf_ifs04": 0.25,
-        "gem_seamless": 0.15,
-        "icon_seamless": 0.10,
-        "jma_msm": 0.08,
+        "ecmwf_ifs025": 0.25,
+        "gem_global": 0.15,
+        "icon_global": 0.10,
+        "jma_seamless": 0.08,
         "cma_grapes_global": 0.05,
         "ukmo_seamless": 0.04,
         "meteofrance_seamless": 0.03,
     }
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    LOG_FILE = _resolve_path(os.getenv("LOG_FILE"), "logs/bot.log")
+    LOG_FILE = _resolve_path(os.getenv("LOG_FILE") or "", "logs/bot.log")  # type: ignore[arg-type]
     LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
-    DB_PATH = _resolve_path(os.getenv("DB_PATH"), "data/bot.db")
+    DB_PATH = _resolve_path(os.getenv("DB_PATH") or "", "data/bot.db")  # type: ignore[arg-type]
     DB_ECHO = os.getenv("DB_ECHO", "false").lower() == "true"
     TEMP_UNIT = "celsius"
     DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
-    HOST = os.getenv("HOST", "127.0.0.1")  # Safe default; set 0.0.0.0 only behind a reverse proxy
+    HOST = os.getenv(
+        "HOST", "127.0.0.1"
+    )  # Safe default; set 0.0.0.0 only behind a reverse proxy
     PORT = int(os.getenv("PORT", "8091"))
 
     ICAO_COORDS = {
@@ -498,7 +500,9 @@ def apply_persisted_strategy_params() -> dict:
         # Don't crash — just log. The defaults are still safe.
         import logging
 
-        logging.getLogger("CONFIG").warning("Post-apply consistency check failed: %s", e)
+        logging.getLogger("CONFIG").warning(
+            "Post-apply consistency check failed: %s", e
+        )
 
     return applied
 
@@ -522,4 +526,6 @@ try:
 except Exception as _e:
     import logging
 
-    logging.getLogger("CONFIG").warning("Could not apply persisted strategy params: %s", _e)
+    logging.getLogger("CONFIG").warning(
+        "Could not apply persisted strategy params: %s", _e
+    )

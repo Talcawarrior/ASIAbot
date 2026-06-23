@@ -15,7 +15,9 @@ from engine.calculator import Calculator
 
 
 def _market(hours_from_now: float) -> SimpleNamespace:
-    return SimpleNamespace(resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now))
+    return SimpleNamespace(
+        resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
+    )
 
 
 def test_calculator_static_method_exists():

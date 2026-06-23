@@ -28,7 +28,8 @@ class DataBackfiller:
         """Initialize historical calibrations and bias tracking table in SQLite."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS historical_calibrations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 city_code TEXT,
@@ -41,7 +42,8 @@ class DataBackfiller:
                 bias REAL,
                 UNIQUE(city_code, date, metric, model)
             )
-        """)
+        """
+        )
         conn.commit()
         conn.close()
 
@@ -51,14 +53,18 @@ class DataBackfiller:
         Loops back through `past_days` for a subset of major cities, matches
         the predictions vs actuals, and saves them to the DB.
         """
-        logger.info("ASI Backfiller: Starting deep backfill for past %d days...", past_days)
+        logger.info(
+            "ASI Backfiller: Starting deep backfill for past %d days...", past_days
+        )
 
         # Select a representative set of cities from ICAO map
         all_cities = list(config.CITY_ICAO_MAP.items())[:max_cities]
 
         now = datetime.now(UTC)
         start_date_dt = now - timedelta(days=past_days + 1)
-        end_date_dt = now - timedelta(days=2)  # Archive is fully complete up to 2 days ago
+        end_date_dt = now - timedelta(
+            days=2
+        )  # Archive is fully complete up to 2 days ago
 
         start_str = start_date_dt.strftime("%Y-%m-%d")
         end_str = end_date_dt.strftime("%Y-%m-%d")
@@ -91,7 +97,13 @@ class DataBackfiller:
                 continue
 
             lat, lon = coords
-            logger.info("ASI Backfiller: Querying %s (%s) coordinates=(%.4f, %.4f)...", city_name, icao_code, lat, lon)
+            logger.info(
+                "ASI Backfiller: Querying %s (%s) coordinates=(%.4f, %.4f)...",
+                city_name,
+                icao_code,
+                lat,
+                lon,
+            )
 
             # 1. Fetch historical forecasts from Open-Meteo Historical Forecast API
             forecast_url = "https://historical-forecast-api.open-meteo.com/v1/forecast"
@@ -121,7 +133,10 @@ class DataBackfiller:
                 a_resp = requests.get(archive_url, params=a_params, timeout=15)
 
                 if f_resp.status_code != 200 or a_resp.status_code != 200:
-                    logger.warning("ASI Backfiller: Failed API response for city %s. Skipping.", city_name)
+                    logger.warning(
+                        "ASI Backfiller: Failed API response for city %s. Skipping.",
+                        city_name,
+                    )
                     continue
 
                 f_data = f_resp.json().get("daily", {})
@@ -142,7 +157,11 @@ class DataBackfiller:
                     for api_m, internal_m in model_names_mapping.items():
                         # Maximum temperature
                         pred_max_key = f"temperature_2m_max_{api_m}"
-                        pred_max = f_data.get(pred_max_key, [])[idx] if pred_max_key in f_data else None
+                        pred_max = (
+                            f_data.get(pred_max_key, [])[idx]
+                            if pred_max_key in f_data
+                            else None
+                        )
 
                         if pred_max is not None and act_max is not None:
                             bias_max = round(pred_max - act_max, 3)
@@ -167,7 +186,11 @@ class DataBackfiller:
 
                         # Minimum temperature
                         pred_min_key = f"temperature_2m_min_{api_m}"
-                        pred_min = f_data.get(pred_min_key, [])[idx] if pred_min_key in f_data else None
+                        pred_min = (
+                            f_data.get(pred_min_key, [])[idx]
+                            if pred_min_key in f_data
+                            else None
+                        )
 
                         if pred_min is not None and act_min is not None:
                             bias_min = round(pred_min - act_min, 3)
@@ -193,9 +216,14 @@ class DataBackfiller:
                 conn.commit()
 
             except Exception as e:
-                logger.error("ASI Backfiller: Error backfilling city %s: %s", city_name, e)
+                logger.error(
+                    "ASI Backfiller: Error backfilling city %s: %s", city_name, e
+                )
                 continue
 
         conn.close()
-        logger.info("ASI Backfiller: Deep backfill completed! Loaded %d calibration data points.", records_inserted)
+        logger.info(
+            "ASI Backfiller: Deep backfill completed! Loaded %d calibration data points.",
+            records_inserted,
+        )
         return records_inserted

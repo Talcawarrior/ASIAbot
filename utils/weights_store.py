@@ -37,8 +37,12 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Project root: two parents up from utils/ -> repo root.
-_WEIGHTS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json"))
-_STRATEGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json"))
+_WEIGHTS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
+)
+_STRATEGY_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
+)
 
 # Diversification floor — no model may drop below this weight after save.
 # Set to 5% so the ensemble cannot collapse to a 1-2 model solution even
@@ -52,10 +56,10 @@ MIN_MODEL_WEIGHT = 0.05
 # to a 2-model solution after karpathy_search or optimize_weights.
 ALL_ENSEMBLE_MODELS = [
     "gfs_seamless",
-    "ecmwf_ifs04",
-    "gem_seamless",
-    "icon_seamless",
-    "jma_msm",
+    "ecmwf_ifs025",
+    "gem_global",
+    "icon_global",
+    "jma_seamless",
     "cma_grapes_global",
     "ukmo_seamless",
     "meteofrance_seamless",
@@ -137,7 +141,10 @@ def _apply_floor(
     if floor * n >= 1.0:
         logger.warning(
             "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, "
-            "falling back to uniform 1/%d", floor, n, n,
+            "falling back to uniform 1/%d",
+            floor,
+            n,
+            n,
         )
         uniform = round(1.0 / n, 4)
         return {k: uniform for k in weights}

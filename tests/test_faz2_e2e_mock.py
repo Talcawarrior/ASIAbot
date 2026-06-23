@@ -28,7 +28,13 @@ from database.db import get_session, init_db  # noqa: E402
 init_db()
 
 from config import settings  # noqa: E402
-from database.models import Analysis, Bet, Portfolio, WeatherForecast, WeatherMarket  # noqa: E402
+from database.models import (  # noqa: E402
+    Analysis,
+    Bet,
+    Portfolio,
+    WeatherForecast,
+    WeatherMarket,
+)
 from engine.calculator import Calculator  # noqa: E402
 
 
@@ -55,7 +61,9 @@ def test_analysis_via_metric_map():
             session.commit()
 
         # Create a target date 2 days in the future
-        target_date = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2)
+        target_date = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            days=2
+        )
         target_date = target_date.replace(hour=23, minute=59, second=59)
 
         # Step 1: Create market with metric="temperature_max" (Faz 1 format)
@@ -82,10 +90,10 @@ def test_analysis_via_metric_map():
         # Step 2: Create WeatherForecast rows with metric="temperature_max" (matching market metric)
         forecasts_data = [
             ("gfs_seamless", 31.5, 0.30),
-            ("ecmwf_ifs04", 32.1, 0.25),
-            ("gem_seamless", 30.8, 0.15),
-            ("icon_seamless", 29.5, 0.10),
-            ("jma_msm", 31.0, 0.08),
+            ("ecmwf_ifs025", 32.1, 0.25),
+            ("gem_global", 30.8, 0.15),
+            ("icon_global", 29.5, 0.10),
+            ("jma_seamless", 31.0, 0.08),
             ("cma_grapes_global", 30.2, 0.05),
             ("ukmo_seamless", 30.0, 0.04),
             ("meteofrance_seamless", 31.8, 0.03),
@@ -105,7 +113,9 @@ def test_analysis_via_metric_map():
             )
             session.add(wf)
         session.commit()
-        print(f"  Forecasts created: {len(forecasts_data)} rows, metric='temperature_max'")
+        print(
+            f"  Forecasts created: {len(forecasts_data)} rows, metric='temperature_max'"
+        )
 
         # Step 3: Run Calculator.analyze_market()
         calc = Calculator()
@@ -119,10 +129,14 @@ def test_analysis_via_metric_map():
         # Restore
         settings.bot_config.strategy.min_edge = orig_min_edge
 
-        assert analysis_instance is not None, "❌ Analysis is NULL! METRIC_MAP not working."
+        assert (
+            analysis_instance is not None
+        ), "❌ Analysis is NULL! METRIC_MAP not working."
 
         # Re-query from DB to avoid DetachedInstanceError
-        analysis = session.query(Analysis).filter(Analysis.market_id == "test-e2e-001").first()
+        analysis = (
+            session.query(Analysis).filter(Analysis.market_id == "test-e2e-001").first()
+        )
 
         assert analysis is not None, "❌ Analysis not found in DB!"
         print(f"  Analysis created: id={analysis.id}")
@@ -134,11 +148,15 @@ def test_analysis_via_metric_map():
         print(f"    num_sources={analysis.num_sources}")
 
         assert analysis.estimated_probability > 0, "❌ probability is 0!"
-        assert analysis.num_sources == len(forecasts_data), (
-            f"❌ Expected {len(forecasts_data)} sources, got {analysis.num_sources}"
-        )
-        assert analysis.edge > 0, "❌ edge should be positive (forecasts > threshold 30C)"
-        assert analysis.should_bet is True, f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
+        assert analysis.num_sources == len(
+            forecasts_data
+        ), f"❌ Expected {len(forecasts_data)} sources, got {analysis.num_sources}"
+        assert (
+            analysis.edge > 0
+        ), "❌ edge should be positive (forecasts > threshold 30C)"
+        assert (
+            analysis.should_bet is True
+        ), f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
         assert analysis.recommended_amount > 0, "❌ recommended_amount is 0!"
 
         print("\n  ✅ TEST 1 PASSED: METRIC_MAP works correctly")
@@ -163,7 +181,9 @@ def test_analysis_via_metric_map():
         print(f"    price={bet.price:.4f}")
         print(f"    shares={bet.shares:.4f}")
 
-        assert bet.status == "placed", f"❌ Bet status is '{bet.status}', expected 'placed'"
+        assert (
+            bet.status == "placed"
+        ), f"❌ Bet status is '{bet.status}', expected 'placed'"
         assert bet.amount > 0, "❌ Bet amount is 0!"
         assert bet.price > 0, "❌ Bet price is 0!"
 
@@ -192,8 +212,12 @@ def test_scheduler_uses_calculator():
     import jobs.scheduler as scheduler
 
     src = inspect.getsource(scheduler.run_analyze)
-    assert "from engine.calculator import Calculator" in src, "❌ scheduler.run_analyze does not import Calculator!"
-    assert "calc.analyze_market" in src, "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
+    assert (
+        "from engine.calculator import Calculator" in src
+    ), "❌ scheduler.run_analyze does not import Calculator!"
+    assert (
+        "calc.analyze_market" in src
+    ), "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
     print("✅ TEST 4 PASSED: scheduler.run_analyze uses Calculator.analyze_market()")
 
 

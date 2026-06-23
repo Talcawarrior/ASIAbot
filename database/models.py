@@ -57,8 +57,12 @@ class WeatherMarket(Base):
     metric = Column(String)  # "temperature_max"
     threshold = Column(Float)  # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)  # "fahrenheit" or "celsius"
-    threshold_low = Column(Float, nullable=True)  # range lower bound (°C), e.g. "88-89°F" → 31.1
-    threshold_high = Column(Float, nullable=True)  # range upper bound (°C), e.g. "88-89°F" → 31.7
+    threshold_low = Column(
+        Float, nullable=True
+    )  # range lower bound (°C), e.g. "88-89°F" → 31.1
+    threshold_high = Column(
+        Float, nullable=True
+    )  # range upper bound (°C), e.g. "88-89°F" → 31.7
     target_date = Column(DateTime)  # 2025-07-04
     latitude = Column(Float)  # Latitude
     longitude = Column(Float)  # Longitude

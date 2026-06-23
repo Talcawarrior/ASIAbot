@@ -3,7 +3,6 @@
 import pytest
 
 from utils.slippage import (
-    SlippageEstimate,
     _tiered_slippage,
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,

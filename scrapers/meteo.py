@@ -92,7 +92,9 @@ class MeteoFetcher:
             await client.aclose()
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
+    def _fetch_open_meteo(
+        self, lat: float, lon: float, target_date: str
+    ) -> dict | None:
         """Open-Meteo API (Ã¼cretsiz, key gerekmez).
 
         Results are cached in-process keyed by (lat, lon, date, source) so
@@ -145,7 +147,9 @@ class MeteoFetcher:
         return None
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_weatherapi(self, lat: float, lon: float, target_date: str) -> dict | None:
+    def _fetch_weatherapi(
+        self, lat: float, lon: float, target_date: str
+    ) -> dict | None:
         """WeatherAPI.com."""
         if not bot_config.meteo.weatherapi_key:
             return None
@@ -185,7 +189,9 @@ class MeteoFetcher:
         _cache_set(cache_key, None)
         return None
 
-    def fetch_for_markets(self, market_ids: list[str], city: str, target_date: datetime, metric: str) -> int:
+    def fetch_for_markets(
+        self, market_ids: list[str], city: str, target_date: datetime, metric: str
+    ) -> int:
         """Fetch weather data for a group of markets sharing the same city/date/metric.
 
         Coordinate resolution: city name → CITY_ICAO_MAP → ICAO_COORDS.
@@ -270,7 +276,11 @@ class MeteoFetcher:
             group_info = {}  # key -> (city, city_code, target_date, lat, lon)
 
             for m in open_markets:
-                key = (round(m.latitude or 0.0, 4), round(m.longitude or 0.0, 4), m.target_date.strftime("%Y-%m-%d"))
+                key = (
+                    round(m.latitude or 0.0, 4),
+                    round(m.longitude or 0.0, 4),
+                    m.target_date.strftime("%Y-%m-%d"),
+                )
                 groups[key].append((m.id, m.metric or "temperature_max"))
                 if key not in group_info:
                     group_info[key] = (
@@ -320,7 +330,9 @@ class MeteoFetcher:
                                 total += result["model_count"] * len(mids)
                                 continue
                         except Exception as e:
-                            logger.debug("Ensemble failed for group %s %s: %s", key, metric, e)
+                            logger.debug(
+                                "Ensemble failed for group %s %s: %s", key, metric, e
+                            )
 
                         # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
                         # fetch_for_markets handles its own per-host throttle and internal cache
@@ -335,7 +347,9 @@ class MeteoFetcher:
 
         return total
 
-    def _parallel_fetch_sources(self, lat: float, lon: float, target_date: str) -> dict[str, dict | None]:
+    def _parallel_fetch_sources(
+        self, lat: float, lon: float, target_date: str
+    ) -> dict[str, dict | None]:
         """Fetch Open-Meteo + WeatherAPI concurrently via AsyncHttpClient.
 
         Returns a dict keyed by source name with the same shape as the

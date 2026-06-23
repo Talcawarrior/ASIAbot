@@ -24,7 +24,9 @@ m = ds.read_markets()
 print(f"Loaded {len(m)} markets")
 
 # Pick 3 with clob_token_ids
-sample = m[m["clob_token_ids"].notna() & (m["clob_token_ids"].astype(str) != "[]")].head(3)
+sample = m[
+    m["clob_token_ids"].notna() & (m["clob_token_ids"].astype(str) != "[]")
+].head(3)
 print(f"Probing {len(sample)} markets with clob_token_ids\n")
 
 CLOB = "https://clob.polymarket.com"
@@ -36,6 +38,7 @@ for i, row in enumerate(sample.itertuples(index=False)):
         # try to eval the string repr
         try:
             import json
+
             cids = json.loads(cids.replace("'", '"'))
         except Exception:
             cids = [cids]
@@ -58,6 +61,7 @@ for i, row in enumerate(sample.itertuples(index=False)):
     # Polymarket CLOB rejects intervals >24h. We want "entry price" —
     # the price ~24h before market resolution.
     import pandas as pd
+
     end_ts = pd.Timestamp(row.end_date)
     if end_ts.tz is None:
         end_ts = end_ts.tz_localize("UTC")
@@ -69,7 +73,12 @@ for i, row in enumerate(sample.itertuples(index=False)):
 
     r = requests.get(
         f"{CLOB}/prices-history",
-        params={"market": yes_token, "startTs": start_s, "endTs": end_s, "fidelity": 60},
+        params={
+            "market": yes_token,
+            "startTs": start_s,
+            "endTs": end_s,
+            "fidelity": 60,
+        },
         timeout=20,
     )
     print(f"     GET /prices-history HTTP {r.status_code}")

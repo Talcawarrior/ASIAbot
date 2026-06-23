@@ -19,7 +19,9 @@ gracefully rather than failing collection.
 
 import pytest
 
-httpx = pytest.importorskip("httpx", reason="httpx not installed (needed for FastAPI TestClient)")
+httpx = pytest.importorskip(
+    "httpx", reason="httpx not installed (needed for FastAPI TestClient)"
+)
 from fastapi.testclient import TestClient  # noqa: E402
 
 

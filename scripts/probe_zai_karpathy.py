@@ -88,9 +88,11 @@ def main() -> int:
             finish = resp.choices[0].finish_reason
             usage = resp.usage
             print(f"\n[{i}] HTTP OK | {dt:.2f}s | finish_reason={finish}")
-            print(f"    prompt_tokens={usage.prompt_tokens} "
-                  f"completion_tokens={usage.completion_tokens} "
-                  f"total_tokens={usage.total_tokens}")
+            print(
+                f"    prompt_tokens={usage.prompt_tokens} "
+                f"completion_tokens={usage.completion_tokens} "
+                f"total_tokens={usage.total_tokens}"
+            )
             print(f"    reasoning_content (first 150 chars): {reasoning[:150]!r}")
             print(f"    content (first 400 chars): {content[:400]!r}")
             # Try to parse content as JSON
@@ -106,8 +108,10 @@ def main() -> int:
                 except json.JSONDecodeError as e:
                     print(f"    JSON parse FAILED: {e}")
             else:
-                print(f"    content is empty (finish_reason={finish} suggests "
-                      f"reasoning ate all the tokens — increase max_tokens)")
+                print(
+                    f"    content is empty (finish_reason={finish} suggests "
+                    f"reasoning ate all the tokens — increase max_tokens)"
+                )
         except Exception as e:  # noqa: BLE001
             dt = time.perf_counter() - t0
             print(f"\n[{i}] FAIL {dt:.2f}s {type(e).__name__}: {str(e)[:200]}")

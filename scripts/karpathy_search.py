@@ -38,9 +38,9 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from database.db import DB_PATH
-from utils.kelly import kelly_bet_amount
-from utils.probability import estimate_probability
+from database.db import DB_PATH  # noqa: E402
+from utils.kelly import kelly_bet_amount  # noqa: E402
+from utils.probability import estimate_probability  # noqa: E402
 
 # ── Default model weights (current cognition base best) ─────────────────────
 DEFAULT_WEIGHTS = {
@@ -112,7 +112,9 @@ def _make_candidate(rng: random.Random, briers: dict[str, float]) -> dict:
         weights = {m: round(weights[m] / total, 4) for m in models}
     else:
         # Random perturbation of defaults.
-        weights = {m: max(0.01, DEFAULT_WEIGHTS[m] + rng.gauss(0.0, 0.05)) for m in models}
+        weights = {
+            m: max(0.01, DEFAULT_WEIGHTS[m] + rng.gauss(0.0, 0.05)) for m in models
+        }
         total = sum(weights.values())
         weights = {m: round(weights[m] / total, 4) for m in models}
 
@@ -178,19 +180,31 @@ def _run_backtest(parameters: dict) -> dict:
         if weight_sum <= 0:
             continue
 
-        weighted_temp = sum(model_weights.get(m, 0.0) * val for m, val in preds.items()) / weight_sum
+        weighted_temp = (
+            sum(model_weights.get(m, 0.0) * val for m, val in preds.items())
+            / weight_sum
+        )
         strike = rng.choice(strike_grid)
         outcome_yes = actual_val > strike
 
         pred_vals = list(preds.values())
         mean = sum(pred_vals) / len(pred_vals)
         std = (
-            max((sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5, 1.0)
+            max(
+                (sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5,
+                1.0,
+            )
             if len(pred_vals) > 1
             else 1.5
         )
 
-        prob = estimate_probability(mean=weighted_temp, std=std, threshold=strike, days_ahead=2, market_type="HIGH")
+        prob = estimate_probability(
+            mean=weighted_temp,
+            std=std,
+            threshold=strike,
+            days_ahead=2,
+            market_type="HIGH",
+        )
         brier_errors.append((prob - (1.0 if outcome_yes else 0.0)) ** 2)
 
         naive_z = (strike - mean) / max(std, 1.0)
@@ -238,7 +252,9 @@ def _run_backtest(parameters: dict) -> dict:
                 max_bet_pct=max_bet_pct,
             )
 
-            trade_won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
+            trade_won = (sim_side == "YES" and outcome_yes) or (
+                sim_side == "NO" and not outcome_yes
+            )
 
             if trade_won:
                 payout = bet_size / entry_price
@@ -257,7 +273,14 @@ def _run_backtest(parameters: dict) -> dict:
 
     total_trades = won + lost
     if total_trades == 0:
-        return {"trades": 0, "roi": 0.0, "sharpe": 0.0, "win_rate": 0.0, "pnl": 0.0, "score": -1000.0}
+        return {
+            "trades": 0,
+            "roi": 0.0,
+            "sharpe": 0.0,
+            "win_rate": 0.0,
+            "pnl": 0.0,
+            "score": -1000.0,
+        }
 
     net_pnl = sum(pnls)
     roi = (net_pnl / total_wagered * 100.0) if total_wagered > 0 else 0.0
@@ -317,7 +340,7 @@ def search(num_candidates: int = 500, seed: int = 7, verbose: bool = True):
             best = result
             if verbose and (i < 10 or result["score"] > 0):
                 print(
-                    f"  [{i+1:4d}/{num_candidates}] score={result['score']:+.3f}  "
+                    f"  [{i + 1:4d}/{num_candidates}] score={result['score']:+.3f}  "
                     f"sharpe={result['sharpe']:+.3f}  roi={result['roi']:+7.2f}%  "
                     f"wr={result['win_rate']:.3f}  trades={result['trades']:5d}  "
                     f"min_edge={candidate['min_edge']:.3f}  "
@@ -329,15 +352,17 @@ def search(num_candidates: int = 500, seed: int = 7, verbose: bool = True):
     elapsed = time.time() - start_t
     if verbose:
         print()
-        print(f"Searched {num_candidates} candidates in {elapsed:.1f}s "
-              f"({num_candidates/max(elapsed,0.1):.1f}/sec)")
+        print(
+            f"Searched {num_candidates} candidates in {elapsed:.1f}s "
+            f"({num_candidates / max(elapsed, 0.1):.1f}/sec)"
+        )
         print()
         print("=== Top 10 candidates by score ===")
         leaderboard.sort(key=lambda r: r["score"], reverse=True)
         for i, r in enumerate(leaderboard[:10]):
             c = r["candidate"]
             print(
-                f"  #{i+1}: score={r['score']:+.3f}  "
+                f"  #{i + 1}: score={r['score']:+.3f}  "
                 f"sharpe={r['sharpe']:+.3f}  roi={r['roi']:+7.2f}%  "
                 f"wr={r['win_rate']:.3f}  trades={r['trades']:5d}  "
                 f"min_edge={c['min_edge']:.3f}  "
@@ -400,10 +425,18 @@ def save_best_to_disk(best: dict) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Karpathy-style autonomous parameter search")
-    parser.add_argument("--candidates", type=int, default=500, help="Number of parameter sets to try")
-    parser.add_argument("--seed", type=int, default=7, help="RNG seed for reproducibility")
-    parser.add_argument("--no-save", action="store_true", help="Don't write the best params to disk")
+    parser = argparse.ArgumentParser(
+        description="Karpathy-style autonomous parameter search"
+    )
+    parser.add_argument(
+        "--candidates", type=int, default=500, help="Number of parameter sets to try"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=7, help="RNG seed for reproducibility"
+    )
+    parser.add_argument(
+        "--no-save", action="store_true", help="Don't write the best params to disk"
+    )
     args = parser.parse_args()
 
     print("=" * 72)

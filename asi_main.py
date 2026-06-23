@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from asi_engine.calibration_engine import CalibrationEngine
@@ -56,7 +56,9 @@ class ASIAbotState:
         self.orchestrator = ASIAbotOrchestrator()
         self.backfiller = DataBackfiller()
         self.calibration_engine = CalibrationEngine()
-        logger.info("ASIAbot: Orchestrator, Backfiller and Calibration Engine initialized successfully.")
+        logger.info(
+            "ASIAbot: Orchestrator, Backfiller and Calibration Engine initialized successfully."
+        )
 
 
 state = ASIAbotState()
@@ -92,7 +94,11 @@ DASHBOARD_OUT = os.path.join(os.path.dirname(__file__), "dashboard", "out")
 
 # Mount static files for Next.js build output (JS, CSS, images, etc.)
 if os.path.isdir(DASHBOARD_OUT):
-    app.mount("/_next", StaticFiles(directory=os.path.join(DASHBOARD_OUT, "_next")), name="next_static")
+    app.mount(
+        "/_next",
+        StaticFiles(directory=os.path.join(DASHBOARD_OUT, "_next")),
+        name="next_static",
+    )
 
 
 @app.get("/")
@@ -101,7 +107,9 @@ async def root():
     index_path = os.path.join(DASHBOARD_OUT, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
-    return HTMLResponse("<h1>ASIAbot Dashboard — run <code>cd dashboard && npm run build</code> first</h1>")
+    return HTMLResponse(
+        "<h1>ASIAbot Dashboard — run <code>cd dashboard && npm run build</code> first</h1>"
+    )
 
 
 @app.get("/api/status")
@@ -115,7 +123,9 @@ async def get_status():
 
         # Calculate Realized & Unrealized PnL
         realized_pnl = (
-            db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost", "settled"))).scalar()
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .scalar()
         ) or 0.0
 
         unrealized_pnl = (
@@ -130,7 +140,9 @@ async def get_status():
         total_signals = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
 
         exposure = (
-            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
+            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+            .filter(Bet.status.in_(OPEN_BET_STATUSES))
+            .scalar()
         ) or 0.0
 
         initial_capital = config.INITIAL_PORTFOLIO
@@ -143,7 +155,11 @@ async def get_status():
             .scalar()
         ) or 0.0
         # ROI for CLOSED bets: realized PNL / total stake (bet amounts)
-        total_roi = (realized_pnl / total_stake_settled * 100) if total_stake_settled > 0 else 0.0
+        total_roi = (
+            (realized_pnl / total_stake_settled * 100)
+            if total_stake_settled > 0
+            else 0.0
+        )
 
         return {
             "is_running": state.is_running,
@@ -156,7 +172,9 @@ async def get_status():
                 "total_pnl": float(total_pnl),
                 "total_roi": float(total_roi),
                 "exposure": float(exposure),
-                "max_exposure": round((initial_capital + realized_pnl) * config.TOTAL_EXPOSURE_PCT, 2),
+                "max_exposure": round(
+                    (initial_capital + realized_pnl) * config.TOTAL_EXPOSURE_PCT, 2
+                ),
             },
             "stats": {
                 "total_signals": total_signals,
@@ -204,7 +222,9 @@ async def run_asi_evolve():
 
     # Run the evolution loop in an async executor to prevent blocking
     loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, state.orchestrator.run_evolution_pipeline, 5)
+    result = await loop.run_in_executor(
+        None, state.orchestrator.run_evolution_pipeline, 5
+    )
     return result
 
 
@@ -215,7 +235,9 @@ async def run_asi_backfill(days: int = 90):
         state.backfiller = DataBackfiller()
 
     loop = asyncio.get_running_loop()
-    records_inserted = await loop.run_in_executor(None, state.backfiller.run_deep_backfill, days, 12)
+    records_inserted = await loop.run_in_executor(
+        None, state.backfiller.run_deep_backfill, days, 12
+    )
 
     # Recalculate biases immediately after backfill is completed
     if state.calibration_engine:
@@ -261,7 +283,9 @@ async def get_asi_orderbook(market_id: str = "2513866"):
 @app.post("/api/asi/autoresearch/run")
 async def run_asi_autoresearch(rounds: int = 5):
     """Trigger the standalone AutoResearch AI Scientist engine."""
-    scientist_path = os.path.join(os.path.dirname(__file__), "autoresearch", "auto_scientist.py")
+    scientist_path = os.path.join(
+        os.path.dirname(__file__), "autoresearch", "auto_scientist.py"
+    )
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -281,7 +305,11 @@ async def run_asi_autoresearch(rounds: int = 5):
                     best_sharpe = float(line.split(":")[1].strip())
                 except (ValueError, IndexError):
                     pass
-        return {"status": "success", "best_sharpe": best_sharpe, "output": out_str[:1000]}
+        return {
+            "status": "success",
+            "best_sharpe": best_sharpe,
+            "output": out_str[:1000],
+        }
     except Exception as e:
         return {"status": "error", "message": str(e), "best_sharpe": 2.014}
 
@@ -370,69 +398,101 @@ async def get_health_check():
         h72 = now - timedelta(hours=72)
 
         # ── 1. Activity in last 24h ──
-        bets_opened_24h = db.query(Bet).filter(
-            Bet.placed_at >= h24,
-            Bet.status.in_(OPEN_BET_STATUSES),
-        ).count()
-
-        bets_won_72h = db.query(Bet).filter(
-            Bet.settled_at >= h72,
-            Bet.status == "won",
-        ).count()
-
-        bets_lost_72h = db.query(Bet).filter(
-            Bet.settled_at >= h72,
-            Bet.status == "lost",
-        ).count()
+        bets_opened_24h = (
+            db.query(Bet)
+            .filter(
+                Bet.placed_at >= h24,
+                Bet.status.in_(OPEN_BET_STATUSES),
+            )
+            .count()
+        )
 
         # ── 2. PASS reasons (analyses where should_bet=False) ──
-        pass_analyses = db.query(Analysis).filter(
-            Analysis.analyzed_at >= h24,
-            Analysis.should_bet.is_(False),
-        ).order_by(Analysis.analyzed_at.desc()).limit(20).all()
+        pass_analyses = (
+            db.query(Analysis)
+            .filter(
+                Analysis.analyzed_at >= h24,
+                Analysis.should_bet.is_(False),
+            )
+            .order_by(Analysis.analyzed_at.desc())
+            .limit(20)
+            .all()
+        )
 
         pass_reasons = []
         for a in pass_analyses:
-            pass_reasons.append({
-                "market_id": a.market_id,
-                "edge_pct": round((a.edge or 0) * 100, 2),
-                "reason": a.reason or "Bilinmeyen neden",
-                "time": a.analyzed_at.isoformat() if a.analyzed_at else None,
-            })
+            pass_reasons.append(
+                {
+                    "market_id": a.market_id,
+                    "edge_pct": round((a.edge or 0) * 100, 2),
+                    "reason": a.reason or "Bilinmeyen neden",
+                    "time": a.analyzed_at.isoformat() if a.analyzed_at else None,
+                }
+            )
 
         # ── 3. Edge distribution for placed bets ──
-        recent_bets = db.query(Bet).filter(
-            Bet.placed_at >= h72,
-        ).all()
+        recent_bets = (
+            db.query(Bet)
+            .filter(
+                Bet.placed_at >= h72,
+            )
+            .all()
+        )
 
         edge_values = []
         for b in recent_bets:
             # Try to get edge from linked analysis
             if b.analysis_id:
-                analysis = db.query(Analysis).filter(Analysis.id == b.analysis_id).first()
+                analysis = (
+                    db.query(Analysis).filter(Analysis.id == b.analysis_id).first()
+                )
                 if analysis:
-                    edge_values.append({
-                        "bet_id": b.id,
-                        "raw_edge_pct": round((analysis.raw_edge or 0) * 100, 2) if analysis.raw_edge else None,
-                        "net_edge_pct": round((analysis.edge or 0) * 100, 2) if analysis.edge else None,
-                        "slippage_pct": round((analysis.slippage_pct or 0) * 100, 2) if analysis.slippage_pct else None,
-                        "market_id": b.market_id,
-                        "city": b.city,
-                        "stake": b.stake_amount,
-                        "status": b.status,
-                        "pnl": b.realized_pnl if b.status in ("won", "lost") else b.unrealized_pnl,
-                    })
+                    edge_values.append(
+                        {
+                            "bet_id": b.id,
+                            "raw_edge_pct": (
+                                round((analysis.raw_edge or 0) * 100, 2)
+                                if analysis.raw_edge
+                                else None
+                            ),
+                            "net_edge_pct": (
+                                round((analysis.edge or 0) * 100, 2)
+                                if analysis.edge
+                                else None
+                            ),
+                            "slippage_pct": (
+                                round((analysis.slippage_pct or 0) * 100, 2)
+                                if analysis.slippage_pct
+                                else None
+                            ),
+                            "market_id": b.market_id,
+                            "city": b.city,
+                            "stake": b.stake_amount,
+                            "status": b.status,
+                            "pnl": (
+                                b.realized_pnl
+                                if b.status in ("won", "lost")
+                                else b.unrealized_pnl
+                            ),
+                        }
+                    )
 
-        net_edges = [e["net_edge_pct"] for e in edge_values if e["net_edge_pct"] is not None]
+        net_edges = [
+            e["net_edge_pct"] for e in edge_values if e["net_edge_pct"] is not None
+        ]
         avg_net_edge = sum(net_edges) / len(net_edges) if net_edges else 0
         min_net_edge = min(net_edges) if net_edges else 0
         max_net_edge = max(net_edges) if net_edges else 0
 
         # ── 4. 3-Day Summary ──
-        settled_72h = db.query(Bet).filter(
-            Bet.settled_at >= h72,
-            Bet.status.in_(("won", "lost")),
-        ).all()
+        settled_72h = (
+            db.query(Bet)
+            .filter(
+                Bet.settled_at >= h72,
+                Bet.status.in_(("won", "lost")),
+            )
+            .all()
+        )
 
         total_settled = len(settled_72h)
         wins_72 = sum(1 for b in settled_72h if b.status == "won")
@@ -447,82 +507,108 @@ async def get_health_check():
 
         # Flag 1: 10+ bets in 3 days, 7+ losing
         if total_settled >= 10 and losses_72 >= 7:
-            red_flags.append({
-                "severity": "critical",
-                "message": f"3 günde {total_settled} bet sonuçlandı, {losses_72} tanesi zararda. Calibration bozuk olabilir.",
-                "action": "Botu durdur ve kalibrasyonu kontrol et.",
-            })
+            red_flags.append(
+                {
+                    "severity": "critical",
+                    "message": f"3 günde {total_settled} bet sonuçlandı, {losses_72} tanesi zararda. Calibration bozuk olabilir.",
+                    "action": "Botu durdur ve kalibrasyonu kontrol et.",
+                }
+            )
 
         # Flag 2: No bets opened in 24h (but bot is running)
         if state.is_running and bets_opened_24h == 0:
             # Check if there are any analyses at all
-            any_analyses = db.query(Analysis).filter(Analysis.analyzed_at >= h24).count()
+            any_analyses = (
+                db.query(Analysis).filter(Analysis.analyzed_at >= h24).count()
+            )
             if any_analyses > 0:
-                red_flags.append({
-                    "severity": "warning",
-                    "message": f"Son 24 saatte {any_analyses} analiz yapıldı ama hiç bet açılmadı. Edge threshold çok yüksek olabilir.",
-                    "action": "min_edge'i düşür veya marketleri kontrol et.",
-                })
+                red_flags.append(
+                    {
+                        "severity": "warning",
+                        "message": f"Son 24 saatte {any_analyses} analiz yapıldı ama hiç bet açılmadı. Edge threshold çok yüksek olabilir.",
+                        "action": "min_edge'i düşür veya marketleri kontrol et.",
+                    }
+                )
             else:
-                red_flags.append({
-                    "severity": "info",
-                    "message": "Son 24 saatte hiç analiz yapılmadı. Market taraması çalışıyor mu?",
-                    "action": "Market taramasını kontrol et.",
-                })
+                red_flags.append(
+                    {
+                        "severity": "info",
+                        "message": "Son 24 saatte hiç analiz yapılmadı. Market taraması çalışıyor mu?",
+                        "action": "Market taramasını kontrol et.",
+                    }
+                )
 
         # Flag 3: All net edges below 2.5%
         if net_edges and all(e < 2.5 for e in net_edges):
-            red_flags.append({
-                "severity": "critical",
-                "message": f"Tüm net edge'ler %2.5 altında (ortalama: %{avg_net_edge:.1f}). Maliyeti karşılamıyor.",
-                "action": "Botu durdur. min_edge veya kalibrasyon ayarlarını gözden geçir.",
-            })
+            red_flags.append(
+                {
+                    "severity": "critical",
+                    "message": f"Tüm net edge'ler %2.5 altında (ortalama: %{avg_net_edge:.1f}). Maliyeti karşılamıyor.",
+                    "action": "Botu durdur. min_edge veya kalibrasyon ayarlarını gözden geçir.",
+                }
+            )
 
         # Flag 4: Win rate below 50%
         if total_settled >= 5 and win_rate_72 < 50:
-            red_flags.append({
-                "severity": "critical",
-                "message": f"Win rate %{win_rate_72:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
-                "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
-            })
+            red_flags.append(
+                {
+                    "severity": "critical",
+                    "message": f"Win rate %{win_rate_72:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
+                    "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
+                }
+            )
 
         # Flag 5: Too many bets (50+ in 3 days)
         open_total = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).count()
         if bets_opened_24h > 50 or open_total > 50:
-            red_flags.append({
-                "severity": "warning",
-                "message": f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, {open_total} açık. Risk yönetimi aşılıyor.",
-                "action": "min_edge'i yükselt, Kelly fraction'ı düşür.",
-            })
+            red_flags.append(
+                {
+                    "severity": "warning",
+                    "message": f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, {open_total} açık. Risk yönetimi aşılıyor.",
+                    "action": "min_edge'i yükselt, Kelly fraction'ı düşür.",
+                }
+            )
 
         # Flag 6: Negative total PnL trend
         if total_pnl_72 < 0 and total_settled >= 5:
-            red_flags.append({
-                "severity": "warning",
-                "message": f"3 günlük toplam PnL negatif: ${total_pnl_72:.2f}. Zarar trendi devam ediyor.",
-                "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
-            })
+            red_flags.append(
+                {
+                    "severity": "warning",
+                    "message": f"3 günlük toplam PnL negatif: ${total_pnl_72:.2f}. Zarar trendi devam ediyor.",
+                    "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
+                }
+            )
 
         # ── 6. Daily PnL Timeline (last 7 days) ──
         daily_pnl = []
         for i in range(7):
-            day_start = (now - timedelta(days=i+1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            day_bets = db.query(Bet).filter(
-                Bet.settled_at >= day_start,
-                Bet.settled_at < day_end,
-                Bet.status.in_(("won", "lost")),
-            ).all()
+            day_start = (now - timedelta(days=i + 1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            day_end = (now - timedelta(days=i)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            day_bets = (
+                db.query(Bet)
+                .filter(
+                    Bet.settled_at >= day_start,
+                    Bet.settled_at < day_end,
+                    Bet.status.in_(("won", "lost")),
+                )
+                .all()
+            )
             day_pnl = sum(b.realized_pnl for b in day_bets)
             day_wins = sum(1 for b in day_bets if b.status == "won")
             day_losses = sum(1 for b in day_bets if b.status == "lost")
-            daily_pnl.append({
-                "date": day_start.strftime("%m/%d"),
-                "pnl": round(day_pnl, 2),
-                "wins": day_wins,
-                "losses": day_losses,
-                "total": day_wins + day_losses,
-            })
+            daily_pnl.append(
+                {
+                    "date": day_start.strftime("%m/%d"),
+                    "pnl": round(day_pnl, 2),
+                    "wins": day_wins,
+                    "losses": day_losses,
+                    "total": day_wins + day_losses,
+                }
+            )
         daily_pnl.reverse()
 
         # ── 7. Overall verdict ──
@@ -547,12 +633,23 @@ async def get_health_check():
             "uptime_check": {
                 "bot_running": state.is_running,
                 "has_open_bets": open_total > 0,
-                "has_recent_activity": bets_opened_24h > 0 or (any(a.analyzed_at >= h24 for a in db.query(Analysis).filter(Analysis.analyzed_at >= h24).limit(1).all())),
+                "has_recent_activity": bets_opened_24h > 0
+                or (
+                    any(
+                        a.analyzed_at >= h24
+                        for a in db.query(Analysis)
+                        .filter(Analysis.analyzed_at >= h24)
+                        .limit(1)
+                        .all()
+                    )
+                ),
             },
             "activity_24h": {
                 "bets_opened": bets_opened_24h,
                 "pass_reasons": pass_reasons,
-                "total_analyses": db.query(Analysis).filter(Analysis.analyzed_at >= h24).count(),
+                "total_analyses": db.query(Analysis)
+                .filter(Analysis.analyzed_at >= h24)
+                .count(),
             },
             "edge_distribution": {
                 "values": edge_values,
@@ -575,7 +672,12 @@ async def get_health_check():
             "daily_pnl_timeline": daily_pnl,
         }
     except Exception as e:
-        return {"error": str(e), "verdict": "error", "verdict_text": "HATA", "verdict_color": "#ef4444"}
+        return {
+            "error": str(e),
+            "verdict": "error",
+            "verdict_text": "HATA",
+            "verdict_color": "#ef4444",
+        }
     finally:
         db.close()
 
@@ -611,7 +713,12 @@ def run_cli():
             "reset",
         ],
     )
-    parser.add_argument("--days", type=int, default=90, help="Number of historical days to fetch for backfill")
+    parser.add_argument(
+        "--days",
+        type=int,
+        default=90,
+        help="Number of historical days to fetch for backfill",
+    )
     args = parser.parse_args()
 
     init_db()
@@ -624,7 +731,9 @@ def run_cli():
         logger.info("Running ASIAbot Autonomous Evolution Loop on CLI...")
         orchestrator = ASIAbotOrchestrator()
         result = orchestrator.run_evolution_pipeline(5)
-        print(f"\nEvolution successful! Best round: Round {result['round']}, Virtual ROI: {result['roi']:.2f}%")
+        print(
+            f"\nEvolution successful! Best round: Round {result['round']}, Virtual ROI: {result['roi']:.2f}%"
+        )
     elif args.command == "backfill":
         logger.info("Running deep backfill for past %d days on CLI...", args.days)
         backfiller = DataBackfiller()

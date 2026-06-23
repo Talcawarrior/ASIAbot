@@ -58,7 +58,15 @@ if r.ok:
         # Show first market's fields
         m0 = markets[0]
         print("\nFirst market sample fields:")
-        for k in ["condition_id", "id", "slug", "question", "category", "end_date", "active"]:
+        for k in [
+            "condition_id",
+            "id",
+            "slug",
+            "question",
+            "category",
+            "end_date",
+            "active",
+        ]:
             if k in m0:
                 print(f"  {k}: {m0[k]}")
 else:

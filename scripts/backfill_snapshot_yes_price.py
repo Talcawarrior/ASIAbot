@@ -53,7 +53,9 @@ except Exception:
     pass
 
 
-def fetch_clob_history(yes_token: str, end_ts: pd.Timestamp, *, window_h: float = 23.5) -> list[dict]:
+def fetch_clob_history(
+    yes_token: str, end_ts: pd.Timestamp, *, window_h: float = 23.5
+) -> list[dict]:
     """Fetch Polymarket CLOB prices-history for one token.
 
     Returns list of {"t": <unix_s>, "p": <float>} dicts. Empty on error.
@@ -69,7 +71,7 @@ def fetch_clob_history(yes_token: str, end_ts: pd.Timestamp, *, window_h: float 
         try:
             r = _SESSION.get(f"{CLOB}/prices-history", params=params, timeout=15)
             if r.status_code == 429:
-                wait = min(120.0, 4.0 * (2 ** attempt))
+                wait = min(120.0, 4.0 * (2**attempt))
                 log.warning("429 from CLOB — backing off %.1fs", wait)
                 time.sleep(wait)
                 continue
@@ -79,7 +81,7 @@ def fetch_clob_history(yes_token: str, end_ts: pd.Timestamp, *, window_h: float 
             j = r.json()
             return j.get("history", [])
         except (requests.Timeout, requests.ConnectionError) as exc:
-            wait = 0.5 * (2 ** attempt)
+            wait = 0.5 * (2**attempt)
             log.warning("network error (%s) — retry in %.1fs", type(exc).__name__, wait)
             time.sleep(wait)
         except Exception as exc:
@@ -92,7 +94,9 @@ def fetch_clob_history(yes_token: str, end_ts: pd.Timestamp, *, window_h: float 
 # Shared session with connection pooling — avoids creating a new TCP
 # connection per request (which can exhaust ephemeral ports under load).
 _SESSION = requests.Session()
-_ADAPTER = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=8, max_retries=0)
+_ADAPTER = requests.adapters.HTTPAdapter(
+    pool_connections=4, pool_maxsize=8, max_retries=0
+)
 _SESSION.mount("https://", _ADAPTER)
 _SESSION.mount("http://", _ADAPTER)
 
@@ -100,9 +104,12 @@ _SESSION.mount("http://", _ADAPTER)
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0, help="cap on # markets (0 = all)")
-    ap.add_argument("--rate-sleep", type=float, default=0.25, help="seconds between requests")
     ap.add_argument(
-        "--from-cache", action="store_true",
+        "--rate-sleep", type=float, default=0.25, help="seconds between requests"
+    )
+    ap.add_argument(
+        "--from-cache",
+        action="store_true",
         help="skip fetch and re-apply cached prices from markets_snapshot_prices.parquet",
     )
     args = ap.parse_args()
@@ -112,7 +119,9 @@ def main() -> int:
     log.info("Loaded %d markets", len(markets))
 
     # Filter to markets with clob_token_ids
-    has_token = markets["clob_token_ids"].notna() & (markets["clob_token_ids"].astype(str) != "[]")
+    has_token = markets["clob_token_ids"].notna() & (
+        markets["clob_token_ids"].astype(str) != "[]"
+    )
     eligible = markets[has_token].copy().reset_index(drop=True)
     log.info("Eligible (with clob_token_ids): %d", len(eligible))
     if args.limit > 0:
@@ -173,23 +182,39 @@ def main() -> int:
 
                 # checkpoint every 10 markets
                 if (i + 1) % 10 == 0:
-                    hit_rate = 100.0 * sum(1 for x in results if x is not None) / len(results)
-                    log.info("Progress: %d/%d  hit-rate=%.1f%%",
-                             i + 1, len(eligible), hit_rate)
+                    hit_rate = (
+                        100.0 * sum(1 for x in results if x is not None) / len(results)
+                    )
+                    log.info(
+                        "Progress: %d/%d  hit-rate=%.1f%%",
+                        i + 1,
+                        len(eligible),
+                        hit_rate,
+                    )
                     # write checkpoint to disk so we can resume
                     ckpt_df = eligible.iloc[: len(results)].copy()
                     ckpt_df["snapshot_yes_price"] = results
                     ckpt_df = ckpt_df[["condition_id", "snapshot_yes_price"]].dropna()
                     # combine with prior cache
                     prior = pd.DataFrame(
-                        [{"condition_id": k, "snapshot_yes_price": v} for k, v in cache.items()]
+                        [
+                            {"condition_id": k, "snapshot_yes_price": v}
+                            for k, v in cache.items()
+                        ]
                     )
                     ckpt_combined = pd.concat([prior, ckpt_df], ignore_index=True)
-                    ckpt_combined = ckpt_combined.drop_duplicates(subset=["condition_id"], keep="last")
+                    ckpt_combined = ckpt_combined.drop_duplicates(
+                        subset=["condition_id"], keep="last"
+                    )
                     ckpt_combined.to_parquet(SNAPSHOT_BACKFILL_PATH, index=False)
             except Exception as exc:
-                log.exception("[%d/%d] UNEXPECTED ERROR on cid=%s: %s",
-                              i + 1, len(eligible), getattr(row, "condition_id", "?")[:18], exc)
+                log.exception(
+                    "[%d/%d] UNEXPECTED ERROR on cid=%s: %s",
+                    i + 1,
+                    len(eligible),
+                    getattr(row, "condition_id", "?")[:18],
+                    exc,
+                )
                 results.append(None)
                 # longer pause + emergency checkpoint on error
                 time.sleep(5.0)
@@ -199,10 +224,15 @@ def main() -> int:
                     ckpt_df["snapshot_yes_price"] = results
                     ckpt_df = ckpt_df[["condition_id", "snapshot_yes_price"]].dropna()
                     prior = pd.DataFrame(
-                        [{"condition_id": k, "snapshot_yes_price": v} for k, v in cache.items()]
+                        [
+                            {"condition_id": k, "snapshot_yes_price": v}
+                            for k, v in cache.items()
+                        ]
                     )
                     ckpt_combined = pd.concat([prior, ckpt_df], ignore_index=True)
-                    ckpt_combined = ckpt_combined.drop_duplicates(subset=["condition_id"], keep="last")
+                    ckpt_combined = ckpt_combined.drop_duplicates(
+                        subset=["condition_id"], keep="last"
+                    )
                     ckpt_combined.to_parquet(SNAPSHOT_BACKFILL_PATH, index=False)
                     log.info("Emergency checkpoint: %d cached", len(ckpt_combined))
                 except Exception:
@@ -211,8 +241,12 @@ def main() -> int:
     # Add snapshot_yes_price column
     eligible["snapshot_yes_price"] = results
     hit = eligible["snapshot_yes_price"].notna().sum()
-    log.info("Snapshot prices found: %d / %d (%.1f%%)",
-             hit, len(eligible), 100.0 * hit / max(1, len(eligible)))
+    log.info(
+        "Snapshot prices found: %d / %d (%.1f%%)",
+        hit,
+        len(eligible),
+        100.0 * hit / max(1, len(eligible)),
+    )
 
     # Persist the cache — MERGE with prior cache, don't overwrite.
     # This lets us resume safely when running --limit chunks.
@@ -223,21 +257,27 @@ def main() -> int:
     cache_df = pd.concat([prior_cache_df, new_cache_df], ignore_index=True)
     cache_df = cache_df.drop_duplicates(subset=["condition_id"], keep="last")
     cache_df.to_parquet(SNAPSHOT_BACKFILL_PATH, index=False)
-    log.info("Wrote cache → %s  (%d rows, %d new)",
-             SNAPSHOT_BACKFILL_PATH, len(cache_df), len(new_cache_df))
+    log.info(
+        "Wrote cache → %s  (%d rows, %d new)",
+        SNAPSHOT_BACKFILL_PATH,
+        len(cache_df),
+        len(new_cache_df),
+    )
 
     # Now write the augmented markets table back to the unified datastore
     # The unified datastore's write_markets() overwrites. We need to preserve
     # the original schema and just add snapshot_yes_price.
     augmented = markets.merge(
         eligible[["condition_id", "snapshot_yes_price"]],
-        on="condition_id", how="left", suffixes=("", "_new"),
+        on="condition_id",
+        how="left",
+        suffixes=("", "_new"),
     )
     # If a snapshot_yes_price already exists, prefer the new one
     if "snapshot_yes_price" in markets.columns:
-        augmented["snapshot_yes_price"] = augmented["snapshot_yes_price_new"].combine_first(
-            augmented["snapshot_yes_price"]
-        )
+        augmented["snapshot_yes_price"] = augmented[
+            "snapshot_yes_price_new"
+        ].combine_first(augmented["snapshot_yes_price"])
         augmented = augmented.drop(columns=["snapshot_yes_price_new"])
 
     ds.write_markets(augmented)
@@ -248,7 +288,10 @@ def main() -> int:
     log.info("Backfill complete.")
     log.info("  Markets:    %d", len(markets))
     log.info("  With price: %d  (%.1f%%)", hit, 100.0 * hit / max(1, len(eligible)))
-    log.info("  Median price: %.4f", float(eligible["snapshot_yes_price"].dropna().median() or 0.0))
+    log.info(
+        "  Median price: %.4f",
+        float(eligible["snapshot_yes_price"].dropna().median() or 0.0),
+    )
     log.info("=" * 60)
     return 0
 

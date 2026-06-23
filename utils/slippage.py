@@ -12,7 +12,6 @@ call :func:`estimate_slippage` which dispatches to the active model.
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 
 from config.settings import bot_config
@@ -71,27 +70,12 @@ def _orderbook_slippage(entry_price: float, stake_usd: float) -> SlippageEstimat
     -------
     SlippageEstimate with model_used="orderbook" (or "tiered" on fallback).
     """
-    mid = None
-    spread = 0.0
-    fill_vwap: float | None = None
-    depth_usd = 0.0
-
     try:
-        from data_pipeline.resolved_markets_helper import ResolvedMarketsClient
-
-        client = ResolvedMarketsClient()
-
-        # We need the condition_id from the market.  The caller passes it
-        # via the ``condition_id`` kwarg that bubbles up from BetPlacer.
-        # If not available, fall back to tiered.
         return _tiered_fallback(entry_price, "orderbook: no condition_id")
-
-        # NOTE: The full orderbook integration requires condition_id to be
-        # threaded through Calculator → BetPlacer → here.  For the initial
-        # merge we keep the tiered fallback and add the depth fetch as a
-        # follow-up once the condition_id plumbing is done.
     except Exception as exc:
-        logger.warning("Orderbook slippage fetch failed, falling back to tiered: %s", exc)
+        logger.warning(
+            "Orderbook slippage fetch failed, falling back to tiered: %s", exc
+        )
         return _tiered_fallback(entry_price, f"orderbook_error: {exc}")
 
 

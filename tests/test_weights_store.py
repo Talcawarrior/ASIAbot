@@ -20,14 +20,14 @@ def test_save_then_load_round_trip(tmp_path, monkeypatch):
     monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
 
     # Use real model names so ALL_ENSEMBLE_MODELS doesn't inject floors
-    weights = {"gfs_seamless": 0.5, "ecmwf_ifs04": 0.3, "gem_seamless": 0.2}
+    weights = {"gfs_seamless": 0.5, "ecmwf_ifs025": 0.3, "gem_global": 0.2}
     assert ws.save_weights(weights, apply_floor=False, min_change=0) is True
     assert os.path.exists(path)
     loaded = ws.load_weights()
     assert loaded is not None
     assert abs(loaded["gfs_seamless"] - 0.5) < 1e-9
-    assert abs(loaded["ecmwf_ifs04"] - 0.3) < 1e-9
-    assert abs(loaded["gem_seamless"] - 0.2) < 1e-9
+    assert abs(loaded["ecmwf_ifs025"] - 0.3) < 1e-9
+    assert abs(loaded["gem_global"] - 0.2) < 1e-9
 
 
 def test_save_below_threshold_is_skipped(tmp_path, monkeypatch):
@@ -37,7 +37,7 @@ def test_save_below_threshold_is_skipped(tmp_path, monkeypatch):
     path = str(tmp_path / "model_weights.json")
     monkeypatch.setattr(ws, "_WEIGHTS_PATH", path)
 
-    weights = {"gfs_seamless": 0.5, "ecmwf_ifs04": 0.5}
+    weights = {"gfs_seamless": 0.5, "ecmwf_ifs025": 0.5}
     ws.save_weights(weights, apply_floor=False, min_change=0)
     mtime_before = os.path.getmtime(path)
 
@@ -47,11 +47,19 @@ def test_save_below_threshold_is_skipped(tmp_path, monkeypatch):
     assert mtime_after == mtime_before
 
     # Save with delta = 0.0001 < 0.001 threshold must also not write.
-    assert ws.save_weights({"gfs_seamless": 0.5001, "ecmwf_ifs04": 0.5}, apply_floor=False) is False
+    assert (
+        ws.save_weights(
+            {"gfs_seamless": 0.5001, "ecmwf_ifs025": 0.5}, apply_floor=False
+        )
+        is False
+    )
     assert os.path.getmtime(path) == mtime_before
 
     # Save with delta = 0.01 > threshold must write.
-    assert ws.save_weights({"gfs_seamless": 0.51, "ecmwf_ifs04": 0.5}, apply_floor=False) is True
+    assert (
+        ws.save_weights({"gfs_seamless": 0.51, "ecmwf_ifs025": 0.5}, apply_floor=False)
+        is True
+    )
 
 
 def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
@@ -65,10 +73,10 @@ def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
     # Save ALL models so floor doesn't shift the values we care about.
     all_models = {
         "gfs_seamless": 0.42,
-        "ecmwf_ifs04": 0.99,
-        "gem_seamless": 0.05,
-        "icon_seamless": 0.05,
-        "jma_msm": 0.05,
+        "ecmwf_ifs025": 0.99,
+        "gem_global": 0.05,
+        "icon_global": 0.05,
+        "jma_seamless": 0.05,
         "cma_grapes_global": 0.05,
         "ukmo_seamless": 0.05,
         "meteofrance_seamless": 0.05,
@@ -85,9 +93,9 @@ def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):
     sia = strategy_mod.SIALoop(None, strategy_mod.config)
     # Overridden values picked up from disk.
     assert abs(sia.model_weights["gfs_seamless"] - 0.42) < 1e-6
-    assert abs(sia.model_weights["ecmwf_ifs04"] - 0.99) < 1e-6
+    assert abs(sia.model_weights["ecmwf_ifs025"] - 0.99) < 1e-6
     # Models at floor weight should still match (or be very close to default).
-    assert sia.model_weights["gem_seamless"] > 0
+    assert sia.model_weights["gem_global"] > 0
 
 
 def test_corrupt_json_returns_none(tmp_path, monkeypatch):

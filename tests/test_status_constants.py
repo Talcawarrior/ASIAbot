@@ -1,6 +1,5 @@
 """Tests for status constants (OPEN_BET_STATUSES) and text encoding integrity."""
 
-
 # ── OPEN_BET_STATUSES ──────────────────────────────────────────────────────
 
 
@@ -27,7 +26,10 @@ def test_no_literal_open_status_tuples():
 
     # Skip the definition file (database/models.py) and this test file itself
     # Use os.path.normpath for cross-platform path comparison
-    skip_files = {os.path.normpath("database/models.py"), os.path.normpath("tests/test_status_constants.py")}
+    skip_files = {
+        os.path.normpath("database/models.py"),
+        os.path.normpath("tests/test_status_constants.py"),
+    }
 
     for root, _dirs, files in os.walk(project_root):
         # Skip venv and __pycache__
@@ -50,9 +52,9 @@ def test_no_literal_open_status_tuples():
             if ('"active", "open", "placed", "pending"') in content:
                 violations.append(rel)
 
-    assert not violations, (
-        f"Literal open-status tuples found in: {violations}. Replace with OPEN_BET_STATUSES from database.models."
-    )
+    assert (
+        not violations
+    ), f"Literal open-status tuples found in: {violations}. Replace with OPEN_BET_STATUSES from database.models."
 
 
 # ── No mojibake ────────────────────────────────────────────────────────────

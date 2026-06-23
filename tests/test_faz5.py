@@ -25,7 +25,13 @@ from database.db import get_session, init_db  # noqa: E402
 
 init_db()
 
-from database.models import Analysis, Bet, Portfolio, WeatherForecast, WeatherMarket  # noqa: E402
+from database.models import (  # noqa: E402
+    Analysis,
+    Bet,
+    Portfolio,
+    WeatherForecast,
+    WeatherMarket,
+)
 
 
 def _clean():
@@ -41,7 +47,9 @@ def _clean():
 def _setup_market_and_forecasts():
     _clean()
     with get_session() as session:
-        pf = Portfolio(id=1, cash_balance=1000.0, total_value=1000.0, current_value=1000.0)
+        pf = Portfolio(
+            id=1, cash_balance=1000.0, total_value=1000.0, current_value=1000.0
+        )
         session.add(pf)
         market = WeatherMarket(
             id="test-faz5-nyc",
@@ -60,8 +68,8 @@ def _setup_market_and_forecasts():
         session.add(market)
         for source, temp in [
             ("gfs_seamless", 32.5),
-            ("ecmwf_ifs04", 33.1),
-            ("gem_seamless", 31.8),
+            ("ecmwf_ifs025", 33.1),
+            ("gem_global", 31.8),
         ]:
             wf = WeatherForecast(
                 market_id="test-faz5-nyc",
@@ -87,12 +95,19 @@ def test_analyze_creates_analysis():
         calc.analyze_market("test-faz5-nyc")
         # Re-query from DB to avoid DetachedInstanceError
         with get_session() as session:
-            analysis = session.query(Analysis).filter(Analysis.market_id == "test-faz5-nyc").first()
+            analysis = (
+                session.query(Analysis)
+                .filter(Analysis.market_id == "test-faz5-nyc")
+                .first()
+            )
             assert analysis is not None, "Analysis is NULL"
             assert analysis.should_bet, f"should_bet=False (edge={analysis.edge})"
             assert analysis.recommended_amount > 0, "recommended_amount=0"
             assert analysis.edge is not None and analysis.edge > 0, "edge should be > 0"
-            assert analysis.recommended_side in ("YES", "NO"), f"Invalid side: {analysis.recommended_side}"
+            assert analysis.recommended_side in (
+                "YES",
+                "NO",
+            ), f"Invalid side: {analysis.recommended_side}"
     finally:
         _clean()
 
@@ -106,8 +121,14 @@ def test_place_bets_creates_bet_row():
         calc.analyze_market("test-faz5-nyc")
         # Re-query to verify should_bet
         with get_session() as session:
-            analysis = session.query(Analysis).filter(Analysis.market_id == "test-faz5-nyc").first()
-            assert analysis is not None and analysis.should_bet, "Analysis should_bet is False"
+            analysis = (
+                session.query(Analysis)
+                .filter(Analysis.market_id == "test-faz5-nyc")
+                .first()
+            )
+            assert (
+                analysis is not None and analysis.should_bet
+            ), "Analysis should_bet is False"
         from jobs.scheduler import run_place_bets
 
         run_place_bets()
@@ -139,13 +160,17 @@ def test_portfolio_cash_decreases_after_bet():
         run_place_bets()
         with get_session() as session:
             pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            assert pf.cash_balance < initial_cash, f"Cash did not decrease: {pf.cash_balance}"
+            assert (
+                pf.cash_balance < initial_cash
+            ), f"Cash did not decrease: {pf.cash_balance}"
             bet = session.query(Bet).filter(Bet.market_id == "test-faz5-nyc").first()
             assert bet is not None
             # Level 1 = 50% of recommended, cash -= Level 1
             expected_level1 = bet.amount * 0.5
             expected_cash = round(initial_cash - expected_level1, 2)
-            assert abs(pf.cash_balance - expected_cash) < 0.1, f"cash={pf.cash_balance}, expected={expected_cash}"
+            assert (
+                abs(pf.cash_balance - expected_cash) < 0.1
+            ), f"cash={pf.cash_balance}, expected={expected_cash}"
     finally:
         _clean()
 
@@ -168,12 +193,21 @@ def test_ladder_data_json():
             assert len(ladder) == 3, f"Expected 3 levels, got {len(ladder)}"
             for level in ladder:
                 assert "status" in level
-                assert level["status"] in ("filled", "pending"), f"Bad status: {level['status']}"
+                assert level["status"] in (
+                    "filled",
+                    "pending",
+                ), f"Bad status: {level['status']}"
             # L1 is immediately 'filled' at placement (Bug B fix — prevents
             # double-debit in run_update_prices). L2/L3 remain pending.
-            assert ladder[0]["status"] == "filled", f"Level 1 should be filled: {ladder[0]}"
-            assert ladder[1]["status"] == "pending", f"Level 2 should be pending: {ladder[1]}"
-            assert ladder[2]["status"] == "pending", f"Level 3 should be pending: {ladder[2]}"
+            assert (
+                ladder[0]["status"] == "filled"
+            ), f"Level 1 should be filled: {ladder[0]}"
+            assert (
+                ladder[1]["status"] == "pending"
+            ), f"Level 2 should be pending: {ladder[1]}"
+            assert (
+                ladder[2]["status"] == "pending"
+            ), f"Level 3 should be pending: {ladder[2]}"
             # L1 should also have a filled_at timestamp
             assert ladder[0].get("filled_at") is not None, "Level 1 missing filled_at"
     finally:

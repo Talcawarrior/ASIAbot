@@ -25,16 +25,16 @@ ZAI_BASE_URL = "https://api.z.ai/api/paas/v4/"
 
 # Spread of ZAI / GLM models — covers the current production ladder.
 CANDIDATE_MODELS = [
-    "glm-4.5-flash",        # Cheap+fast newer flash tier
-    "glm-4-flash",          # Original flash tier (free)
-    "glm-4-flashx",         # Variant of flash
-    "glm-4.5",              # Mid-tier 4.5
-    "glm-4.6",              # Latest 4.6 flagship
-    "glm-4-plus",           # Plus tier
-    "glm-4-air",            # Air tier
-    "glm-4-airx",           # AirX tier
-    "glm-z1-flash",         # Reasoning flash
-    "glm-4v-flash",         # Vision flash
+    "glm-4.5-flash",  # Cheap+fast newer flash tier
+    "glm-4-flash",  # Original flash tier (free)
+    "glm-4-flashx",  # Variant of flash
+    "glm-4.5",  # Mid-tier 4.5
+    "glm-4.6",  # Latest 4.6 flagship
+    "glm-4-plus",  # Plus tier
+    "glm-4-air",  # Air tier
+    "glm-4-airx",  # AirX tier
+    "glm-z1-flash",  # Reasoning flash
+    "glm-4v-flash",  # Vision flash
 ]
 
 
@@ -58,7 +58,7 @@ def probe_with_sdk(api_key: str) -> list[str]:
                     {
                         "role": "user",
                         "content": (
-                            'Reply with one JSON object: '
+                            "Reply with one JSON object: "
                             '{"source":"zai","model":"<your_model>","ok":true}'
                         ),
                     },
@@ -111,7 +111,9 @@ def probe_with_raw_http(api_key: str) -> None:
         print(f"HTTP {r.status_code}")
         # Dump all non-standard headers (rate-limit info etc.)
         for h, v in r.headers.items():
-            if any(x in h.lower() for x in ["x-ratelimit", "x-tt", "x-zai", "x-request"]):
+            if any(
+                x in h.lower() for x in ["x-ratelimit", "x-tt", "x-zai", "x-request"]
+            ):
                 print(f"  {h}: {v}")
         if r.status_code == 200:
             data = r.json()

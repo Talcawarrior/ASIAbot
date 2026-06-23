@@ -63,7 +63,9 @@ def _load_json(path: str) -> dict[str, Any] | None:
         return None
 
 
-def find_global_best() -> tuple[dict[str, Any] | None, dict[str, float] | None, str | None]:
+def find_global_best() -> (
+    tuple[dict[str, Any] | None, dict[str, float] | None, str | None]
+):
     """Find the best hypothesis across all 3 layers.
 
     Returns (hypothesis_dict, stats_dict, source_layer_name).
@@ -77,14 +79,22 @@ def find_global_best() -> tuple[dict[str, Any] | None, dict[str, float] | None, 
     if karpathy_best and "stats" in karpathy_best:
         stats = karpathy_best["stats"]
         if stats.get("total_trades", 0) >= 5:
-            hyp = {k: v for k, v in karpathy_best.items() if k != "stats" and k != "saved_at"}
+            hyp = {
+                k: v
+                for k, v in karpathy_best.items()
+                if k != "stats" and k != "saved_at"
+            }
             candidates.append((hyp, stats, "karpathy_weekly"))
 
     asi_evolve_best = _load_json(os.path.join(DATA_DIR, "asi_evolve_best.json"))
     if asi_evolve_best and "stats" in asi_evolve_best:
         stats = asi_evolve_best["stats"]
         if stats.get("total_trades", 0) >= 5:
-            hyp = {k: v for k, v in asi_evolve_best.items() if k != "stats" and k != "saved_at"}
+            hyp = {
+                k: v
+                for k, v in asi_evolve_best.items()
+                if k != "stats" and k != "saved_at"
+            }
             candidates.append((hyp, stats, "asi_evolve_daily"))
 
     sia_hourly_best = _load_json(os.path.join(DATA_DIR, "sia_hourly_best.json"))
@@ -92,14 +102,20 @@ def find_global_best() -> tuple[dict[str, Any] | None, dict[str, float] | None, 
         stats = sia_hourly_best["stats"]
         # SIA's harness patches don't simulate trades — accept based on Brier alone
         if "brier_score" in stats:
-            hyp = {k: v for k, v in sia_hourly_best.items() if k != "stats" and k != "saved_at"}
+            hyp = {
+                k: v
+                for k, v in sia_hourly_best.items()
+                if k != "stats" and k != "saved_at"
+            }
             candidates.append((hyp, stats, "sia_hourly"))
 
     if not candidates:
         return None, None, None
 
     # Pick by Sharpe (desc), then Brier (asc)
-    candidates.sort(key=lambda c: (-c[1].get("sharpe", -1e9), c[1].get("brier_score", 1.0)))
+    candidates.sort(
+        key=lambda c: (-c[1].get("sharpe", -1e9), c[1].get("brier_score", 1.0))
+    )
     return candidates[0]
 
 
@@ -179,6 +195,7 @@ def _strategy_default_path() -> str:
     Imported lazily to avoid touching the module at import time.
     """
     from utils import weights_store as _ws
+
     return _ws._STRATEGY_PATH
 
 
@@ -221,7 +238,9 @@ def run_karpathy_layer(rounds: int = 6, use_llm: bool = False) -> dict[str, Any]
     return summary
 
 
-def run_asi_evolve_layer(n_candidates: int = 20, use_llm: bool = False) -> dict[str, Any]:
+def run_asi_evolve_layer(
+    n_candidates: int = 20, use_llm: bool = False
+) -> dict[str, Any]:
     """Run Layer 2 (ASI-Evolve daily) + auto-deploy."""
     logger.info("=== Layer 2: ASI-Evolve daily ===")
     try:
@@ -277,7 +296,9 @@ def run_full_cycle(
     start = datetime.now(UTC)
 
     k_summary = run_karpathy_layer(rounds=karpathy_rounds, use_llm=use_llm)
-    a_summary = run_asi_evolve_layer(n_candidates=asi_evolve_candidates, use_llm=use_llm)
+    a_summary = run_asi_evolve_layer(
+        n_candidates=asi_evolve_candidates, use_llm=use_llm
+    )
     s_summary = run_sia_layer(use_llm=use_llm)
 
     # Final deploy picks the global best across all 3 layers
@@ -355,7 +376,9 @@ if __name__ == "__main__":
         help="Which command to run",
     )
     parser.add_argument("--rounds", type=int, default=6, help="Karpathy rounds")
-    parser.add_argument("--candidates", type=int, default=20, help="ASI-Evolve candidates")
+    parser.add_argument(
+        "--candidates", type=int, default=20, help="ASI-Evolve candidates"
+    )
     parser.add_argument("--llm", action="store_true", help="Use LLM where available")
     args = parser.parse_args()
 

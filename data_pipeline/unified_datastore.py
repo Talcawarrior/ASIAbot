@@ -67,12 +67,12 @@ UNIFIED_MARKETS_SCHEMA = {
     "target_date": "datetime64[ns, UTC]",
     "end_date": "datetime64[ns, UTC]",
     "closed_time": "datetime64[ns, UTC]",
-    "yes_price": "float64",       # final resolved yes price (0 or 1)
-    "no_price": "float64",        # final resolved no price (0 or 1)
-    "resolved_outcome": "str",    # 'Yes' / 'No' / None
+    "yes_price": "float64",  # final resolved yes price (0 or 1)
+    "no_price": "float64",  # final resolved no price (0 or 1)
+    "resolved_outcome": "str",  # 'Yes' / 'No' / None
     "volume": "float64",
     "liquidity": "float64",
-    "clob_token_ids": "object",   # list[str]
+    "clob_token_ids": "object",  # list[str]
 }
 
 UNIFIED_FORECASTS_SCHEMA = {
@@ -107,7 +107,7 @@ UNIFIED_TRADES_SCHEMA = {
     "order_hash": "str",
     "maker": "str",
     "taker": "str",
-    "side": "int64",          # 0 = BUY, 1 = SELL
+    "side": "int64",  # 0 = BUY, 1 = SELL
     "token_id": "str",
     "maker_asset_id": "int64",
     "taker_asset_id": "int64",
@@ -119,7 +119,7 @@ UNIFIED_TRADES_SCHEMA = {
     "maker_usd": "float64",
     "taker_usd": "float64",
     "implied_price": "float64",
-    "market_id": "str",       # joined from clobTokenIds lookup
+    "market_id": "str",  # joined from clobTokenIds lookup
 }
 
 UNIFIED_SNAPSHOTS_SCHEMA = {
@@ -132,8 +132,8 @@ UNIFIED_SNAPSHOTS_SCHEMA = {
     "best_ask": "float64",
     "bid_depth": "float64",
     "ask_depth": "float64",
-    "bids": "object",         # list[dict]
-    "asks": "object",         # list[dict]
+    "bids": "object",  # list[dict]
+    "asks": "object",  # list[dict]
 }
 
 
@@ -206,7 +206,9 @@ class UnifiedDatastore:
     def write_snapshots(self, df: pd.DataFrame) -> None:
         self._write_validated("snapshots", df, UNIFIED_SNAPSHOTS_SCHEMA)
 
-    def _write_validated(self, name: str, df: pd.DataFrame, schema: dict[str, str]) -> None:
+    def _write_validated(
+        self, name: str, df: pd.DataFrame, schema: dict[str, str]
+    ) -> None:
         if df.empty:
             logger.warning("UnifiedDatastore: empty %s DataFrame, skipping write", name)
             return
@@ -221,7 +223,9 @@ class UnifiedDatastore:
                     else:
                         df[col] = df[col].astype(dtype, errors="ignore")
                 except Exception as exc:
-                    logger.debug("Could not coerce %s.%s to %s: %s", name, col, dtype, exc)
+                    logger.debug(
+                        "Could not coerce %s.%s to %s: %s", name, col, dtype, exc
+                    )
         path = self._path(name)
         df.to_parquet(path, index=False)
         logger.info("Wrote %d rows to %s", len(df), path)
@@ -289,13 +293,18 @@ class UnifiedDatastore:
         if df.empty or date_column not in df.columns:
             logger.warning(
                 "Cannot build splits: table '%s' empty or missing column '%s'",
-                table_name, date_column,
+                table_name,
+                date_column,
             )
             return []
 
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column], utc=True, errors="coerce")
-        df = df.dropna(subset=[date_column]).sort_values(date_column).reset_index(drop=True)
+        df = (
+            df.dropna(subset=[date_column])
+            .sort_values(date_column)
+            .reset_index(drop=True)
+        )
 
         if df.empty:
             return []
@@ -306,25 +315,28 @@ class UnifiedDatastore:
         if total_days < lookback + test:
             logger.warning(
                 "Not enough history for walk-forward: have %d days, need %d",
-                total_days, lookback + test,
+                total_days,
+                lookback + test,
             )
             return []
 
         splits: list[dict[str, Any]] = []
         n = 0
-        cur_T = start + pd.Timedelta(days=lookback)
-        while cur_T + pd.Timedelta(days=test) <= end:
+        cur_t = start + pd.Timedelta(days=lookback)
+        while cur_t + pd.Timedelta(days=test) <= end:
             n += 1
-            test_start = cur_T
-            test_end = cur_T + pd.Timedelta(days=test)
-            train_start = cur_T - pd.Timedelta(days=lookback)
-            train_end = cur_T  # exclusive — train does NOT include test window
+            test_start = cur_t
+            test_end = cur_t + pd.Timedelta(days=test)
+            train_start = cur_t - pd.Timedelta(days=lookback)
+            train_end = cur_t  # exclusive — train does NOT include test window
 
-            train_df = df[(df[date_column] >= train_start) & (df[date_column] < train_end)]
+            train_df = df[
+                (df[date_column] >= train_start) & (df[date_column] < train_end)
+            ]
             test_df = df[(df[date_column] >= test_start) & (df[date_column] < test_end)]
 
             if len(test_df) < self.cfg.min_markets_per_window:
-                cur_T += pd.Timedelta(days=step)
+                cur_t += pd.Timedelta(days=step)
                 continue
 
             split_meta = {
@@ -340,22 +352,28 @@ class UnifiedDatastore:
             }
 
             # Persist split indices for reproducibility
-            split_df = pd.DataFrame({
-                "row_index": split_meta["test_indices"],
-                "split_n": n,
-                "test_start": test_start,
-                "test_end": test_end,
-            })
+            split_df = pd.DataFrame(
+                {
+                    "row_index": split_meta["test_indices"],
+                    "split_n": n,
+                    "test_start": test_start,
+                    "test_end": test_end,
+                }
+            )
             split_df.to_parquet(self._split_path(n), index=False)
 
             splits.append(split_meta)
             logger.info(
                 "Split %d: train %s..%s (%d rows) → test %s..%s (%d rows)",
                 n,
-                train_start.date(), train_end.date(), len(train_df),
-                test_start.date(), test_end.date(), len(test_df),
+                train_start.date(),
+                train_end.date(),
+                len(train_df),
+                test_start.date(),
+                test_end.date(),
+                len(test_df),
             )
-            cur_T += pd.Timedelta(days=step)
+            cur_t += pd.Timedelta(days=step)
 
         logger.info("Built %d walk-forward splits", len(splits))
         return splits
@@ -387,7 +405,9 @@ class UnifiedDatastore:
         markets = self.read_markets()
         actuals = self.read_actuals()
         if markets.empty or actuals.empty:
-            logger.warning("Brier dataset requires both markets and actuals to be populated")
+            logger.warning(
+                "Brier dataset requires both markets and actuals to be populated"
+            )
             return pd.DataFrame()
 
         # Join on (city, target_date)
@@ -395,7 +415,10 @@ class UnifiedDatastore:
         actuals["join_date"] = actuals["date"].dt.date.astype(str)
 
         merged = markets.merge(
-            actuals, on=["city", "join_date"], how="inner", suffixes=("_m", "_a"),
+            actuals,
+            on=["city", "join_date"],
+            how="inner",
+            suffixes=("_m", "_a"),
         )
         if merged.empty:
             return merged
@@ -485,17 +508,20 @@ def ingest_all(
     logger.info("=== [1/4] Polymarket markets ===")
     try:
         from data_pipeline.polymarket_ingest import PolymarketIngest
+
         poly_ingest = PolymarketIngest()
         markets_df = poly_ingest.fetch_closed_markets(limit=markets_limit)
         # Note: full city/threshold parsing happens in engine/market_parser;
         # here we just persist raw + parsed outcomes.
         if not markets_df.empty:
             # Rename to unified schema
-            unified = markets_df.rename(columns={
-                "id": "market_id",
-                "endDate": "end_date",
-                "closedTime": "closed_time",
-            })
+            unified = markets_df.rename(
+                columns={
+                    "id": "market_id",
+                    "endDate": "end_date",
+                    "closedTime": "closed_time",
+                }
+            )
             # target_date and city/threshold are derived later by market_parser
             ds.write_markets(unified)
     except Exception as exc:
@@ -507,10 +533,15 @@ def ingest_all(
         import pandas as pd
 
         from data_pipeline.weather_ensemble import backfill_archive_many
+
         end_date = datetime.now(UTC).strftime("%Y-%m-%d")
-        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime("%Y-%m-%d")
+        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime(
+            "%Y-%m-%d"
+        )
         actuals_df = backfill_archive_many(
-            weather_locations, start_date=start_date, end_date=end_date,
+            weather_locations,
+            start_date=start_date,
+            end_date=end_date,
         )
         if not actuals_df.empty:
             actuals_df["date"] = pd.to_datetime(actuals_df["date"], utc=True)
@@ -539,6 +570,7 @@ def ingest_all(
             backfill_historical_forecasts_many,
             fetch_forecast_ensemble,
         )
+
         forecast_frames: list[pd.DataFrame] = []
 
         # (a) Historical backfill: derive date range from the markets table
@@ -563,7 +595,9 @@ def ingest_all(
                     )
                     logger.info(
                         "Historical forecast backfill %s..%s across %d cities",
-                        hist_start, hist_end, len(weather_locations),
+                        hist_start,
+                        hist_end,
+                        len(weather_locations),
                     )
                     hist_df = backfill_historical_forecasts_many(
                         weather_locations,
@@ -576,13 +610,24 @@ def ingest_all(
                             hist_df["date"], utc=True, errors="coerce"
                         )
                         hist_df["fetched_at"] = pd.Timestamp.utcnow()
-                        forecast_frames.append(hist_df[
-                            ["city", "latitude", "longitude", "target_date",
-                             "model", "variable", "value", "fetched_at"]
-                        ])
+                        forecast_frames.append(
+                            hist_df[
+                                [
+                                    "city",
+                                    "latitude",
+                                    "longitude",
+                                    "target_date",
+                                    "model",
+                                    "variable",
+                                    "value",
+                                    "fetched_at",
+                                ]
+                            ]
+                        )
                         logger.info(
                             "Historical forecast backfill: %d rows across %d models",
-                            len(hist_df), hist_df["model"].nunique(),
+                            len(hist_df),
+                            hist_df["model"].nunique(),
                         )
         except Exception as exc:
             logger.warning("Historical forecast backfill skipped: %s", exc)
@@ -604,6 +649,7 @@ def ingest_all(
         # Free, no key. Adds diversity to the ensemble for US locations.
         try:
             from data_pipeline.weather_ensemble import fetch_nws_forecast
+
             nws_frames = []
             for city, lat, lon in weather_locations:
                 nws_df = fetch_nws_forecast(lat, lon, city=city)
@@ -612,14 +658,27 @@ def ingest_all(
                         nws_df["date"], utc=True, errors="coerce"
                     )
                     nws_df["fetched_at"] = pd.Timestamp.utcnow()
-                    nws_frames.append(nws_df[
-                        ["city", "latitude", "longitude", "target_date",
-                         "model", "variable", "value", "fetched_at"]
-                    ])
+                    nws_frames.append(
+                        nws_df[
+                            [
+                                "city",
+                                "latitude",
+                                "longitude",
+                                "target_date",
+                                "model",
+                                "variable",
+                                "value",
+                                "fetched_at",
+                            ]
+                        ]
+                    )
                 _time.sleep(0.2)  # polite to NWS
             if nws_frames:
                 forecast_frames.append(pd.concat(nws_frames, ignore_index=True))
-                logger.info("NWS forecast fetch: %d US-city rows", sum(len(f) for f in nws_frames))
+                logger.info(
+                    "NWS forecast fetch: %d US-city rows",
+                    sum(len(f) for f in nws_frames),
+                )
         except Exception as exc:
             logger.warning("NWS forecast fetch skipped: %s", exc)
 
@@ -633,6 +692,7 @@ def ingest_all(
         logger.info("=== [4/4] Resolved Markets snapshots ===")
         try:
             from data_pipeline.resolvedmarkets_ingest import client_from_env
+
             client = client_from_env()
             snapshot_frames = []
             for cid in resolvedmarkets_market_ids[:20]:  # cap for smoke test
@@ -648,7 +708,9 @@ def ingest_all(
         except Exception as exc:
             logger.error("Resolvedmarkets ingest failed: %s", exc)
     else:
-        logger.info("=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ===")
+        logger.info(
+            "=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ==="
+        )
 
     return ds.summary()
 
@@ -659,7 +721,9 @@ def ingest_all(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
 
     print("\n=== Full ingest pipeline (smoke test) ===")
     counts = ingest_all(backfill_days=30, markets_limit=200)
@@ -669,7 +733,10 @@ if __name__ == "__main__":
     print("\n=== Walk-forward splits ===")
     ds = UnifiedDatastore()
     splits = ds.build_walk_forward_splits(
-        lookback_days=14, step_days=7, test_days=7,
-        date_column="end_date", table_name="markets",
+        lookback_days=14,
+        step_days=7,
+        test_days=7,
+        date_column="end_date",
+        table_name="markets",
     )
     print(f"Built {len(splits)} splits")

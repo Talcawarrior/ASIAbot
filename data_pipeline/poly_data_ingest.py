@@ -95,11 +95,13 @@ def _keccak_topic(signature: str) -> str:
     try:
         # Try eth_utils first (preferred)
         from eth_utils import keccak  # type: ignore
+
         return "0x" + keccak(text=signature).hex()
     except ImportError:
         # Fall back to a manual keccak via pysha3 if available
         try:
             import sha3  # type: ignore
+
             k = sha3.keccak_256()
             k.update(signature.encode("utf-8"))
             return "0x" + k.hexdigest()
@@ -130,7 +132,9 @@ class PolyDataConfig:
     rpc_url: str = os.environ.get(
         "POLYGON_RPC_URL", "https://polygon-bor-rpc.publicnode.com"
     )
-    block_chunk: int = int(os.environ.get("POLYGON_MAX_BLOCK_RANGE", str(DEFAULT_BLOCK_CHUNK)))
+    block_chunk: int = int(
+        os.environ.get("POLYGON_MAX_BLOCK_RANGE", str(DEFAULT_BLOCK_CHUNK))
+    )
     ctf_exchange: str = CTF_EXCHANGE_V2
     gamma_url: str = GAMMA_MARKETS_URL
     request_timeout: float = 30.0
@@ -177,10 +181,18 @@ class PolygonRPCClient:
             except Exception as exc:
                 last_exc = exc
                 if attempt < retries:
-                    backoff = 0.5 * (2 ** attempt)
-                    logger.debug("RPC retry %d/%d after %.2fs: %s", attempt + 1, retries, backoff, exc)
+                    backoff = 0.5 * (2**attempt)
+                    logger.debug(
+                        "RPC retry %d/%d after %.2fs: %s",
+                        attempt + 1,
+                        retries,
+                        backoff,
+                        exc,
+                    )
                     time.sleep(backoff)
-        raise RuntimeError(f"RPC call {method} failed after {retries+1} attempts: {last_exc}")
+        raise RuntimeError(
+            f"RPC call {method} failed after {retries + 1} attempts: {last_exc}"
+        )
 
     def get_latest_block(self) -> int:
         return int(self._call("eth_blockNumber", []), 16)
@@ -193,12 +205,14 @@ class PolygonRPCClient:
         address: str,
         topics: list[str],
     ) -> list[dict]:
-        params = [{
-            "fromBlock": hex(from_block),
-            "toBlock": hex(to_block),
-            "address": address,
-            "topics": topics,
-        }]
+        params = [
+            {
+                "fromBlock": hex(from_block),
+                "toBlock": hex(to_block),
+                "address": address,
+                "topics": topics,
+            }
+        ]
         result = self._call("eth_getLogs", params)
         return result or []
 
@@ -251,9 +265,9 @@ def decode_order_filled(log: dict) -> dict | None:
         if len(clean) < 64 * 7:
             return None
 
-        words = [clean[i * 64:(i + 1) * 64] for i in range(7)]
+        words = [clean[i * 64 : (i + 1) * 64] for i in range(7)]
 
-        side = int(words[0], 16)             # 0 = BUY, 1 = SELL (maker side)
+        side = int(words[0], 16)  # 0 = BUY, 1 = SELL (maker side)
         token_id = int(words[1], 16)
         maker_fill = int(words[2], 16)
         taker_fill = int(words[3], 16)
@@ -389,7 +403,12 @@ class PolyDataIngest:
             if not batch:
                 break
             all_markets.extend(batch)
-            logger.info("Gamma page %d: +%d markets (total %d)", page, len(batch), len(all_markets))
+            logger.info(
+                "Gamma page %d: +%d markets (total %d)",
+                page,
+                len(batch),
+                len(all_markets),
+            )
             if not cursor:
                 break
             time.sleep(0.1)  # be polite
@@ -418,21 +437,30 @@ class PolyDataIngest:
         if from_block is None:
             from_block = cursor_state.get("last_block", V2_GENESIS_BLOCK - 1) + 1
         if to_block is None:
-            to_block = self.rpc.get_latest_block() - CONFIRMATIONS  # reorg-safe
+            latest = self.rpc.get_latest_block()
+            if latest is None:
+                logger.warning(
+                    "PolyDataIngest: could not fetch latest block, aborting scan"
+                )
+                return pd.DataFrame()
+            to_block = latest - CONFIRMATIONS  # reorg-safe
         if max_blocks is not None:
-            to_block = min(to_block, from_block + max_blocks - 1)
+            to_block = min(to_block, from_block + max_blocks - 1)  # type: ignore[reportOptionalOperand]
 
         logger.info(
             "Scanning OrderFilled blocks %d → %d (chunk=%d, contract=%s)",
-            from_block, to_block, self.cfg.block_chunk, self.cfg.ctf_exchange,
+            from_block,
+            to_block,
+            self.cfg.block_chunk,
+            self.cfg.ctf_exchange,
         )
 
         all_events: list[dict] = []
         # Track unique block numbers so we can batch-fetch timestamps
         block_timestamps: dict[int, int] = {}
         cur = from_block
-        while cur <= to_block:
-            chunk_end = min(cur + self.cfg.block_chunk - 1, to_block)
+        while cur <= to_block:  # type: ignore[reportOptionalOperand]
+            chunk_end = min(cur + self.cfg.block_chunk - 1, to_block)  # type: ignore[reportOptionalOperand]
             try:
                 logs = self.rpc.get_logs(
                     from_block=cur,
@@ -441,7 +469,9 @@ class PolyDataIngest:
                     topics=[ORDER_FILLED_TOPIC0],
                 )
             except Exception as exc:
-                logger.warning("getLogs failed for %d-%d: %s — reducing chunk", cur, chunk_end, exc)
+                logger.warning(
+                    "getLogs failed for %d-%d: %s — reducing chunk", cur, chunk_end, exc
+                )
                 # Adaptive backoff: halve the chunk and retry once
                 if self.cfg.block_chunk > 1:
                     self.cfg.block_chunk = max(1, self.cfg.block_chunk // 2)
@@ -459,7 +489,10 @@ class PolyDataIngest:
             save_cursor({"last_block": chunk_end})
             logger.info(
                 "  blocks %d-%d: %d events (cumulative %d)",
-                cur, chunk_end, len(logs), len(all_events),
+                cur,
+                chunk_end,
+                len(logs),
+                len(all_events),
             )
             cur = chunk_end + 1
 
@@ -468,7 +501,9 @@ class PolyDataIngest:
 
         # Batch-fetch block timestamps for all unique blocks we saw events in.
         # eth_getBlockByNumber is cheap but we batch to avoid hammering RPC.
-        logger.info("Fetching block timestamps for %d unique blocks...", len(block_timestamps))
+        logger.info(
+            "Fetching block timestamps for %d unique blocks...", len(block_timestamps)
+        )
         for bn in list(block_timestamps.keys()):
             try:
                 result = self.rpc._call("eth_getBlockByNumber", [hex(bn), False])
@@ -540,8 +575,16 @@ class PolyDataIngest:
             # tokens[0] = YES, tokens[1] = NO (Polymarket convention)
             yes_token = str(tokens[0]).lower()
             no_token = str(tokens[1]).lower()
-            token_lookup[yes_token] = {"market_id": str(market_id), "side": "YES", "question": row.get("question", "")}
-            token_lookup[no_token] = {"market_id": str(market_id), "side": "NO", "question": row.get("question", "")}
+            token_lookup[yes_token] = {
+                "market_id": str(market_id),
+                "side": "YES",
+                "question": row.get("question", ""),
+            }
+            token_lookup[no_token] = {
+                "market_id": str(market_id),
+                "side": "NO",
+                "question": row.get("question", ""),
+            }
 
         # The OrderFilled event doesn't directly carry the token id in a
         # decoded form here (asset_id is 0/1, not the actual tokenId). The
@@ -564,14 +607,20 @@ class PolyDataIngest:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
     ingest = PolyDataIngest()
 
     print("\n=== Markets metadata ===")
     markets = ingest.fetch_markets_metadata()
     print(f"Markets fetched: {len(markets)}")
     if not markets.empty:
-        print(markets[["id", "question"]].head(5).to_string() if "question" in markets.columns else markets.head(5))
+        print(
+            markets[["id", "question"]].head(5).to_string()
+            if "question" in markets.columns
+            else markets.head(5)
+        )
 
     print("\n=== OrderFilled scan (latest 1000 blocks) ===")
     latest = ingest.rpc.get_latest_block()
@@ -582,6 +631,13 @@ if __name__ == "__main__":
     )
     print(f"Trades fetched: {len(trades)}")
     if not trades.empty:
-        cols = ["block_number", "datetime_utc", "maker", "taker",
-                "maker_usd", "taker_usd", "implied_price"]
+        cols = [
+            "block_number",
+            "datetime_utc",
+            "maker",
+            "taker",
+            "maker_usd",
+            "taker_usd",
+            "implied_price",
+        ]
         print(trades[cols].head(10).to_string())

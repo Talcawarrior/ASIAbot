@@ -43,11 +43,15 @@ class BetPlacer:
     def _init_polymarket_client(self):
         """Polymarket CLOB client hazirla (sadece DRY_RUN=false ise cagrilir)."""
         try:
-            from py_clob_client.client import ClobClient  # pylint: disable=import-error,no-name-in-module
+            from py_clob_client.client import (
+                ClobClient,  # pylint: disable=import-error,no-name-in-module
+            )
 
             if not bot_config.polymarket.private_key:
                 self.ready = False
-                logger.info("Polymarket credentials not found, running in PAPER/SIMULATION trade mode.")
+                logger.info(
+                    "Polymarket credentials not found, running in PAPER/SIMULATION trade mode."
+                )
                 return
 
             self.client = ClobClient(
@@ -71,7 +75,9 @@ class BetPlacer:
             if not analysis or not analysis.should_bet:
                 return None
 
-            market = session.query(WeatherMarket).filter_by(id=analysis.market_id).first()
+            market = (
+                session.query(WeatherMarket).filter_by(id=analysis.market_id).first()
+            )
             if not market:
                 return None
 
@@ -95,10 +101,14 @@ class BetPlacer:
             # Prefer the Karpathy-tuned strategy value; fall back to legacy
             # Config.MIN_ENTRY_PRICE for backwards compatibility.
             strategy_min_price = getattr(self.risk_manager.config, "strategy", None)
-            if strategy_min_price is not None and hasattr(strategy_min_price, "min_entry_price"):
+            if strategy_min_price is not None and hasattr(
+                strategy_min_price, "min_entry_price"
+            ):
                 min_price = float(strategy_min_price.min_entry_price)
             else:
-                min_price = float(getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01))
+                min_price = float(
+                    getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01)
+                )
             if market_price < min_price:
                 logger.debug(
                     f"Market {market.id}: price {market_price:.4f} < min_entry_price {min_price}, skipping"
@@ -108,7 +118,10 @@ class BetPlacer:
             # Zaten bet açılmış mı?
             existing = (
                 session.query(Bet)
-                .filter(Bet.market_id == analysis.market_id, Bet.status.in_(self._OPEN_STATUSES))
+                .filter(
+                    Bet.market_id == analysis.market_id,
+                    Bet.status.in_(self._OPEN_STATUSES),
+                )
                 .first()
             )
             if existing:
@@ -136,7 +149,9 @@ class BetPlacer:
             # Useful for backtests and small-portfolio testing where
             # Kelly-derived sizes would otherwise be too small to matter.
             # Risk caps below still apply on top.
-            flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
+            flat_bet = float(
+                getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0
+            )
             if flat_bet > 0.0:
                 logger.info(
                     f"Flat-bet override active: ${flat_bet:.2f} per bet (was ${proposed_amount:.2f} from Kelly)."
@@ -146,7 +161,9 @@ class BetPlacer:
             # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). The engine's
             # Kelly sizing already enforces this in calculator.py, but
             # we re-apply it here as a hard ceiling.
-            max_bet = float(self.risk_manager.portfolio_value) * float(self.risk_manager.config.MAX_BET_PCT)
+            max_bet = float(self.risk_manager.portfolio_value) * float(
+                self.risk_manager.config.MAX_BET_PCT
+            )
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
@@ -163,7 +180,9 @@ class BetPlacer:
                 .scalar()
             ) or 0.0
             current_exposure = float(current_exposure)
-            if not self.risk_manager.check_exposure_cap(current_exposure, proposed_amount):
+            if not self.risk_manager.check_exposure_cap(
+                current_exposure, proposed_amount
+            ):
                 max_exposure = float(self.risk_manager.portfolio_value) * float(
                     self.risk_manager.config.TOTAL_EXPOSURE_PCT
                 )
@@ -181,7 +200,11 @@ class BetPlacer:
                     city_code=market.city_code,
                     side=analysis.recommended_side,
                     amount=proposed_amount,
-                    price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                    price=(
+                        market.yes_price
+                        if analysis.recommended_side == "YES"
+                        else market.no_price
+                    ),
                     status="rejected",
                     error_message=(
                         f"Exposure cap: ${current_exposure:.2f} + ${proposed_amount:.2f} > ${max_exposure:.2f}"
@@ -215,7 +238,11 @@ class BetPlacer:
                     city_code=market.city_code,
                     side=analysis.recommended_side,
                     amount=proposed_amount,
-                    price=market.yes_price if analysis.recommended_side == "YES" else market.no_price,
+                    price=(
+                        market.yes_price
+                        if analysis.recommended_side == "YES"
+                        else market.no_price
+                    ),
                     status="rejected",
                     error_message=f"City cap: {city_open_count}/{self.risk_manager.config.CITY_CAP} for {market.city}",
                 )
@@ -224,7 +251,11 @@ class BetPlacer:
                 return None
 
             # Resolve fill price for the chosen side, adjusted for slippage
-            raw_fill = market.yes_price if analysis.recommended_side == "YES" else market.no_price
+            raw_fill = (
+                market.yes_price
+                if analysis.recommended_side == "YES"
+                else market.no_price
+            )
             raw_fill = float(raw_fill) if raw_fill is not None else 0.0
             slip_est = estimate_slippage(raw_fill, stake_usd=proposed_amount)
             fill_price = raw_fill * (1.0 + slip_est.slippage_pct)
@@ -242,7 +273,10 @@ class BetPlacer:
             try:
                 raw = json.loads(market.raw_data) if market.raw_data else {}
                 for tok in raw.get("tokens", []):
-                    if tok.get("outcome", "").upper() == (analysis.recommended_side or "").upper():
+                    if (
+                        tok.get("outcome", "").upper()
+                        == (analysis.recommended_side or "").upper()
+                    ):
                         condition_id = tok.get("condition_id") or tok.get("token_id")
                         break
             except (json.JSONDecodeError, TypeError):
@@ -310,7 +344,9 @@ class BetPlacer:
                         lvl_price = fill_price * 0.95
                     # Clamp price to [0.01, 0.99]
                     lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
-                    lvl_shares = round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
+                    lvl_shares = (
+                        round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
+                    )
                     ladder_orders.append(
                         {
                             "level": lvl,
@@ -324,7 +360,9 @@ class BetPlacer:
 
             # Live vs Paper execution logic
             # HARD GUARD: always paper unless LIVE_TRADING_ENABLED=true
-            _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
+            _live_allowed = (not Config.DRY_RUN) and os.getenv(
+                "LIVE_TRADING_ENABLED", "false"
+            ).lower() == "true"
             if self.ready and _live_allowed:
                 try:
                     from py_clob_client.order_builder.constants import (
@@ -333,7 +371,9 @@ class BetPlacer:
 
                     order = self.client.create_and_post_order(
                         {
-                            "token_id": self._get_token_id(market, analysis.recommended_side),
+                            "token_id": self._get_token_id(
+                                market, analysis.recommended_side
+                            ),
                             "price": bet.price,
                             "size": bet.amount / bet.price,
                             "side": BUY,
@@ -355,7 +395,9 @@ class BetPlacer:
             else:
                 # Simulated / Paper trade fallback. Also covers the case
                 # where Config.DRY_RUN is true (defense-in-depth).
-                now_ts = int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())
+                now_ts = int(
+                    datetime.now(timezone.utc).replace(tzinfo=None).timestamp()
+                )
                 bet.order_id = f"paper_order_{market.id}_{now_ts}"
                 bet.status = "placed"
                 bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -372,12 +414,18 @@ class BetPlacer:
 
             initial_stake = proposed_amount
             if ladder_orders:
-                l1_amount = ladder_orders[0].get("amount") if isinstance(ladder_orders[0], dict) else None
+                l1_amount = (
+                    ladder_orders[0].get("amount")
+                    if isinstance(ladder_orders[0], dict)
+                    else None
+                )
                 if l1_amount and l1_amount > 0:
                     initial_stake = l1_amount
                     # Mark L1 as filled immediately (prevents double-debit in run_update_prices)
                     ladder_orders[0]["status"] = "filled"
-                    ladder_orders[0]["filled_at"] = datetime.now(timezone.utc).isoformat()
+                    ladder_orders[0]["filled_at"] = datetime.now(
+                        timezone.utc
+                    ).isoformat()
                     # Persist updated ladder back to bet.ladder_data
                     bet.ladder_data = json.dumps(ladder_orders)
             try:
@@ -391,7 +439,9 @@ class BetPlacer:
                 return bet
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                portfolio.current_value = portfolio.cash_balance  # unrealized PnL added later (Faz 4)
+                portfolio.current_value = (
+                    portfolio.cash_balance
+                )  # unrealized PnL added later (Faz 4)
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
             session.commit()
@@ -410,13 +460,19 @@ class BetPlacer:
         """should_bet=True olan tüm analizler için bet aç."""
         placed = 0
         with get_session() as session:
-            pending = session.query(Analysis).filter(Analysis.should_bet.is_(True)).all()
+            pending = (
+                session.query(Analysis).filter(Analysis.should_bet.is_(True)).all()
+            )
             analysis_ids = [a.id for a in pending]
 
             # Dedup: skip analysis_ids that already have ANY Bet record
             processed = set()
             if analysis_ids:
-                existing_rows = session.query(Bet.analysis_id).filter(Bet.analysis_id.in_(analysis_ids)).all()
+                existing_rows = (
+                    session.query(Bet.analysis_id)
+                    .filter(Bet.analysis_id.in_(analysis_ids))
+                    .all()
+                )
                 processed = {row[0] for row in existing_rows if row[0] is not None}
 
         for aid in analysis_ids:

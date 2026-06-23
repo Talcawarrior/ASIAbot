@@ -84,7 +84,9 @@ INTER_PAGE_DELAY_S = 0.20  # be polite — 5 req/s ceiling
 # Shared session with connection pooling
 _SESSION = requests.Session()
 _ADAPTER = requests.adapters.HTTPAdapter(
-    pool_connections=4, pool_maxsize=8, max_retries=0,
+    pool_connections=4,
+    pool_maxsize=8,
+    max_retries=0,
 )
 _SESSION.mount("https://", _ADAPTER)
 _SESSION.mount("http://", _ADAPTER)
@@ -176,7 +178,7 @@ def fetch_weather_events_page(query: str, page: int) -> tuple[list[dict], bool]:
                 timeout=DEFAULT_PAGE_TIMEOUT,
             )
             if r.status_code == 429:
-                wait = min(60.0, 2.0 * (2 ** attempt))
+                wait = min(60.0, 2.0 * (2**attempt))
                 log.warning("429 on page=%d — backoff %.1fs", page, wait)
                 time.sleep(wait)
                 continue
@@ -190,9 +192,13 @@ def fetch_weather_events_page(query: str, page: int) -> tuple[list[dict], bool]:
             has_more = bool(data.get("pagination", {}).get("hasMore", False))
             return events, has_more
         except (requests.Timeout, requests.ConnectionError) as exc:
-            wait = 0.5 * (2 ** attempt)
-            log.warning("network err on page=%d (%s) — retry %.1fs",
-                        page, type(exc).__name__, wait)
+            wait = 0.5 * (2**attempt)
+            log.warning(
+                "network err on page=%d (%s) — retry %.1fs",
+                page,
+                type(exc).__name__,
+                wait,
+            )
             time.sleep(wait)
         except Exception as exc:
             log.warning("unexpected err on page=%d: %s", page, exc)
@@ -221,8 +227,12 @@ def fetch_weather_markets(
     """
     all_markets: list[dict] = []
     for query in queries:
-        log.info("Query %r — paginating up to %d pages (min_end_date=%s)",
-                 query, max_pages, min_end_date)
+        log.info(
+            "Query %r — paginating up to %d pages (min_end_date=%s)",
+            query,
+            max_pages,
+            min_end_date,
+        )
         n_markets_this_query = 0
         for page in range(1, max_pages + 1):
             events, has_more = fetch_weather_events_page(query, page)
@@ -251,12 +261,19 @@ def fetch_weather_markets(
             n_markets_this_query += page_markets_count
 
             if page % 10 == 0 or page == 1 or not has_more:
-                log.info("  page %d: +%d markets (cumulative for query: %d, total: %d)  has_more=%s",
-                         page, page_markets_count, n_markets_this_query,
-                         len(all_markets), has_more)
+                log.info(
+                    "  page %d: +%d markets (cumulative for query: %d, total: %d)  has_more=%s",
+                    page,
+                    page_markets_count,
+                    n_markets_this_query,
+                    len(all_markets),
+                    has_more,
+                )
 
             if not has_more:
-                log.info("  has_more=False at page %d — done with query %r", page, query)
+                log.info(
+                    "  has_more=False at page %d — done with query %r", page, query
+                )
                 break
 
             # Early stop ONLY if EVERY event on this page is older than min_end_date.
@@ -272,8 +289,13 @@ def fetch_weather_markets(
                     if e.get("endDate")
                 ]
                 if page_end_dates and max(page_end_dates) < min_end_date:
-                    log.info("  page %d: NEWEST endDate %s < min_end_date %s — stopping query %r",
-                             page, max(page_end_dates), min_end_date, query)
+                    log.info(
+                        "  page %d: NEWEST endDate %s < min_end_date %s — stopping query %r",
+                        page,
+                        max(page_end_dates),
+                        min_end_date,
+                        query,
+                    )
                     break
 
             time.sleep(INTER_PAGE_DELAY_S)
@@ -282,8 +304,7 @@ def fetch_weather_markets(
         return pd.DataFrame()
 
     df = pd.DataFrame(all_markets)
-    log.info("Total raw markets fetched across %d queries: %d",
-             len(queries), len(df))
+    log.info("Total raw markets fetched across %d queries: %d", len(queries), len(df))
 
     # Dedupe by id (queries may overlap)
     if "id" in df.columns:
@@ -298,11 +319,15 @@ def fetch_weather_markets(
 
     # Derive YES/NO outcome prices and resolved outcome
     df["yes_price"] = df.apply(
-        lambda r: _extract_outcome_price(r.get("outcomes"), r.get("outcomePrices"), "yes"),
+        lambda r: _extract_outcome_price(
+            r.get("outcomes"), r.get("outcomePrices"), "yes"
+        ),
         axis=1,
     )
     df["no_price"] = df.apply(
-        lambda r: _extract_outcome_price(r.get("outcomes"), r.get("outcomePrices"), "no"),
+        lambda r: _extract_outcome_price(
+            r.get("outcomes"), r.get("outcomePrices"), "no"
+        ),
         axis=1,
     )
     df["resolved_outcome"] = df.apply(
@@ -378,7 +403,9 @@ def _parse_market_fields(df: pd.DataFrame) -> pd.DataFrame:
             thresholds.append(0.0)
             threshold_units.append("celsius")
         q_lower = q.lower()
-        if any(w in q_lower for w in ("above", "higher", "over", "exceed", "hot", "warm")):
+        if any(
+            w in q_lower for w in ("above", "higher", "over", "exceed", "hot", "warm")
+        ):
             mtype = "HIGH"
         elif any(w in q_lower for w in ("below", "under", "lower", "cold")):
             mtype = "LOW"
@@ -418,15 +445,25 @@ def _gamma_to_unified(gamma_df: pd.DataFrame) -> pd.DataFrame:
     n_before = len(renamed)
     renamed = renamed[renamed["target_date"].notna()].reset_index(drop=True)
     n_after = len(renamed)
-    log.info("Parsed target_date: %d / %d kept (%d dropped)",
-             n_after, n_before, n_before - n_after)
+    log.info(
+        "Parsed target_date: %d / %d kept (%d dropped)",
+        n_after,
+        n_before,
+        n_before - n_after,
+    )
     n_before = len(renamed)
-    renamed = renamed[(renamed["threshold"] != 0.0)
-                      & (renamed["threshold"] >= -40)
-                      & (renamed["threshold"] <= 55)].reset_index(drop=True)
+    renamed = renamed[
+        (renamed["threshold"] != 0.0)
+        & (renamed["threshold"] >= -40)
+        & (renamed["threshold"] <= 55)
+    ].reset_index(drop=True)
     n_after = len(renamed)
-    log.info("Sane threshold [-40, 55] °C: %d / %d kept (%d dropped)",
-             n_after, n_before, n_before - n_after)
+    log.info(
+        "Sane threshold [-40, 55] °C: %d / %d kept (%d dropped)",
+        n_after,
+        n_before,
+        n_before - n_after,
+    )
     return _coerce_schema(renamed)
 
 
@@ -437,17 +474,35 @@ def _gamma_to_unified(gamma_df: pd.DataFrame) -> pd.DataFrame:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=120,
-                    help="how many days back to fetch (default 120)")
-    ap.add_argument("--end-date", type=str, default=None,
-                    help="end date YYYY-MM-DD (default: today UTC)")
-    ap.add_argument("--max-pages", type=int, default=200,
-                    help="max pages per query (5 events/page; default 200)")
-    ap.add_argument("--queries", nargs="+",
-                    default=list(DEFAULT_QUERIES),
-                    help="search queries to use (default: 'highest temperature' 'lowest temperature')")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="fetch + parse, but don't write markets.parquet")
+    ap.add_argument(
+        "--days",
+        type=int,
+        default=120,
+        help="how many days back to fetch (default 120)",
+    )
+    ap.add_argument(
+        "--end-date",
+        type=str,
+        default=None,
+        help="end date YYYY-MM-DD (default: today UTC)",
+    )
+    ap.add_argument(
+        "--max-pages",
+        type=int,
+        default=200,
+        help="max pages per query (5 events/page; default 200)",
+    )
+    ap.add_argument(
+        "--queries",
+        nargs="+",
+        default=list(DEFAULT_QUERIES),
+        help="search queries to use (default: 'highest temperature' 'lowest temperature')",
+    )
+    ap.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="fetch + parse, but don't write markets.parquet",
+    )
     args = ap.parse_args()
 
     if args.end_date:
@@ -457,11 +512,14 @@ def main() -> int:
     min_end_dt = end_dt - timedelta(days=args.days)
     end_str = end_dt.strftime("%Y-%m-%d")
     min_str = min_end_dt.strftime("%Y-%m-%d")
-    log.info("Backfill window: %s -> %s (last %d days, anything older is dropped)",
-             min_str, end_str, args.days)
+    log.info(
+        "Backfill window: %s -> %s (last %d days, anything older is dropped)",
+        min_str,
+        end_str,
+        args.days,
+    )
     log.info("Queries: %s", args.queries)
-    log.info("Max pages per query: %d (5 events per page)",
-             args.max_pages)
+    log.info("Max pages per query: %d (5 events per page)", args.max_pages)
 
     # 1. Fetch all weather markets via /public-search
     gamma_df = fetch_weather_markets(
@@ -489,8 +547,11 @@ def main() -> int:
         log.error("All rows dropped during parse — aborting")
         return 1
 
-    log.info("New rows target_date span: %s -> %s",
-             unified_new["target_date"].min(), unified_new["target_date"].max())
+    log.info(
+        "New rows target_date span: %s -> %s",
+        unified_new["target_date"].min(),
+        unified_new["target_date"].max(),
+    )
     log.info("New rows city breakdown (top 15):")
     for city, n in unified_new["city"].value_counts().head(15).items():
         log.info("  %-20s %d", city, n)
@@ -514,12 +575,17 @@ def main() -> int:
     log.info("=" * 60)
     log.info("Final markets.parquet will contain:")
     log.info("  rows:        %d", len(merged))
-    log.info("  date span:   %s -> %s",
-             merged["target_date"].min(), merged["target_date"].max())
+    log.info(
+        "  date span:   %s -> %s",
+        merged["target_date"].min(),
+        merged["target_date"].max(),
+    )
     n_unique_dates = merged["target_date"].dt.date.nunique()
     log.info("  unique target_dates: %d", n_unique_dates)
-    log.info("  resolved:    %d (yes_price in {0,1})",
-             int(merged["yes_price"].isin([0.0, 1.0]).sum()))
+    log.info(
+        "  resolved:    %d (yes_price in {0,1})",
+        int(merged["yes_price"].isin([0.0, 1.0]).sum()),
+    )
     if "clob_token_ids" in merged.columns:
         clob_mask = (
             merged["clob_token_ids"].notna()
@@ -528,8 +594,10 @@ def main() -> int:
         )
         log.info("  with clob_token_ids: %d", int(clob_mask.sum()))
     if "snapshot_yes_price" in merged.columns:
-        log.info("  with snapshot_yes_price: %d",
-                 int(merged["snapshot_yes_price"].notna().sum()))
+        log.info(
+            "  with snapshot_yes_price: %d",
+            int(merged["snapshot_yes_price"].notna().sum()),
+        )
     log.info("=" * 60)
 
     if args.dry_run:
@@ -541,15 +609,19 @@ def main() -> int:
         snap = merged[["market_id", "snapshot_yes_price"]].dropna()
         merged_write = merged.drop(columns=["snapshot_yes_price"])
         ds.write_markets(merged_write)
-        log.info("Wrote %d rows to markets.parquet (snapshot_yes_price saved for re-merge)",
-                 len(merged_write))
+        log.info(
+            "Wrote %d rows to markets.parquet (snapshot_yes_price saved for re-merge)",
+            len(merged_write),
+        )
         time.sleep(0.5)
         written = ds.read_markets()
         if not snap.empty:
             written = written.merge(snap, on="market_id", how="left")
             ds.write_markets(written)
-            log.info("Re-merged %d snapshot_yes_price values back into markets.parquet",
-                     len(snap))
+            log.info(
+                "Re-merged %d snapshot_yes_price values back into markets.parquet",
+                len(snap),
+            )
     else:
         ds.write_markets(merged)
         log.info("Wrote %d rows to markets.parquet", len(merged))

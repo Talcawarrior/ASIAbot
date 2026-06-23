@@ -2,9 +2,6 @@
 longer hardcodes GFS-boost / MeteoFrance-trim.
 """
 
-import os
-import sys
-
 import pytest
 
 from asi_engine.cognition_base import CognitionBase
@@ -49,7 +46,10 @@ class TestResearcherAgentHonesty:
             # We look for any of these patterns.
             import re
 
-            m = re.search(r"(?:Boost weight of|picked to boost|Brier-driven shift:.*?'|picked ')([a-z_]+)", h)
+            m = re.search(
+                r"(?:Boost weight of|picked to boost|Brier-driven shift:.*?'|picked ')([a-z_]+)",
+                h,
+            )
             if m:
                 boost_counts[m.group(1)] += 1
 
@@ -71,9 +71,9 @@ class TestResearcherAgentHonesty:
         # Fake Brier scores: model_a is best, model_z is worst.
         fake_briers = {
             "gfs_seamless": 0.05,
-            "ecmwf_ifs04": 0.10,
+            "ecmwf_ifs025": 0.10,
             "meteofrance_seamless": 0.40,  # worst
-            "icon_seamless": 0.20,
+            "icon_global": 0.20,
         }
 
         import asi_engine.researcher_agent as ra_mod
@@ -93,7 +93,9 @@ class TestResearcherAgentHonesty:
             f"gfs_seamless should be boosted: was {old_weights['gfs_seamless']}, "
             f"now {new_weights['gfs_seamless']}"
         )
-        assert new_weights["meteofrance_seamless"] <= old_weights["meteofrance_seamless"], (
+        assert (
+            new_weights["meteofrance_seamless"] <= old_weights["meteofrance_seamless"]
+        ), (
             f"meteofrance_seamless should be trimmed: was {old_weights['meteofrance_seamless']}, "
             f"now {new_weights['meteofrance_seamless']}"
         )

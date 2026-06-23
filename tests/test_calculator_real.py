@@ -7,8 +7,6 @@ file (`test_calculator.py`) which only checked that P(T>25 | mean=25,
 std=1) ≈ 0.5.
 """
 
-import math
-
 from engine.calculator import WeatherEngine
 from utils.probability import estimate_probability, normal_cdf
 
@@ -63,33 +61,52 @@ class TestEstimateProbability:
 
     def test_range_market_central_bucket(self):
         # P(24.5 <= T <= 25.5 | mean=25, std=1) should be ~0.38 (1σ bucket)
-        p = estimate_probability(mean=25.0, std=1.0, threshold=25.0, market_type="RANGE")
+        p = estimate_probability(
+            mean=25.0, std=1.0, threshold=25.0, market_type="RANGE"
+        )
         assert 0.30 <= p <= 0.45
 
     def test_range_market_explicit_bounds(self):
         # Wider bucket (24..26) should yield higher probability than ±0.5 bucket.
-        p_narrow = estimate_probability(mean=25.0, std=1.0, threshold=25.0, market_type="RANGE")
+        p_narrow = estimate_probability(
+            mean=25.0, std=1.0, threshold=25.0, market_type="RANGE"
+        )
         p_wide = estimate_probability(
-            mean=25.0, std=1.0, threshold=25.0, market_type="RANGE", range_low=23.0, range_high=27.0
+            mean=25.0,
+            std=1.0,
+            threshold=25.0,
+            market_type="RANGE",
+            range_low=23.0,
+            range_high=27.0,
         )
         assert p_wide > p_narrow
 
     def test_days_ahead_widens_uncertainty(self):
         # Far-future forecast → distribution is wider → P(at mean) closer to 0.5.
-        p_near = estimate_probability(mean=25.0, std=1.0, threshold=30.0, days_ahead=0, market_type="HIGH")
-        p_far = estimate_probability(mean=25.0, std=1.0, threshold=30.0, days_ahead=10, market_type="HIGH")
+        p_near = estimate_probability(
+            mean=25.0, std=1.0, threshold=30.0, days_ahead=0, market_type="HIGH"
+        )
+        p_far = estimate_probability(
+            mean=25.0, std=1.0, threshold=30.0, days_ahead=10, market_type="HIGH"
+        )
         # With wider σ, P(T >= 30) should be larger (less mass concentrated below threshold).
         assert p_far > p_near
 
     def test_unknown_market_type_falls_back_to_high(self):
         # Should warn and treat as HIGH.
-        p = estimate_probability(mean=25.0, std=1.0, threshold=25.0, market_type="WEIRD")
+        p = estimate_probability(
+            mean=25.0, std=1.0, threshold=25.0, market_type="WEIRD"
+        )
         assert 0.45 <= p <= 0.55
 
     def test_probability_clamped_to_safe_range(self):
         # Even with extreme inputs, p stays inside [0.01, 0.99].
-        extreme_high = estimate_probability(mean=1000.0, std=0.1, threshold=0.0, market_type="HIGH")
-        extreme_low = estimate_probability(mean=-1000.0, std=0.1, threshold=0.0, market_type="HIGH")
+        extreme_high = estimate_probability(
+            mean=1000.0, std=0.1, threshold=0.0, market_type="HIGH"
+        )
+        extreme_low = estimate_probability(
+            mean=-1000.0, std=0.1, threshold=0.0, market_type="HIGH"
+        )
         assert 0.01 <= extreme_high <= 0.99
         assert 0.01 <= extreme_low <= 0.99
 
@@ -118,7 +135,9 @@ class TestWeatherEngineProbabilities:
     def test_missing_consensus_returns_half(self):
         # When consensus is None and no DB lookup succeeds, returns 0.5.
         # (WeatherEngine._db_consensus returns None when no factory is set.)
-        p = self.engine.calculate_probability_above(25.0, consensus=None, market_id="nonexistent")
+        p = self.engine.calculate_probability_above(
+            25.0, consensus=None, market_id="nonexistent"
+        )
         assert p == 0.5
 
 

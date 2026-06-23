@@ -19,7 +19,9 @@ def test_strategy_config_min_edge_default():
     from config.settings import StrategyConfig
 
     s = StrategyConfig()
-    assert 0.01 <= s.min_edge <= 0.20, f"Expected min_edge between 0.01 and 0.20, got {s.min_edge}"
+    assert (
+        0.01 <= s.min_edge <= 0.20
+    ), f"Expected min_edge between 0.01 and 0.20, got {s.min_edge}"
 
 
 def test_config_fee_drag_matches_strategy():
@@ -27,7 +29,9 @@ def test_config_fee_drag_matches_strategy():
     from config.settings import StrategyConfig, config
 
     s = StrategyConfig()
-    assert config.FEE_DRAG == s.fee_drag, f"FEE_DRAG={config.FEE_DRAG} != default strategy.fee_drag={s.fee_drag}"
+    assert (
+        config.FEE_DRAG == s.fee_drag
+    ), f"FEE_DRAG={config.FEE_DRAG} != default strategy.fee_drag={s.fee_drag}"
 
 
 def test_config_kelly_fraction_matches_strategy():
@@ -35,6 +39,6 @@ def test_config_kelly_fraction_matches_strategy():
     from config.settings import StrategyConfig, config
 
     s = StrategyConfig()
-    assert config.KELLY_FRACTION == s.kelly_fraction, (
-        f"KELLY_FRACTION={config.KELLY_FRACTION} != default strategy.kelly_fraction={s.kelly_fraction}"
-    )
+    assert (
+        config.KELLY_FRACTION == s.kelly_fraction
+    ), f"KELLY_FRACTION={config.KELLY_FRACTION} != default strategy.kelly_fraction={s.kelly_fraction}"

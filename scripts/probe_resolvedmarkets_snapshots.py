@@ -30,7 +30,9 @@ m = ds.read_markets()
 print(f"Loaded {len(m)} markets from unified datastore")
 
 # Filter to weather + non-empty conditionId
-weather = m[(m["category"] == "Weather") & m["condition_id"].notna() & (m["condition_id"] != "")]
+weather = m[
+    (m["category"] == "Weather") & m["condition_id"].notna() & (m["condition_id"] != "")
+]
 print(f"Weather markets with conditionId: {len(weather)}")
 
 # Sample 10 random ones
@@ -85,8 +87,19 @@ for i, row in enumerate(sample.itertuples(index=False)):
             sample_snapshot = snaps[0]
             print(f"       sample snapshot keys: {list(snaps[0].keys())}")
             # show a few interesting fields
-            for k in ("timestamp", "ts", "mid", "mid_price", "yes_price", "best_bid",
-                      "best_ask", "spread", "depth", "total_bid_depth", "total_ask_depth"):
+            for k in (
+                "timestamp",
+                "ts",
+                "mid",
+                "mid_price",
+                "yes_price",
+                "best_bid",
+                "best_ask",
+                "spread",
+                "depth",
+                "total_bid_depth",
+                "total_ask_depth",
+            ):
                 if k in snaps[0]:
                     print(f"       snapshot.{k}: {snaps[0][k]}")
     else:
@@ -95,6 +108,8 @@ for i, row in enumerate(sample.itertuples(index=False)):
     # Respect 4 req/s rate limit
     time.sleep(0.3)
 
-print(f"\nSummary: found={found}, not_found={not_found}, errors={errs} (of {len(sample)} probed)")
+print(
+    f"\nSummary: found={found}, not_found={not_found}, errors={errs} (of {len(sample)} probed)"
+)
 if sample_snapshot:
     print(f"\nFull sample snapshot:\n{sample_snapshot}")

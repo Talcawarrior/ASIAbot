@@ -60,7 +60,9 @@ class LLMConfig:
         return bool(self.api_key)
 
 
-def get_client(cfg: LLMConfig | None = None, *, layer: str = "") -> tuple[Any, LLMConfig] | None:
+def get_client(
+    cfg: LLMConfig | None = None, *, layer: str = ""
+) -> tuple[Any, LLMConfig] | None:
     """Build and return (openai client, config), or None if not configured.
 
     Returns None when:

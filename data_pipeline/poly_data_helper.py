@@ -13,7 +13,9 @@ import requests
 logger = logging.getLogger("ASI_POLY_DATA")
 
 # Dataset local storage paths
-MARKETS_CSV_URL = "https://raw.githubusercontent.com/warproxxx/poly_data/main/markets.csv"
+MARKETS_CSV_URL = (
+    "https://raw.githubusercontent.com/warproxxx/poly_data/main/markets.csv"
+)
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 LOCAL_MARKETS_PATH = os.path.join(DATA_DIR, "poly_markets.csv")
 
@@ -27,16 +29,24 @@ class PolyDataPipeline:
 
     def download_markets_metadata(self) -> bool:
         """Fetch the latest markets metadata from the public poly_data repo."""
-        logger.info("PolyData: Downloading latest markets.csv from warproxxx/poly_data...")
+        logger.info(
+            "PolyData: Downloading latest markets.csv from warproxxx/poly_data..."
+        )
         try:
             resp = requests.get(MARKETS_CSV_URL, timeout=15)
             resp.raise_for_status()
             with open(LOCAL_MARKETS_PATH, "w", encoding="utf-8") as f:
                 f.write(resp.text)
-            logger.info("PolyData: Successfully downloaded and saved markets.csv locally to %s", LOCAL_MARKETS_PATH)
+            logger.info(
+                "PolyData: Successfully downloaded and saved markets.csv locally to %s",
+                LOCAL_MARKETS_PATH,
+            )
             return True
         except Exception as e:
-            logger.warning("PolyData: Could not download markets.csv: %s (Falling back to local cache)", e)
+            logger.warning(
+                "PolyData: Could not download markets.csv: %s (Falling back to local cache)",
+                e,
+            )
             return os.path.exists(LOCAL_MARKETS_PATH)
 
     def get_weather_markets(self) -> pd.DataFrame:
@@ -65,9 +75,13 @@ class PolyDataPipeline:
             pattern = "|".join(weather_keywords)
 
             # Filter weather markets based on the question column
-            weather_df = df[df["question"].str.contains(pattern, case=False, na=False)].copy()
+            weather_df: pd.DataFrame = df[
+                df["question"].str.contains(pattern, case=False, na=False)
+            ].copy()  # type: ignore[assignment]
             logger.info(
-                "PolyData: Filtered %d weather-related prediction markets out of %d total", len(weather_df), len(df)
+                "PolyData: Filtered %d weather-related prediction markets out of %d total",
+                len(weather_df),
+                len(df),
             )
             return weather_df
         except Exception as e:
@@ -86,14 +100,20 @@ class PolyDataPipeline:
             return pd.read_csv(trades_path)
 
         # Skeleton/mock fallback: Generate realistic sample trade data for cold-starts
-        logger.info("PolyData: Local poly_trades.csv not found. Generating a mock dataset based on S3 schemas...")
+        logger.info(
+            "PolyData: Local poly_trades.csv not found. Generating a mock dataset based on S3 schemas..."
+        )
         mock_trades = []
         import random
         from datetime import datetime, timedelta
 
         # Fetch weather markets to link our mock trades to actual market IDs
         weather_df = self.get_weather_markets()
-        market_ids = list(weather_df["id"].unique()) if not weather_df.empty else ["2513866", "2528144"]
+        market_ids = (
+            list(weather_df["id"].unique())
+            if not weather_df.empty
+            else ["2513866", "2528144"]
+        )
 
         now = datetime.now()
         for i in range(100):
@@ -118,5 +138,7 @@ class PolyDataPipeline:
 
         df = pd.DataFrame(mock_trades)
         df.to_csv(trades_path, index=False)
-        logger.info("PolyData: Mock trades dataset saved successfully. Ready for ML/AI post-processing!")
+        logger.info(
+            "PolyData: Mock trades dataset saved successfully. Ready for ML/AI post-processing!"
+        )
         return df

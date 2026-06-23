@@ -51,7 +51,8 @@ def run_analyze():
             .filter(
                 WeatherMarket.status == "open",
                 WeatherMarket.city.isnot(None),
-                WeatherMarket.target_date > datetime.now(timezone.utc).replace(tzinfo=None),
+                WeatherMarket.target_date
+                > datetime.now(timezone.utc).replace(tzinfo=None),
             )
             .all()
         )
@@ -100,7 +101,11 @@ def run_update_prices():
         market_ids = list(set(b.market_id for b in bets if b.market_id))
         price_map = {}
         if market_ids:
-            markets = session.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all()
+            markets = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id.in_(market_ids))
+                .all()
+            )
             for m in markets:
                 price_map[m.id] = {
                     "yes": float(m.yes_price) if m.yes_price is not None else 0.5,
@@ -139,13 +144,19 @@ def run_update_prices():
 
             if bet.ladder_data:
                 try:
-                    ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
+                    ladder = (
+                        json.loads(bet.ladder_data)
+                        if isinstance(bet.ladder_data, str)
+                        else bet.ladder_data
+                    )
                     if isinstance(ladder, list):
                         filled_amount = 0.0
                         for rung in ladder:
                             if rung.get("status") == "pending":
                                 trigger_price = float(rung.get("price", 0))
-                                rung_size = float(rung.get("size", rung.get("amount", 0)))
+                                rung_size = float(
+                                    rung.get("size", rung.get("amount", 0))
+                                )
                                 if bet.side and bet.side.upper() == "NO":
                                     # NO side: fill when current NO price (1 - yes_price) <= trigger_price
                                     should_fill = (1.0 - current) <= trigger_price
@@ -153,11 +164,15 @@ def run_update_prices():
                                     should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:
                                     rung["status"] = "filled"
-                                    rung["filled_at"] = datetime.now(timezone.utc).isoformat()
+                                    rung["filled_at"] = datetime.now(
+                                        timezone.utc
+                                    ).isoformat()
                                     filled_amount += rung_size
                         if filled_amount > 0:
                             bet.ladder_data = json.dumps(ladder)
-                            debit_stake(session, filled_amount, f"ladder_fill:{bet.market_id}")
+                            debit_stake(
+                                session, filled_amount, f"ladder_fill:{bet.market_id}"
+                            )
                 except Exception as e:
                     logger.warning("Ladder parse hatası %s: %s", bet.id, e)
 
@@ -169,7 +184,9 @@ def run_update_prices():
         portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
         if portfolio:
             realized_pnl_total = (
-                session.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost"))).scalar()
+                session.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+                .filter(Bet.status.in_(("won", "lost")))
+                .scalar()
             ) or 0.0
             open_exposure = (
                 session.query(func.coalesce(func.sum(Bet.amount), 0.0))
@@ -205,7 +222,9 @@ def run_report():
         total_bets = session.query(Bet).count()
         won = session.query(Bet).filter(Bet.status == "won").count()
         lost = session.query(Bet).filter(Bet.status == "lost").count()
-        open_markets = session.query(WeatherMarket).filter(WeatherMarket.status == "open").count()
+        open_markets = (
+            session.query(WeatherMarket).filter(WeatherMarket.status == "open").count()
+        )
 
         total_pnl = session.query(func.sum(Bet.pnl)).scalar() or 0.0
 
@@ -240,7 +259,11 @@ def run_risk_management():
         market_ids = list(set(b.market_id for b in bets if b.market_id))
         markets = {}
         if market_ids:
-            for m in session.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all():
+            for m in (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id.in_(market_ids))
+                .all()
+            ):
                 markets[m.id] = m
 
         closed_count = 0
@@ -284,16 +307,24 @@ def run_risk_management():
                 # rung shares can be sold.  Pending rungs are cancelled.
                 if bet.ladder_data:
                     try:
-                        ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
+                        ladder = (
+                            json.loads(bet.ladder_data)
+                            if isinstance(bet.ladder_data, str)
+                            else bet.ladder_data
+                        )
                         if isinstance(ladder, list):
                             filled_shares = sum(
-                                float(r.get("shares", r.get("size", r.get("amount", 0))))
+                                float(
+                                    r.get("shares", r.get("size", r.get("amount", 0)))
+                                )
                                 for r in ladder
                                 if r.get("status") == "filled"
                             )
                             if filled_shares > 0:
                                 proceeds = round(filled_shares * current_price, 2)
-                                realized = round(filled_shares * (current_price - entry), 2)
+                                realized = round(
+                                    filled_shares * (current_price - entry), 2
+                                )
                     except Exception:
                         pass  # fall back to simple calculation
 

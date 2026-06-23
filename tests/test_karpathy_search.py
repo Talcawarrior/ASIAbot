@@ -12,7 +12,6 @@ table is empty or missing.
 """
 
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -89,7 +88,9 @@ def test_karpathy_search_is_deterministic():
     assert best1["score"] == best2["score"]
     assert best1["candidate"]["min_edge"] == best2["candidate"]["min_edge"]
     assert best1["candidate"]["kelly_fraction"] == best2["candidate"]["kelly_fraction"]
-    assert best1["candidate"]["min_entry_price"] == best2["candidate"]["min_entry_price"]
+    assert (
+        best1["candidate"]["min_entry_price"] == best2["candidate"]["min_entry_price"]
+    )
 
 
 @_skip_no_backfill
@@ -107,9 +108,9 @@ def test_karpathy_search_finds_positive_roi_candidate():
     # should beat break-even. If this fails consistently, the search
     # space is too narrow.
     positive_roi = [r for r in leaderboard if r["roi"] > 0]
-    assert len(positive_roi) > 0, (
-        "No candidate had positive ROI — the search space is broken."
-    )
+    assert (
+        len(positive_roi) > 0
+    ), "No candidate had positive ROI — the search space is broken."
 
 
 def test_save_best_to_disk_writes_strategy_params():
@@ -121,7 +122,7 @@ def test_save_best_to_disk_writes_strategy_params():
     # Construct a fake best candidate
     fake_best = {
         "candidate": {
-            "model_weights": {"gfs_seamless": 0.5, "ecmwf_ifs04": 0.5},
+            "model_weights": {"gfs_seamless": 0.5, "ecmwf_ifs025": 0.5},
             "min_edge": 0.07,
             "kelly_fraction": 0.10,
             "max_bet_pct": 0.03,
@@ -160,7 +161,7 @@ def test_apply_persisted_strategy_params_reads_karpathy_file():
     strategy_params.json file written by the Karpathy search and apply
     the values to bot_config.
     """
-    from config.settings import apply_persisted_strategy_params, bot_config, Config
+    from config.settings import Config, apply_persisted_strategy_params, bot_config
 
     applied = apply_persisted_strategy_params()
 

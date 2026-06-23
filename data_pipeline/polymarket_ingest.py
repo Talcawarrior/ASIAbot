@@ -91,19 +91,25 @@ class PolymarketIngest:
             try:
                 resp = self._session.get(url, params=params, timeout=self.cfg.timeout)
                 if resp.status_code == 429:
-                    backoff = min(60.0, 2.0 * (2 ** attempt))
+                    backoff = min(60.0, 2.0 * (2**attempt))
                     logger.warning("Gamma 429 on %s — backing off %.1fs", path, backoff)
                     time.sleep(backoff)
                     continue
                 resp.raise_for_status()
                 return resp.json()
-            except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as exc:
+            except (
+                requests.Timeout,
+                requests.ConnectionError,
+                requests.HTTPError,
+            ) as exc:
                 last_exc = exc
                 if attempt < self.cfg.max_retries:
-                    backoff = 0.5 * (2 ** attempt)
+                    backoff = 0.5 * (2**attempt)
                     logger.debug("Gamma retry %d on %s: %s", attempt + 1, path, exc)
                     time.sleep(backoff)
-        raise RuntimeError(f"Gamma GET {path} failed after {self.cfg.max_retries+1} attempts: {last_exc}")
+        raise RuntimeError(
+            f"Gamma GET {path} failed after {self.cfg.max_retries + 1} attempts: {last_exc}"
+        )
 
     # -- Public: bulk market fetch ---------------------------------------
 
@@ -165,7 +171,10 @@ class PolymarketIngest:
             all_markets.extend(batch)
             logger.info(
                 "Gamma page %d: +%d markets (total %d, offset=%d)",
-                page + 1, len(batch), len(all_markets), offset,
+                page + 1,
+                len(batch),
+                len(all_markets),
+                offset,
             )
 
             if limit is not None and len(all_markets) >= limit:
@@ -214,26 +223,41 @@ class PolymarketIngest:
                 for col in ("outcomes", "outcomePrices", "clobTokenIds"):
                     if col in df.columns:
                         df[col] = df[col].apply(_safe_json_loads)
-                logger.info("Loaded %d closed markets from cache %s", len(df), CLOSED_MARKETS_CACHE)
+                logger.info(
+                    "Loaded %d closed markets from cache %s",
+                    len(df),
+                    CLOSED_MARKETS_CACHE,
+                )
                 return df
             except Exception as exc:
                 logger.warning("Cache load failed: %s — refetching", exc)
 
         df = self.fetch_markets(
-            closed=True, active=False, category=category,
-            end_date_min=end_date_min, end_date_max=end_date_max,
-            limit=limit, order="endDate", ascending=False,
+            closed=True,
+            active=False,
+            category=category,
+            end_date_min=end_date_min,
+            end_date_max=end_date_max,
+            limit=limit,
+            order="endDate",
+            ascending=False,
         )
         os.makedirs(self.cfg.cache_dir, exist_ok=True)
         df.to_csv(CLOSED_MARKETS_CACHE, index=False)
         logger.info("Cached %d closed markets to %s", len(df), CLOSED_MARKETS_CACHE)
         return df
 
-    def fetch_active_markets(self, *, category: str | None = None, limit: int | None = None) -> pd.DataFrame:
+    def fetch_active_markets(
+        self, *, category: str | None = None, limit: int | None = None
+    ) -> pd.DataFrame:
         """Fetch all currently active (not yet resolved) markets."""
         df = self.fetch_markets(
-            closed=False, active=True, category=category,
-            limit=limit, order="volume", ascending=False,
+            closed=False,
+            active=True,
+            category=category,
+            limit=limit,
+            order="volume",
+            ascending=False,
         )
         return df
 
@@ -286,15 +310,36 @@ class PolymarketIngest:
         if df.empty:
             return df
         weather_keywords = (
-            "temperature", "temp ", "°c", "°f", "celsius", "fahrenheit",
-            "rain", "snow", "precipitation", "hurricane", "weather",
-            "highest", "lowest", "warmest", "coldest",
+            "temperature",
+            "temp ",
+            "°c",
+            "°f",
+            "celsius",
+            "fahrenheit",
+            "rain",
+            "snow",
+            "precipitation",
+            "hurricane",
+            "weather",
+            "highest",
+            "lowest",
+            "warmest",
+            "coldest",
         )
-        mask = df["question"].fillna("").str.lower().str.contains(
-            "|".join(weather_keywords), regex=True, na=False,
+        mask = (
+            df["question"]
+            .fillna("")
+            .str.lower()
+            .str.contains(
+                "|".join(weather_keywords),
+                regex=True,
+                na=False,
+            )
         )
-        weather_df = df[mask].copy()
-        logger.info("Filtered %d weather markets out of %d closed", len(weather_df), len(df))
+        weather_df: pd.DataFrame = df[mask].copy()  # type: ignore[assignment]
+        logger.info(
+            "Filtered %d weather markets out of %d closed", len(weather_df), len(df)
+        )
         return weather_df
 
 
@@ -370,26 +415,47 @@ def _extract_resolved_outcome(row: pd.Series) -> str | None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
     ingest = PolymarketIngest()
 
     print("\n=== Recent closed markets (last 50) ===")
     df = ingest.fetch_markets(
-        closed=True, active=False, limit=50,
-        order="endDate", ascending=False,
+        closed=True,
+        active=False,
+        limit=50,
+        order="endDate",
+        ascending=False,
     )
     print(f"Rows: {len(df)}")
     if not df.empty:
-        cols = ["id", "question", "endDate", "yes_price", "no_price", "resolved_outcome", "volume"]
+        cols = [
+            "id",
+            "question",
+            "endDate",
+            "yes_price",
+            "no_price",
+            "resolved_outcome",
+            "volume",
+        ]
         cols = [c for c in cols if c in df.columns]
         print(df[cols].head(10).to_string())
 
     print("\n=== Weather markets (closed, last 30 days) ===")
     from datetime import datetime, timedelta
+
     cutoff = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
     weather_df = ingest.fetch_weather_markets(end_date_min=cutoff, limit=500)
     print(f"Rows: {len(weather_df)}")
     if not weather_df.empty:
-        cols = ["id", "question", "endDate", "yes_price", "no_price", "resolved_outcome"]
+        cols = [
+            "id",
+            "question",
+            "endDate",
+            "yes_price",
+            "no_price",
+            "resolved_outcome",
+        ]
         cols = [c for c in cols if c in weather_df.columns]
         print(weather_df[cols].head(10).to_string())

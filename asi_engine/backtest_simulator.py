@@ -75,7 +75,11 @@ class BacktestSimulator:
                     continue
 
                 recalculated_prob = (
-                    sum(model_weights.get(m, 0.0) * float(prob) for m, prob in model_probs.items()) / weight_sum
+                    sum(
+                        model_weights.get(m, 0.0) * float(prob)
+                        for m, prob in model_probs.items()
+                    )
+                    / weight_sum
                 )
 
                 # 2. Check if the market outcome matches the YES direction
@@ -84,7 +88,9 @@ class BacktestSimulator:
                     continue
 
                 # Add to Brier Score calculation (YES probability vs actual outcome)
-                brier_errors.append((recalculated_prob - (1.0 if outcome_yes else 0.0)) ** 2)
+                brier_errors.append(
+                    (recalculated_prob - (1.0 if outcome_yes else 0.0)) ** 2
+                )
 
                 # 3. Simulate bet eligibility and sizing
                 yes_price = float(market.yes_price or 0.5)
@@ -110,13 +116,24 @@ class BacktestSimulator:
                     total_bets_opened += 1
 
                     # Kelly size it
-                    prob_win = recalculated_prob if sim_side == "YES" else (1.0 - recalculated_prob)
+                    prob_win = (
+                        recalculated_prob
+                        if sim_side == "YES"
+                        else (1.0 - recalculated_prob)
+                    )
                     bet_size = kelly_bet_amount(
-                        bankroll, prob_win, entry_price, fraction=kelly_fraction, min_bet=1.0, max_bet_pct=0.03
+                        bankroll,
+                        prob_win,
+                        entry_price,
+                        fraction=kelly_fraction,
+                        min_bet=1.0,
+                        max_bet_pct=0.03,
                     )
 
                     # Evaluate bet outcome
-                    won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
+                    won = (sim_side == "YES" and outcome_yes) or (
+                        sim_side == "NO" and not outcome_yes
+                    )
                     total_wagered += bet_size
 
                     if won:
@@ -136,7 +153,12 @@ class BacktestSimulator:
         roi = (simulated_pnl / total_wagered * 100) if total_wagered > 0 else 0.0
         win_rate = (bets_won / total_bets_opened) if total_bets_opened > 0 else 0.0
 
-        logger.info("  Backtest Results -> Brier=%.4f, ROI=%.2f%%, Opened Bets=%d", final_brier, roi, total_bets_opened)
+        logger.info(
+            "  Backtest Results -> Brier=%.4f, ROI=%.2f%%, Opened Bets=%d",
+            final_brier,
+            roi,
+            total_bets_opened,
+        )
 
         return {
             "brier_score": round(final_brier, 4),
@@ -202,7 +224,13 @@ class BacktestSimulator:
             groups = cursor.fetchall()
         except sqlite3.OperationalError:
             conn.close()
-            return {"brier_score": 0.25, "roi": 0.0, "win_rate": 0.0, "total_bets": 0, "pnl": 0.0}
+            return {
+                "brier_score": 0.25,
+                "roi": 0.0,
+                "win_rate": 0.0,
+                "total_bets": 0,
+                "pnl": 0.0,
+            }
 
         sim_pnl = 0.0
         total_trades = 0
@@ -236,7 +264,10 @@ class BacktestSimulator:
             if weight_sum <= 0:
                 continue
 
-            weighted_temp = sum(model_weights.get(m, 0.0) * val for m, val in preds.items()) / weight_sum
+            weighted_temp = (
+                sum(model_weights.get(m, 0.0) * val for m, val in preds.items())
+                / weight_sum
+            )
 
             # ── HONEST STRIKE PRICE ────────────────────────────────────────
             # Pick a strike from a wide grid. Half the scenarios will resolve
@@ -248,12 +279,22 @@ class BacktestSimulator:
             pred_vals = list(preds.values())
             mean = sum(pred_vals) / len(pred_vals)
             std = (
-                max((sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5, 1.0)
+                max(
+                    (sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1))
+                    ** 0.5,
+                    1.0,
+                )
                 if len(pred_vals) > 1
                 else 1.5
             )
 
-            prob = estimate_probability(mean=weighted_temp, std=std, threshold=strike, days_ahead=2, market_type="HIGH")
+            prob = estimate_probability(
+                mean=weighted_temp,
+                std=std,
+                threshold=strike,
+                days_ahead=2,
+                market_type="HIGH",
+            )
 
             brier_errors.append((prob - (1.0 if outcome_yes else 0.0)) ** 2)
 
@@ -266,6 +307,7 @@ class BacktestSimulator:
             # answer.
             naive_z = (strike - mean) / max(std, 1.0)
             import math as _math
+
             naive_p_yes = 0.5 * (1.0 + _math.erf(-naive_z / _math.sqrt(2.0)))
             inefficiency = rng.gauss(0.0, 0.07)
             # Apply a small vig by shrinking the price toward 0.5.
@@ -291,10 +333,17 @@ class BacktestSimulator:
                 total_trades += 1
                 prob_win = prob if sim_side == "YES" else (1.0 - prob)
                 bet_size = kelly_bet_amount(
-                    bankroll, prob_win, entry_price, fraction=kelly_fraction, min_bet=1.0, max_bet_pct=0.03
+                    bankroll,
+                    prob_win,
+                    entry_price,
+                    fraction=kelly_fraction,
+                    min_bet=1.0,
+                    max_bet_pct=0.03,
                 )
 
-                won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
+                won = (sim_side == "YES" and outcome_yes) or (
+                    sim_side == "NO" and not outcome_yes
+                )
                 total_wagered += bet_size
 
                 if won:

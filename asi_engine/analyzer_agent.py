@@ -31,7 +31,9 @@ class AnalyzerAgent:
         pnl = backtest_results["pnl"]  # noqa: F841
         total_bets = backtest_results["total_bets"]  # noqa: F841
 
-        logger.info("ASI Analyzer: Formulating causal insights for Round %d...", run_round)
+        logger.info(
+            "ASI Analyzer: Formulating causal insights for Round %d...", run_round
+        )
 
         # Retrieve previous best node
         nodes = self.cognition_base.nodes

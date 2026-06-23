@@ -28,7 +28,9 @@ def is_valid_binary_price(yes_price: float, no_price: float) -> bool:
     return True
 
 
-def clamp_price(price: float, min_price: float = 0.01, max_price: float = 0.99) -> float:
+def clamp_price(
+    price: float, min_price: float = 0.01, max_price: float = 0.99
+) -> float:
     """Clamp price to valid range."""
     if price is None:
         return min_price

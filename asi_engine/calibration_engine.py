@@ -27,12 +27,14 @@ class CalibrationEngine:
         self.bias_map = {}
         self.load_calibration_map()
 
-    def calculate_biases(type_self) -> dict:
+    def calculate_biases(self) -> dict:
         """Query historical calibrations and calculate the mean bias for each city-model pair.
 
         Computes MAE and MBE, saves them to a local JSON config, and returns it.
         """
-        logger.info("ASI Calibration: Calculating systematic model biases from backfilled dataset...")
+        logger.info(
+            "ASI Calibration: Calculating systematic model biases from backfilled dataset..."
+        )
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -50,7 +52,9 @@ class CalibrationEngine:
             cursor.execute(query)
             rows = cursor.fetchall()
         except sqlite3.OperationalError:
-            logger.warning("ASI Calibration: historical_calibrations table is empty. Backfill is required first.")
+            logger.warning(
+                "ASI Calibration: historical_calibrations table is empty. Backfill is required first."
+            )
             conn.close()
             return {}
 
@@ -63,7 +67,9 @@ class CalibrationEngine:
                 new_bias_map[city_code]["metrics"][metric] = {}
 
             new_bias_map[city_code]["metrics"][metric][model] = {
-                "mbe": round(mbe, 3),  # Mean Bias Error (Positive = Overpredicting, Negative = Underpredicting)
+                "mbe": round(
+                    mbe, 3
+                ),  # Mean Bias Error (Positive = Overpredicting, Negative = Underpredicting)
                 "mae": round(mae, 3),  # Mean Absolute Error
                 "sample_count": count,
             }
@@ -75,11 +81,14 @@ class CalibrationEngine:
             os.makedirs(os.path.dirname(CALIBRATION_JSON_PATH), exist_ok=True)
             with open(CALIBRATION_JSON_PATH, "w", encoding="utf-8") as f:
                 json.dump(new_bias_map, f, indent=2, sort_keys=True)
-            logger.info("ASI Calibration: Successfully persisted calibration models to %s", CALIBRATION_JSON_PATH)
+            logger.info(
+                "ASI Calibration: Successfully persisted calibration models to %s",
+                CALIBRATION_JSON_PATH,
+            )
         except Exception as e:
             logger.error("ASI Calibration: Could not save calibration map: %s", e)
 
-        type_self.bias_map = new_bias_map
+        self.bias_map = new_bias_map
         return new_bias_map
 
     def load_calibration_map(self):
@@ -88,18 +97,27 @@ class CalibrationEngine:
             try:
                 with open(CALIBRATION_JSON_PATH, encoding="utf-8") as f:
                     self.bias_map = json.load(f)
-                logger.info("ASI Calibration: Loaded bias parameters for %d cities from disk.", len(self.bias_map))
+                logger.info(
+                    "ASI Calibration: Loaded bias parameters for %d cities from disk.",
+                    len(self.bias_map),
+                )
             except Exception as e:
-                logger.warning("ASI Calibration: Could not load calibration JSON: %s", e)
+                logger.warning(
+                    "ASI Calibration: Could not load calibration JSON: %s", e
+                )
 
-    def get_calibrated_temperature(self, city_code: str, metric: str, model: str, raw_temp: float) -> float:
+    def get_calibrated_temperature(
+        self, city_code: str, metric: str, model: str, raw_temp: float
+    ) -> float:
         """Apply dynamic temperature bias correction (fine-tuning).
 
         If a model has a systematic bias for this city (e.g. overpredicts by 1.5C),
         we subtract the Mean Bias Error (MBE) to get the true, fine-tuned value.
         """
         # Strip internal suffix if any
-        clean_metric = "temperature_max" if "max" in metric.lower() else "temperature_min"
+        clean_metric = (
+            "temperature_max" if "max" in metric.lower() else "temperature_min"
+        )
 
         if city_code in self.bias_map:
             metrics_map = self.bias_map[city_code].get("metrics", {})

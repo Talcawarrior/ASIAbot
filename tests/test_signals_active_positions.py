@@ -33,7 +33,9 @@ def test_signals_returns_active_bet_without_error(client):
     for sig in body["signals"]:
         assert "id" in sig
         assert "ladder_orders" in sig
-        assert isinstance(sig["ladder_orders"], list), f"ladder_orders should be list, got {type(sig['ladder_orders'])}"
+        assert isinstance(
+            sig["ladder_orders"], list
+        ), f"ladder_orders should be list, got {type(sig['ladder_orders'])}"
 
 
 def test_signals_no_error_on_any_bet(client):
@@ -59,9 +61,9 @@ def test_status_signals_consistency(client):
     signals_count = signals_body.get("count", 0)
 
     if total_bets > 0:
-        assert signals_count > 0, (
-            f"Consistency violation: status.total_bets={total_bets} but signals.count={signals_count}"
-        )
+        assert (
+            signals_count > 0
+        ), f"Consistency violation: status.total_bets={total_bets} but signals.count={signals_count}"
 
 
 def test_signals_ladder_orders_is_list_for_each_bet(client):
@@ -73,4 +75,6 @@ def test_signals_ladder_orders_is_list_for_each_bet(client):
         pytest.fail(f"/api/signals returned error: {body['error']}")
     for sig in body.get("signals", []):
         lo = sig.get("ladder_orders")
-        assert isinstance(lo, list), f"Bet {sig.get('id')}: ladder_orders={type(lo)}, expected list"
+        assert isinstance(
+            lo, list
+        ), f"Bet {sig.get('id')}: ladder_orders={type(lo)}, expected list"

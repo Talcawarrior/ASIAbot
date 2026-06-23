@@ -56,7 +56,11 @@ def record(name: str, status: str, detail: str = "") -> None:
 def test_resolvedmarkets() -> None:
     log("\n[1/7] ResolvedMarkets API client")
     try:
-        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient, ResolvedMarketsConfig
+        from data_pipeline.resolvedmarkets_ingest import (
+            ResolvedMarketsClient,
+            ResolvedMarketsConfig,
+        )
+
         cfg = ResolvedMarketsConfig()
         if not cfg.api_key:
             record("resolvedmarkets.config", SKIP, "RESOLVEDMARKETS_API_KEY not set")
@@ -75,7 +79,10 @@ def test_resolvedmarkets() -> None:
         )
         # /v1/categories requires auth
         cats = client.list_categories()
-        cat_names = [c.get("id") or c.get("displayName", "?") if isinstance(c, dict) else str(c) for c in cats]
+        cat_names = [
+            c.get("id") or c.get("displayName", "?") if isinstance(c, dict) else str(c)
+            for c in cats
+        ]
         record(
             "resolvedmarkets.auth",
             PASS,
@@ -100,6 +107,7 @@ def test_poly_data() -> None:
             _keccak_topic,
             decode_order_filled,
         )
+
         # --- 2a. Confirm keccak256(topic signature) is computable ---
         topic0 = _keccak_topic(ORDER_FILLED_SIGNATURE)
         record(
@@ -117,10 +125,14 @@ def test_poly_data() -> None:
                 "0x" + "00" * 12 + "ef" * 20,  # taker address (padded)
             ],
             "data": "0x"
-            + "00" * 63 + "01"  # side=1 (SELL)
-            + "00" * 63 + "02"  # token_id=2
-            + "00" * 62 + "027f"  # maker_fill
-            + "00" * 62 + "0264"  # taker_fill
+            + "00" * 63
+            + "01"  # side=1 (SELL)
+            + "00" * 63
+            + "02"  # token_id=2
+            + "00" * 62
+            + "027f"  # maker_fill
+            + "00" * 62
+            + "0264"  # taker_fill
             + "00" * 64  # fee
             + "00" * 64  # builder
             + "de" * 32,  # metadata
@@ -172,7 +184,11 @@ def test_poly_data() -> None:
 def test_polymarket() -> None:
     log("\n[3/7] Polymarket Gamma API")
     try:
-        from data_pipeline.polymarket_ingest import PolymarketIngest, PolymarketIngestConfig
+        from data_pipeline.polymarket_ingest import (
+            PolymarketIngest,
+            PolymarketIngestConfig,
+        )
+
         ing = PolymarketIngest(PolymarketIngestConfig())
         # Use fetch_active_markets (lighter than fetch_markets) — single page,
         # no pagination loop. Weather markets often resolve quickly so we
@@ -207,6 +223,7 @@ def test_unified_datastore() -> None:
     log("\n[4/7] Unified datastore (Brier dataset build)")
     try:
         from data_pipeline.unified_datastore import UnifiedDatastore
+
         ds = UnifiedDatastore()
         summary = ds.summary()
         log(f"  datastore summary: {summary}")
@@ -232,6 +249,7 @@ def test_zai_llm() -> None:
     log("\n[5/7] ZAI LLM (glm-4.5-flash via llm_client)")
     try:
         from asi_engine.llm_client import LLMConfig, chat_json
+
         cfg = LLMConfig()
         if not cfg.is_configured:
             record("zai_llm.config", SKIP, "ZAI_API_KEY not set")
@@ -275,6 +293,7 @@ def test_3layer_loop() -> None:
             run_karpathy_layer,
             run_sia_layer,
         )
+
         log("  Layer 1: Karpathy weekly (1 round, use_llm=True)")
         t0 = time.perf_counter()
         k = run_karpathy_layer(rounds=1, use_llm=True)
@@ -324,6 +343,7 @@ def test_orchestrator_deploy() -> None:
     log("\n[7/7] Orchestrator deploy-to-live")
     try:
         from asi_engine.llm_loop_orchestrator import deploy_best_to_live, get_status
+
         deploy = deploy_best_to_live()
         if deploy.get("deployed"):
             record(
@@ -357,6 +377,7 @@ def main() -> int:
     # Load .env
     try:
         from dotenv import load_dotenv
+
         load_dotenv(REPO_ROOT / ".env")
     except ImportError:
         log("WARNING: python-dotenv not installed — relying on shell env vars")
@@ -364,11 +385,17 @@ def main() -> int:
     log("=" * 72)
     log("ASIABOT END-TO-END SMOKE TEST")
     log("=" * 72)
-    log(f"  ZAI_API_KEY: {os.environ.get('ZAI_API_KEY', '')[:10]}..."
-        if os.environ.get("ZAI_API_KEY") else "  ZAI_API_KEY: (not set)")
+    log(
+        f"  ZAI_API_KEY: {os.environ.get('ZAI_API_KEY', '')[:10]}..."
+        if os.environ.get("ZAI_API_KEY")
+        else "  ZAI_API_KEY: (not set)"
+    )
     log(f"  ZAI_BASE_URL: {os.environ.get('ZAI_BASE_URL', '(default)')}")
-    log(f"  RESOLVEDMARKETS_API_KEY: {os.environ.get('RESOLVEDMARKETS_API_KEY', '')[:10]}..."
-        if os.environ.get("RESOLVEDMARKETS_API_KEY") else "  RESOLVEDMARKETS_API_KEY: (not set)")
+    log(
+        f"  RESOLVEDMARKETS_API_KEY: {os.environ.get('RESOLVEDMARKETS_API_KEY', '')[:10]}..."
+        if os.environ.get("RESOLVEDMARKETS_API_KEY")
+        else "  RESOLVEDMARKETS_API_KEY: (not set)"
+    )
     log("")
 
     test_resolvedmarkets()
