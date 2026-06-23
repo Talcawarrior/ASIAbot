@@ -1030,6 +1030,12 @@ def run_cli():
         "report": run_report,
     }
     if args.command == "run":
+        # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
+        _dashboard_out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "out")
+        if os.path.isdir(_dashboard_out):
+            app.mount("/_next", StaticFiles(directory=os.path.join(_dashboard_out, "_next")), name="next-static")
+            app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
+
         import uvicorn  # noqa: I001
 
         uvicorn.run(app, host=config.HOST, port=config.PORT)
@@ -1047,8 +1053,3 @@ def run_cli():
 
 if __name__ == "__main__":
     run_cli()
-
-# ── Mount Next.js static dashboard (must be LAST — catch-all) ──────────
-_dashboard_out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "out")
-if os.path.isdir(_dashboard_out):
-    app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
