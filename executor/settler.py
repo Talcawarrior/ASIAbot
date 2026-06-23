@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 import requests  # pylint: disable=import-error
 
+from sqlalchemy import func
+
 from config.settings import config
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Bet, Portfolio, WeatherMarket
@@ -88,8 +90,14 @@ class SettlementEngine:
                     sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
                 )
                 if portfolio:
-                    portfolio.total_value = portfolio.cash_balance
-                    portfolio.current_value = portfolio.cash_balance
+                    open_exposure = (
+                        sync_session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                        .filter(Bet.status.in_(OPEN_BET_STATUSES))
+                        .scalar()
+                    ) or 0.0
+                    cash = float(portfolio.cash_balance or 0)
+                    portfolio.total_value = round(cash + float(open_exposure), 2)
+                    portfolio.current_value = portfolio.total_value
                     portfolio.last_updated = datetime.now(timezone.utc).replace(
                         tzinfo=None
                     )  # pyright: ignore

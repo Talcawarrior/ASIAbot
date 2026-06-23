@@ -277,7 +277,6 @@ class MarketParser:
                     "%B %d %Y",
                     "%Y-%m-%d",
                     "%m/%d/%Y",
-                    "%B %d %Y",
                 ]:
                     try:
                         d = datetime.strptime(date_str.strip(), fmt)
