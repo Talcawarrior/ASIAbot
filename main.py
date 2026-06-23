@@ -773,20 +773,22 @@ async def get_slippage():
             .limit(50)
             .all()
         )
+        # Batch-load market prices to avoid N+1
+        market_ids = list({r[0].market_id for r in rows})
+        mkt_prices = {
+            wm.id: float(wm.yes_price)
+            for wm in db.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all()
+        } if market_ids else {}
+
         entries = []
         for analysis, city, side, entry_price, bet_pnl, bet_status in rows:
-            mkt = (
-                db.query(WeatherMarket.yes_price)
-                .filter(WeatherMarket.id == analysis.market_id)
-                .first()
-            )
-            current_price = float(mkt[0]) if mkt else analysis.market_implied_prob
+            current_price = mkt_prices.get(analysis.market_id) or analysis.market_implied_prob
             entries.append(
                 {
                     "id": str(analysis.id),
                     "city": city or "—",
                     "side": side or "—",
-                    "expected_price": round(current_price, 4),
+                    "expected_price": round(float(current_price), 4),
                     "entry_price": round(float(entry_price or 0), 4),
                     "slippage_pct": round(float(analysis.slippage_pct), 4),
                     "result": (
@@ -975,12 +977,17 @@ async def get_health_check():
         # 3. Edge distribution for placed bets
         recent_bets = db.query(Bet).filter(Bet.placed_at >= h72).all()
 
+        # Batch-load analyses for all bets (N+1 fix)
+        analysis_ids = [b.analysis_id for b in recent_bets if b.analysis_id]
+        analyses_by_id = {}
+        if analysis_ids:
+            for a in db.query(Analysis).filter(Analysis.id.in_(analysis_ids)).all():
+                analyses_by_id[a.id] = a
+
         edge_values = []
         for b in recent_bets:
             if b.analysis_id:
-                analysis = (
-                    db.query(Analysis).filter(Analysis.id == b.analysis_id).first()
-                )
+                analysis = analyses_by_id.get(b.analysis_id)
                 if analysis:
                     edge_values.append(
                         {
