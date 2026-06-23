@@ -1,0 +1,525 @@
+"""ASIAbot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
+
+import os
+from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+# Compute repo root (parent of config/)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Load .env from repo root
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+
+def _resolve_path(path_value: str, default_relative: str) -> str:
+    """Resolve relative paths to absolute from repo root."""
+    raw = path_value or default_relative
+    if os.path.isabs(raw):
+        return raw
+    return os.path.join(BASE_DIR, raw)
+
+
+@dataclass
+class PolymarketConfig:
+    """Polymarket specific configurations."""
+
+    api_url: str = "https://clob.polymarket.com"
+    gamma_url: str = "https://gamma-api.polymarket.com"
+    private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
+    api_key: str = os.getenv("POLY_API_KEY", "")
+    api_secret: str = os.getenv("POLY_API_SECRET", "")
+    api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
+    weather_keywords: list = None
+
+    def __post_init__(self):
+        self.weather_keywords = [
+            "temperature",
+            "heat",
+            "cold",
+            "snow",
+            "rain",
+            "hurricane",
+            "storm",
+            "weather",
+            "°F",
+            "°C",
+            "celsius",
+            "fahrenheit",
+            "precipitation",
+            "highest",
+        ]
+
+
+@dataclass
+class MeteoConfig:
+    """Weather service API configurations."""
+
+    openmeteo_url: str = "https://api.open-meteo.com/v1/forecast"
+    weatherapi_key: str = os.getenv("WEATHERAPI_KEY", "")
+    weatherapi_url: str = "https://api.weatherapi.com/v1"
+
+
+@dataclass
+class StrategyConfig:
+    """Strategy & bankroll metrics."""
+
+    # Polymarket temperature markets in /public-search almost never
+    # produce 5%+ edge because the market price already discounts the
+    # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
+    # vig + a thin profit margin in paper mode.  Can be lowered once a
+    # private weather feed (e.g. ECMWF-direct) gives a structural edge.
+    min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
+    max_bet_amount: float = 30.0  # Maximum $30 per bet (paper-mode safety cap)
+    min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
+    # markets don't expose a `liquidity` field reliably
+    # (it's always 0). The current_price already reflects
+    # real market depth.
+    # ── Orderbook depth filter ───────────────────────────────────────
+    # Minimum USD depth (at our fill price ±2 ticks) required to place a bet.
+    # 0.0 = disabled (current default, relies on entry price filter).
+    # Recommended: 50.0 (require $50 of depth near our fill).
+    # The depth is checked from the live orderbook via ResolvedMarkets API.
+    # If the API call fails, the filter is skipped (graceful degradation).
+    min_depth_usd: float = 0.0
+    kelly_fraction: float = 0.15  # Quarter/Fractional Kelly (aligned with ASIAbot 15%)
+    # Time-to-close edge escalation. As a market approaches its
+    # resolution time, Polymarket prices move fast on the public
+    # weather consensus and forecast uncertainty is already low.
+    # We demand a stronger edge in the last N hours before close
+    # so the bot is less willing to take a late bet at a thin edge.
+    # Linear ramp: 1x min_edge at edge_escalation_hours, then
+    # ramps to edge_escalation_multiplier * min_edge at 0h.
+    edge_escalation_hours: int = 24
+    edge_escalation_multiplier: float = 2.0
+    min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
+    fee_drag: float = 0.02  # Polymarket taker fee %2
+    # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
+    # Tightened from 14 to 2 so the bot only trades near-term markets
+    # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
+    # calibrated. Forecasts degrade past 3 days.
+    max_days_ahead: int = 2
+
+    # ── Karpathy-search-discovered levers (asymmetric-payoff fix) ────────
+    # These were tuned by `scripts/karpathy_search.py` against 90 days /
+    # 15 cities of historical_calibrations data. The defaults below are
+    # deliberately permissive (min_entry_price=0.01 = accept anything,
+    # inefficiency_min=-1.0 = accept anything) so the unit tests that
+    # exercise the calculator with low-price markets still work.
+    #
+    # In production, the tuned values (min_entry_price≈0.35,
+    # inefficiency_min≈-0.124) are loaded from data/strategy_params.json
+    # by `apply_persisted_strategy_params()` at import time. That file is
+    # written by the Karpathy search script.
+    #
+    # Background: a naive Kelly bot wins ~94% of its trades but loses
+    # money overall because the 6% losing trades are at low prices
+    # (long-shot bets) where a single loss wipes out dozens of small
+    # wins. Setting MIN_ENTRY_PRICE higher filters out the long shots;
+    # INEFFICIENCY_MIN only takes trades where the market price looks
+    # mispriced in our favour by at least that much.
+    min_entry_price: float = 0.01
+    inefficiency_min: float = -1.0  # negative = gate disabled (accept all)
+
+    # ── Slippage model ────────────────────────────────────────────────
+    # "flat"   — fixed slippage_pct from strategy_params.json
+    # "tiered" — 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
+    # "orderbook" — live depth-based (future, falls back to tiered)
+    slippage_model: str = "tiered"
+    slippage_pct: float = 0.005  # used when slippage_model="flat"
+    gas_cost_usd: float = 0.10  # Polygon gas per round-trip
+
+
+@dataclass
+class RiskConfig:
+    """Active risk management: position-level stop-loss, take-profit, time decay, rebalance."""
+
+    # Position-level limits
+    stop_loss_pct: float = 0.30  # %30 kayıpta otomatik kapat
+    take_profit_pct: float = 1.0  # %100 karda otomatik kapat
+    trailing_stop_pct: float = 0.15  # %15 trailing stop (tepeden düşüşte)
+
+    # Time-based exits
+    time_decay_hours: int = 24  # Settlement'a bu kadar saat kala
+    time_decay_threshold: float = -0.10  # %10 zarardaysa kapat
+
+    # Rebalancing
+    min_rebalance_edge_ratio: float = 2.0  # Yeni edge en az 2x eski edge
+    max_city_positions: int = 3  # Şehir başına max pozisyon (rebalance)
+    rebalance_min_loss: float = -0.15  # Rebalance için min zarar eşiği
+
+    # Risk management loop interval (seconds)
+    risk_scan_interval: int = 300  # Her 5 dakikada bir tara
+
+
+@dataclass
+class BotConfig:
+    """Combined configurations."""
+
+    polymarket: PolymarketConfig = None
+    meteo: MeteoConfig = None
+    strategy: StrategyConfig = None
+    risk: RiskConfig = None
+
+    def __post_init__(self):
+        self.polymarket = self.polymarket or PolymarketConfig()
+        self.meteo = self.meteo or MeteoConfig()
+        self.strategy = self.strategy or StrategyConfig()
+        self.risk = self.risk or RiskConfig()
+
+
+# Main configuration class (kept for backward compatibility with older components & tests)
+class Config:
+    """Central configuration for the ASIAbot Weather Prediction Bot."""
+
+    INITIAL_PORTFOLIO = float(os.getenv("INITIAL_PORTFOLIO", "10000.0"))
+    MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
+    MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
+    MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
+    # Minimum market price to place a bet. Bids at 0.001 have no real
+    # liquidity on Polymarket; paper PnL at those levels is fantasy.
+    MIN_ENTRY_PRICE = float(os.getenv("MIN_ENTRY_PRICE", "0.01"))
+    # Fixed dollar amount per bet, set via FLAT_BET_USD env var.
+    # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
+    # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.
+    # Risk caps (MAX_BET_PCT, TOTAL_EXPOSURE_PCT, CITY_CAP) still apply on top.
+    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "0.0"))  # 0 = use Kelly sizing
+    KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
+    DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
+    CITY_CAP = int(os.getenv("CITY_CAP", "4"))
+    SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
+    SETTLEMENT_INTERVAL = int(os.getenv("SETTLEMENT_INTERVAL", "120"))
+    SIA_INTERVAL = int(os.getenv("SIA_INTERVAL", "86400"))
+    POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
+    POLYMARKET_CLOB_API = "https://clob.polymarket.com"
+    OPEN_METEO_API = "https://api.open-meteo.com/v1"
+
+    MODEL_WEIGHTS = {
+        "gfs_seamless": 0.30,
+        "ecmwf_ifs04": 0.25,
+        "gem_seamless": 0.15,
+        "icon_seamless": 0.10,
+        "jma_msm": 0.08,
+        "cma_grapes_global": 0.05,
+        "ukmo_seamless": 0.04,
+        "meteofrance_seamless": 0.03,
+    }
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+    LOG_FILE = _resolve_path(os.getenv("LOG_FILE"), "logs/bot.log")
+    LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
+    DB_PATH = _resolve_path(os.getenv("DB_PATH"), "data/bot.db")
+    DB_ECHO = os.getenv("DB_ECHO", "false").lower() == "true"
+    TEMP_UNIT = "celsius"
+    DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+
+    HOST = os.getenv("HOST", "127.0.0.1")  # Safe default; set 0.0.0.0 only behind a reverse proxy
+    PORT = int(os.getenv("PORT", "8091"))
+
+    ICAO_COORDS = {
+        # Turkey (4)
+        "LTAC": (39.9891, 32.8236),  # Ankara Esenboğa
+        "LTFM": (41.2753, 28.7519),  # Istanbul Airport
+        "LTBJ": (38.2924, 27.1569),  # Izmir Adnan Menderes
+        "LTAI": (36.8987, 30.8005),  # Antalya
+        # USA (15)
+        "KDAL": (32.8471, -96.8517),  # Dallas Love Field
+        "KMIA": (25.7959, -80.2870),  # Miami
+        "KORD": (41.9742, -87.9073),  # Chicago O'Hare
+        "KLGA": (40.7769, -73.8740),  # New York LaGuardia
+        "KLAX": (33.9416, -118.4085),  # Los Angeles
+        "KLAS": (36.0840, -115.1537),  # Las Vegas McCarran
+        "KPHX": (33.4343, -112.0080),  # Phoenix Sky Harbor
+        "KIAH": (29.9844, -95.3414),  # Houston George Bush
+        "KATL": (33.6407, -84.4277),  # Atlanta Hartsfield
+        "KBOS": (42.3656, -71.0096),  # Boston Logan
+        "KSEA": (47.4502, -122.3088),  # Seattle-Tacoma
+        "KDEN": (39.8617, -104.6732),  # Denver
+        "KDCA": (38.8521, -77.0377),  # Washington Reagan
+        "KSFO": (37.6188, -122.3750),  # San Francisco
+        "KMCO": (28.4294, -81.3089),  # Orlando
+        # Canada / Mexico (5)
+        "CYYZ": (43.6777, -79.6308),  # Toronto Pearson
+        "CYVR": (49.1947, -123.1792),  # Vancouver
+        "CYUL": (45.4706, -73.7408),  # Montreal Trudeau
+        "MMMX": (19.4363, -99.0721),  # Mexico City
+        "MMGL": (20.5218, -103.3112),  # Guadalajara
+        # South America (5)
+        "SBGR": (-23.4356, -46.4731),  # São Paulo Guarulhos
+        "SBGL": (-22.8089, -43.2436),  # Rio de Janeiro Galeão
+        "SAEZ": (-34.8222, -58.5358),  # Buenos Aires Ezeiza
+        "SCEL": (-33.3930, -70.7858),  # Santiago
+        "SPJC": (-12.0219, -77.1143),  # Lima Jorge Chávez
+        # Europe (15)
+        "EGLL": (51.4700, -0.4543),  # London Heathrow
+        "LFPG": (49.0099, 2.5479),  # Paris Charles de Gaulle
+        "EDDT": (52.5597, 13.2877),  # Berlin Brandenburg
+        "UUEE": (55.9726, 37.4146),  # Moscow Sheremetyevo
+        "EDDF": (50.0379, 8.5622),  # Frankfurt
+        "EHAM": (52.3105, 4.7683),  # Amsterdam Schiphol
+        "LEMD": (40.4983, -3.5676),  # Madrid Barajas
+        "LIRF": (41.8003, 12.2389),  # Rome Fiumicino
+        "LEBL": (41.2974, 2.0833),  # Barcelona
+        "EDDM": (48.3538, 11.7861),  # Munich
+        "LSZH": (47.4581, 8.5480),  # Zurich
+        "LOWW": (48.1103, 16.5697),  # Vienna
+        "ESSA": (59.6498, 17.9294),  # Stockholm Arlanda
+        "LGAV": (37.9364, 23.9472),  # Athens Eleftherios
+        "LPPT": (38.7750, -9.1354),  # Lisbon
+        # Middle East (3)
+        "OMDB": (25.2532, 55.3657),  # Dubai
+        "LLBG": (32.0114, 34.8867),  # Tel Aviv Ben Gurion
+        "OTHH": (25.2731, 51.6081),  # Doha Hamad
+        # Asia (12)
+        "RJTT": (35.5533, 139.7811),  # Tokyo Haneda
+        "RJOO": (34.7882, 135.4381),  # Osaka Itami
+        "ZSPD": (31.1434, 121.8052),  # Shanghai Pudong
+        "ZBAA": (40.0799, 116.6031),  # Beijing Capital
+        "RKSS": (37.4602, 126.4407),  # Seoul Gimpo
+        "VHHH": (22.3080, 113.9185),  # Hong Kong
+        "RCTP": (25.0764, 121.2338),  # Taipei Taoyuan
+        "WSSS": (1.3592, 103.9894),  # Singapore Changi
+        "VTBS": (13.6926, 100.7501),  # Bangkok Suvarnabhumi
+        "WIII": (-6.1256, 106.6559),  # Jakarta Soekarno-Hatta
+        "VABB": (19.0887, 72.8679),  # Mumbai Chhatrapati
+        "VIDP": (28.5562, 77.1000),  # Delhi Indira Gandhi
+        # Oceania (3)
+        "YSSY": (-33.9399, 151.1753),  # Sydney Kingsford Smith
+        "YMML": (-37.6690, 144.8410),  # Melbourne Tullamarine
+        "NZAA": (-37.0082, 174.7918),  # Auckland
+        # Africa (2)
+        "HECA": (30.1219, 31.4056),  # Cairo
+        "FACT": (-33.9694, 18.5972),  # Cape Town
+    }
+
+    CITY_ICAO_MAP = {
+        # Turkey (4)
+        "ankara": "LTAC",
+        "istanbul": "LTFM",
+        "izmir": "LTBJ",
+        "antalya": "LTAI",
+        # North America - USA (15)
+        "dallas": "KDAL",
+        "miami": "KMIA",
+        "chicago": "KORD",
+        "new york": "KLGA",
+        "newyork": "KLGA",
+        "los angeles": "KLAX",
+        "las vegas": "KLAS",
+        "phoenix": "KPHX",
+        "houston": "KIAH",
+        "atlanta": "KATL",
+        "boston": "KBOS",
+        "seattle": "KSEA",
+        "denver": "KDEN",
+        "washington": "KDCA",
+        "san francisco": "KSFO",
+        "orlando": "KMCO",
+        # North America - CA / MX (5)
+        "toronto": "CYYZ",
+        "vancouver": "CYVR",
+        "montreal": "CYUL",
+        "mexico city": "MMMX",
+        "guadalajara": "MMGL",
+        # South America (5)
+        "sao paulo": "SBGR",
+        "rio de janeiro": "SBGL",
+        "buenos aires": "SAEZ",
+        "santiago": "SCEL",
+        "lima": "SPJC",
+        # Europe (15)
+        "london": "EGLL",
+        "paris": "LFPG",
+        "berlin": "EDDT",
+        "moscow": "UUEE",
+        "frankfurt": "EDDF",
+        "amsterdam": "EHAM",
+        "madrid": "LEMD",
+        "rome": "LIRF",
+        "barcelona": "LEBL",
+        "munich": "EDDM",
+        "zurich": "LSZH",
+        "vienna": "LOWW",
+        "stockholm": "ESSA",
+        "athens": "LGAV",
+        "lisbon": "LPPT",
+        # Middle East (3)
+        "dubai": "OMDB",
+        "tel aviv": "LLBG",
+        "doha": "OTHH",
+        # Asia (12)
+        "tokyo": "RJTT",
+        "osaka": "RJOO",
+        "shanghai": "ZSPD",
+        "beijing": "ZBAA",
+        "seoul": "RKSS",
+        "hong kong": "VHHH",
+        "taipei": "RCTP",
+        "singapore": "WSSS",
+        "bangkok": "VTBS",
+        "jakarta": "WIII",
+        "mumbai": "VABB",
+        "delhi": "VIDP",
+        # Oceania (3)
+        "sydney": "YSSY",
+        "melbourne": "YMML",
+        "auckland": "NZAA",
+        # Africa (2)
+        "cairo": "HECA",
+        "cape town": "FACT",
+    }
+    OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
+    FEE_DRAG = float(os.getenv("FEE_DRAG", "0.02"))
+    # NOTE: minimum-edge threshold is NOT defined on Config on purpose.
+    # The single source of truth is `bot_config.strategy.min_edge` (default 0.05 = 5%).
+    # `engine.calculator.py` reads from there at lines 179 & 187; the previous
+    # `Config.MIN_EDGE = 0.03` constant was dead code (never read anywhere) and
+    # caused "which one is canonical?" confusion in code review.
+    TOTAL_EXPOSURE_PCT = 0.25
+
+    @property
+    def daily_loss_limit_amount(self):
+        """Return absolute daily loss limit amount."""
+        return self.INITIAL_PORTFOLIO * self.DAILY_LOSS_LIMIT
+
+    @classmethod
+    def get_model_weight(cls, model_name: str) -> float:
+        """Return weight for a specific model."""
+        return cls.MODEL_WEIGHTS.get(model_name, 0.0)
+
+    @classmethod
+    def get_normalized_weights(cls) -> dict:
+        """Return normalized model weight dictionary."""
+        return cls.MODEL_WEIGHTS
+
+    @classmethod
+    def get_max_bet_amount(cls, portfolio_value: float) -> float:
+        """Return maximum allowed bet amount."""
+        return min(portfolio_value * cls.MAX_BET_PCT, portfolio_value * 0.03)
+
+    @classmethod
+    def get_max_exposure_amount(cls, portfolio_value: float) -> float:
+        """Return maximum allowed total exposure."""
+        return portfolio_value * cls.MAX_EXPOSURE_PCT
+
+    @classmethod
+    def get_daily_loss_limit(cls, portfolio_value: float) -> float:
+        """Return daily loss limit amount."""
+        return portfolio_value * cls.DAILY_LOSS_LIMIT
+
+
+# Singleton instances
+config = Config()
+bot_config = BotConfig()
+
+
+def assert_config_consistency():
+    """Verify that Config legacy class and StrategyConfig dataclass are in sync.
+
+    Raises RuntimeError with details if any field drifts apart.
+    """
+    _errors = []
+
+    # KELLY_FRACTION vs strategy.kelly_fraction
+    if abs(Config.KELLY_FRACTION - bot_config.strategy.kelly_fraction) > 1e-9:
+        _errors.append(
+            f"Config.KELLY_FRACTION ({Config.KELLY_FRACTION}) != "
+            f"bot_config.strategy.kelly_fraction ({bot_config.strategy.kelly_fraction})"
+        )
+
+    # FEE_DRAG vs strategy.fee_drag
+    if abs(Config.FEE_DRAG - bot_config.strategy.fee_drag) > 1e-9:
+        _errors.append(
+            f"Config.FEE_DRAG ({Config.FEE_DRAG}) != bot_config.strategy.fee_drag ({bot_config.strategy.fee_drag})"
+        )
+
+    if _errors:
+        raise RuntimeError("Config/Strategy drift detected:\n" + "\n".join(_errors))
+
+
+def apply_persisted_strategy_params() -> dict:
+    """Overlay any persisted strategy params from data/strategy_params.json
+    onto the in-memory bot_config.
+
+    Called at startup so the live bot picks up the latest Karpathy-search
+    winners without needing a code change. Returns the params dict that
+    was applied (empty dict if no file was found).
+    """
+    try:
+        from utils.weights_store import load_strategy_params
+    except Exception:
+        return {}
+
+    persisted = load_strategy_params()
+    if not persisted:
+        return {}
+
+    applied = {}
+    s = bot_config.strategy
+
+    # Map persisted keys → StrategyConfig attributes
+    if "min_edge" in persisted:
+        try:
+            s.min_edge = float(persisted["min_edge"])
+            applied["min_edge"] = s.min_edge
+        except (TypeError, ValueError):
+            pass
+    if "kelly_fraction" in persisted:
+        try:
+            s.kelly_fraction = float(persisted["kelly_fraction"])
+            # Keep Config.KELLY_FRACTION in sync so assert_config_consistency passes.
+            Config.KELLY_FRACTION = s.kelly_fraction
+            applied["kelly_fraction"] = s.kelly_fraction
+        except (TypeError, ValueError):
+            pass
+    if "max_bet_pct" in persisted:
+        try:
+            Config.MAX_BET_PCT = float(persisted["max_bet_pct"])
+            applied["max_bet_pct"] = Config.MAX_BET_PCT
+        except (TypeError, ValueError):
+            pass
+    if "min_entry_price" in persisted:
+        try:
+            s.min_entry_price = float(persisted["min_entry_price"])
+            Config.MIN_ENTRY_PRICE = s.min_entry_price
+            applied["min_entry_price"] = s.min_entry_price
+        except (TypeError, ValueError):
+            pass
+    if "inefficiency_min" in persisted:
+        try:
+            s.inefficiency_min = float(persisted["inefficiency_min"])
+            applied["inefficiency_min"] = s.inefficiency_min
+        except (TypeError, ValueError):
+            pass
+
+    # Re-run consistency check after applying.
+    try:
+        assert_config_consistency()
+    except RuntimeError as e:
+        # Don't crash — just log. The defaults are still safe.
+        import logging
+
+        logging.getLogger("CONFIG").warning("Post-apply consistency check failed: %s", e)
+
+    return applied
+
+
+assert_config_consistency()
+
+# Apply persisted Karpathy-search winners at import time so every
+# downstream module (calculator, bet_placer, dashboard) sees the
+# tuned values without needing to call apply_persisted_strategy_params
+# explicitly. Wrapped in try/except so a missing/corrupt file never
+# blocks startup.
+try:
+    _applied_params = apply_persisted_strategy_params()
+    if _applied_params:
+        import logging
+
+        logging.getLogger("CONFIG").info(
+            "Applied Karpathy-search strategy params from disk: %s",
+            ", ".join(f"{k}={v}" for k, v in _applied_params.items()),
+        )
+except Exception as _e:
+    import logging
+
+    logging.getLogger("CONFIG").warning("Could not apply persisted strategy params: %s", _e)

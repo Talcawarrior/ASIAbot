@@ -1,54 +1,41 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+.venv/
+.env
+.env.*
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.ruff_cache/
+logs/
+data/bot.db
+data/bot.db-wal
+data/bot.db-shm
+data/poly_data_cursor.json
+data/poly_markets.csv
+data/polymarket_closed_markets.csv
+data/polymarket_active_markets.csv
+data/unified/
 
-# dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# 3-layer LLM loop state (L1/L2/L3 + orchestrator)
+data/karpathy_best.json
+data/karpathy_results.tsv
+data/asi_evolve_best.json
+data/asi_evolve_results.tsv
+data/asi_evolve_experiments.db
+data/sia_hourly_best.json
+data/sia_hourly_results.tsv
+data/llm_loop_runs.jsonl
+asi_engine/sia_harness.backup.py
 
-# testing
-/coverage
-
-# next.js
-/.next/
-/out/
-
-# production
-/build
-
-# misc
-.DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-local-*
-.claude
-.z-ai-config
+# Node.js / Next.js
+node_modules/
+.next/
+dashboard/node_modules/
+dashboard/out/
+dashboard/.next/
+dashboard/package-lock.json
+bun.lock
 *.log
-dev.log
-dev.out.log
-test
-prompt
-
-server.log
-# Skills directory
-/skills/
