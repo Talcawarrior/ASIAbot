@@ -116,7 +116,10 @@ class CalibrationEngine:
         """
         # Strip internal suffix if any
         clean_metric = (
-            "temperature_max" if "max" in metric.lower() else "temperature_min"
+            "temperature_max"
+            if "temperature_max" == metric.lower()
+            or (metric.lower().startswith("temp") and "max" in metric.lower())
+            else "temperature_min"
         )
 
         if city_code in self.bias_map:

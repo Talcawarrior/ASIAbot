@@ -139,7 +139,7 @@ class BacktestSimulator:
                     if won:
                         bets_won += 1
                         payout = bet_size / entry_price
-                        fee = payout * 0.02
+                        fee = (payout - bet_size) * 0.02
                         pnl = payout - bet_size - fee
                     else:
                         bets_lost += 1
@@ -349,7 +349,7 @@ class BacktestSimulator:
                 if won:
                     trades_won += 1
                     payout = bet_size / entry_price
-                    fee = payout * 0.02
+                    fee = (payout - bet_size) * 0.02
                     pnl = payout - bet_size - fee
                 else:
                     trades_lost += 1

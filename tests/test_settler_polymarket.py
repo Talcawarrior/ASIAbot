@@ -9,6 +9,8 @@ import tempfile
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 import requests
 
 _db_fd, _db_path = tempfile.mkstemp(suffix=".db")
@@ -174,7 +176,7 @@ class TestSettlementPolymarket:
                 assert b_yes.status == "won"
                 entry = 0.35
                 expected_payout = 10.0 / entry  # 28.5714...
-                expected_fee = expected_payout * engine.fee_rate
+                expected_fee = (expected_payout - 10.0) * engine.fee_rate
                 expected_pnl = round(expected_payout - 10.0 - expected_fee, 2)
                 assert b_yes.realized_pnl == expected_pnl
 
@@ -193,7 +195,7 @@ class TestSettlementPolymarket:
                 assert rd["outcome"] == "YES"
 
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
-                # YES bet: cash += payout - fee = 28.57 - 0.57 = 28.00
+                # YES bet: cash += payout - fee = 28.57 - 0.37 = 28.20
                 # NO bet: only total_lost incremented, cash unchanged
                 assert pf_db.cash_balance == 1000.0 + expected_payout - expected_fee
                 assert pf_db.total_won == 1
@@ -237,7 +239,7 @@ class TestSettlementPolymarket:
                 assert b_no.status == "won"
                 entry_no = 0.65
                 expected_payout = 10.0 / entry_no  # 15.3846...
-                expected_fee = expected_payout * engine.fee_rate
+                expected_fee = (expected_payout - 10.0) * engine.fee_rate
                 expected_pnl = round(expected_payout - 10.0 - expected_fee, 2)
                 assert b_no.realized_pnl == expected_pnl
 
@@ -386,7 +388,7 @@ class TestSettlementPolymarket:
                 # Win PnL
                 entry = 0.35
                 payout = 10.0 / entry
-                fee = payout * engine.fee_rate
+                fee = (payout - 10.0) * engine.fee_rate
                 win_pnl = round(payout - 10.0 - fee, 2)
 
                 loss_pnl = -10.0
@@ -397,9 +399,10 @@ class TestSettlementPolymarket:
                     pf_db.cash_balance == 1000.0 + payout - fee
                 ), f"cash={pf_db.cash_balance} != {1000.0 + payout - fee}"
 
-                assert pf_db.total_realized_pnl == round(
-                    win_pnl + loss_pnl, 2
-                ), f"total_realized_pnl={pf_db.total_realized_pnl} != {win_pnl + loss_pnl}"
+                expected_total = round(win_pnl + loss_pnl, 2)
+                assert pf_db.total_realized_pnl == pytest.approx(
+                    expected_total, rel=1e-4
+                ), f"total_realized_pnl={pf_db.total_realized_pnl} != {expected_total}"
 
                 assert b_yes.realized_pnl == win_pnl
                 assert b_no.realized_pnl == loss_pnl

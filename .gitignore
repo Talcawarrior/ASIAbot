@@ -40,5 +40,7 @@ dashboard/package-lock.json
 package-lock.json
 bun.lock
 *.log
+server_err.txt
+server_out.txt
 .coverage
 out/

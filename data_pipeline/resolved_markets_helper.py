@@ -45,7 +45,7 @@ class ResolvedMarketsClient:
         params = {"limit": limit}
         try:
             resp = requests.get(url, params=params, headers=self.headers, timeout=10)
-            if resp.status == 200:
+            if resp.status_code == 200:
                 return resp.json()
             logger.warning(
                 "ResolvedMarkets: API returned status code %d. Falling back.",

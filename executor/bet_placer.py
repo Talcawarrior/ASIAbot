@@ -439,9 +439,13 @@ class BetPlacer:
                 return bet
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                portfolio.current_value = (
-                    portfolio.cash_balance
-                )  # unrealized PnL added later (Faz 4)
+                # Include unrealized PnL from other open bets in current_value
+                open_exposure = (
+                    session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
+                    .scalar()
+                ) or 0.0
+                portfolio.current_value = portfolio.cash_balance + float(open_exposure)
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
             session.commit()

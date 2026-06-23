@@ -167,7 +167,8 @@ class Calculator:
             if forecast_values and len(forecast_values) > 1:
                 avg = sum(forecast_values) / len(forecast_values)
                 std_val = math.sqrt(
-                    sum((x - avg) ** 2 for x in forecast_values) / len(forecast_values)
+                    sum((x - avg) ** 2 for x in forecast_values)
+                    / (len(forecast_values) - 1)
                 )
             else:
                 std_val = None

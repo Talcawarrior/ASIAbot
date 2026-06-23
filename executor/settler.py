@@ -192,7 +192,7 @@ class SettlementEngine:
             fee = 0.0
             if bet_won:
                 payout = stake / entry_price if entry_price > 0 else 0.0
-                fee = payout * self.fee_rate
+                fee = (payout - stake) * self.fee_rate
                 realized_pnl = payout - stake - fee
             else:
                 realized_pnl = -stake

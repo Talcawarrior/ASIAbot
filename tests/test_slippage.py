@@ -51,48 +51,56 @@ class TestEstimateSlippage:
 
 
 class TestAdjustEdgeForCosts:
-    """Net edge = raw edge - slippage - fee."""
+    """Net edge = raw edge - slippage - gas - fee."""
 
     def test_high_price_low_slip(self):
-        # entry=0.50 → 0.5% slippage + 2% fee = 2.5% total drag
+        # entry=0.50 → 0.5% slippage + 0.33% gas + 1% fee (2%×(1-0.50)) = 1.83% drag
         net = adjust_edge_for_costs(0.10, 0.50)
-        assert net == pytest.approx(0.10 - 0.005 - 0.02)
+        # 0.10 - 0.005 - 0.10/30 - 0.02*(1-0.50)
+        gas_pct = 0.10 / 30.0
+        fee_drag = 0.02 * (1 - 0.50)
+        assert net == pytest.approx(0.10 - 0.005 - gas_pct - fee_drag)
 
     def test_low_price_high_slip(self):
-        # entry=0.03 → 3% slippage + 2% fee = 5% total drag
+        # entry=0.03 → 3% slippage + 0.33% gas + 1.94% fee (2%×(1-0.03)) = 5.27% drag
         net = adjust_edge_for_costs(0.08, 0.03)
-        assert net == pytest.approx(0.08 - 0.03 - 0.02)
+        gas_pct = 0.10 / 30.0
+        fee_drag = 0.02 * (1 - 0.03)
+        assert net == pytest.approx(0.08 - 0.03 - gas_pct - fee_drag)
 
     def test_negative_edge_stays_negative(self):
         net = adjust_edge_for_costs(0.01, 0.50)
-        assert net == pytest.approx(0.01 - 0.005 - 0.02)
+        gas_pct = 0.10 / 30.0
+        fee_drag = 0.02 * (1 - 0.50)
+        assert net == pytest.approx(0.01 - 0.005 - gas_pct - fee_drag)
 
     def test_fee_only(self):
         net = adjust_edge_for_costs(0.05, 0.50, include_fee=True)
         assert net < 0.05
         net_no_fee = adjust_edge_for_costs(0.05, 0.50, include_fee=False)
-        assert net_no_fee == pytest.approx(0.05 - 0.005)
+        gas_pct = 0.10 / 30.0
+        assert net_no_fee == pytest.approx(0.05 - 0.005 - gas_pct)
 
 
 class TestAdjustKellyForSlippage:
-    """Kelly size reduced by slippage cost."""
+    """Kelly size reduced by fixed 1% safety haircut (slippage already in edge)."""
 
     def test_high_price_reduction(self):
-        # entry=0.50 → 0.5% slip → kelly $20 - $0.10 = $19.90
+        # Fixed 1% haircut regardless of entry_price
         adj = adjust_kelly_for_slippage(20.0, 0.50)
-        assert adj == pytest.approx(20.0 * (1 - 0.005))
+        assert adj == pytest.approx(20.0 * (1 - 0.01))
 
     def test_low_price_reduction(self):
-        # entry=0.03 → 3% slip → kelly $20 - $0.60 = $19.40
+        # Same fixed 1% haircut — entry_price not used for slippage
         adj = adjust_kelly_for_slippage(20.0, 0.03)
-        assert adj == pytest.approx(20.0 * (1 - 0.03))
+        assert adj == pytest.approx(20.0 * (1 - 0.01))
 
     def test_floor_at_min_bet(self):
-        # Tiny kelly at high slippage should floor at $1
+        # Tiny kelly should floor at $1
         adj = adjust_kelly_for_slippage(0.50, 0.03)
         assert adj >= 1.0
 
     def test_max_slippage_cap(self):
-        # Even if slippage model returns crazy value, cap applies
+        # max_slippage_pct is accepted for compat but not used
         adj = adjust_kelly_for_slippage(100.0, 0.01, max_slippage_pct=0.01)
-        assert adj >= 100.0 * (1 - 0.01)
+        assert adj == pytest.approx(100.0 * (1 - 0.01))

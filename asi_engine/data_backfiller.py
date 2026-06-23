@@ -77,12 +77,14 @@ class DataBackfiller:
             "jma_seamless,cma_grapes_global,ukmo_seamless,"
             "meteofrance_seamless"
         )
+        # Map API model names to internal names matching Config.MODEL_WEIGHTS.
+        # Left = API parameter name, right = internal name used in calibrations table.
         model_names_mapping = {
             "gfs_seamless": "gfs_seamless",
             "ecmwf_ifs04": "ecmwf_ifs04",
-            "gem_global": "gem_seamless",
-            "icon_global": "icon_seamless",
-            "jma_seamless": "jma_msm",
+            "gem_global": "gem_global",
+            "icon_global": "icon_global",
+            "jma_seamless": "jma_seamless",
             "cma_grapes_global": "cma_grapes_global",
             "ukmo_seamless": "ukmo_seamless",
             "meteofrance_seamless": "meteofrance_seamless",

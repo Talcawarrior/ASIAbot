@@ -45,10 +45,10 @@ from utils.probability import estimate_probability  # noqa: E402
 # ── Default model weights (current cognition base best) ─────────────────────
 DEFAULT_WEIGHTS = {
     "gfs_seamless": 0.30,
-    "ecmwf_ifs04": 0.25,
-    "gem_seamless": 0.15,
-    "icon_seamless": 0.10,
-    "jma_msm": 0.08,
+    "ecmwf_ifs025": 0.25,
+    "gem_global": 0.15,
+    "icon_global": 0.10,
+    "jma_seamless": 0.08,
     "cma_grapes_global": 0.05,
     "ukmo_seamless": 0.04,
     "meteofrance_seamless": 0.03,

@@ -36,6 +36,10 @@ export interface StatusResponse {
     daily_stop_loss_pct: number;
     city_cap: number;
   };
+  metrics: {
+    sharpe_ratio: number;
+    max_drawdown_pct: number;
+  };
 }
 
 export interface Signal {
@@ -78,6 +82,9 @@ export interface HistoryStats {
   overall_roi: number;
   total_stake: number;
   total_pnl: number;
+  total_win_pnl: number;
+  total_loss_pnl: number;
+  profit_factor: number;
 }
 
 export interface HealthResponse {
@@ -137,6 +144,15 @@ export interface KpiData {
   avgEdge: number;
   sharpeRatio: number;
   maxDrawdown: number;
+  // Second row metrics
+  totalPnlValue: number;       // Total PnL ($)
+  totalRoi: number;            // Total ROI (%)
+  closedBets: number;          // Kapalı Bahis
+  closedWins: number;
+  closedLosses: number;
+  expectancy: number;          // Ortalama kazanç/bahis ($)
+  avgBetSize: number;          // Ortalama Bahis Tutarı ($)
+  profitFactor: number;        // Profit Factor
 }
 
 export interface PortfolioPoint {
@@ -154,6 +170,7 @@ export interface OpenPosition {
   pnl: number;
   edge: number;
   timeLeft: string;
+  openedAt: string;   // formatted date string
   conditionId: string;
   amount: number;
 }
@@ -181,6 +198,7 @@ export interface TradeHistoryEntry {
   result: "WIN" | "LOSS";
   edge: number;
   duration: string;
+  closedAt: string;  // formatted closing date/time
   strategy: string;
   conditionId: string;
 }
@@ -198,15 +216,13 @@ export type HealthVerdict = "healthy" | "degraded" | "critical" | "error";
 export type FlagSeverity = "critical" | "warning" | "info";
 export type SlippageEntry = {
   id: string;
-  timestamp: string;
   city: string;
-  side: "YES" | "NO";
-  expectedPrice: number;
-  actualPrice: number;
-  estimatedSlippage: number;
-  actualSlippage: number;
-  slippageCost: number;
-  size: string;
+  side: string;
+  expected_price: number;
+  entry_price: number;
+  slippage_pct: number;
+  result: string;
+  analyzed_at: string | null;
 };
 
 // ---- Fetch helpers ----
@@ -221,7 +237,11 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 
 // ---- Data mapping functions ----
 
-function mapKpiData(status: StatusResponse | null, health: HealthResponse | null): KpiData {
+function mapKpiData(
+  status: StatusResponse | null,
+  health: HealthResponse | null,
+  historyStats: HistoryStats | null,
+): KpiData {
   if (!status) {
     return {
       portfolioValue: 10000,
@@ -236,6 +256,14 @@ function mapKpiData(status: StatusResponse | null, health: HealthResponse | null
       avgEdge: 0,
       sharpeRatio: 0,
       maxDrawdown: 0,
+      totalPnlValue: 0,
+      totalRoi: 0,
+      closedBets: 0,
+      closedWins: 0,
+      closedLosses: 0,
+      expectancy: 0,
+      avgBetSize: 0,
+      profitFactor: 0,
     };
   }
   const s = status.stats;
@@ -253,6 +281,17 @@ function mapKpiData(status: StatusResponse | null, health: HealthResponse | null
 
   const avgEdge = health?.edge_distribution?.avg_net_edge_pct ?? 0;
 
+  // Second-row metrics from historyStats
+  const hs = historyStats;
+  const totalPnlValue = hs?.total_pnl ?? 0;
+  const totalRoi = hs?.overall_roi ?? 0;
+  const closedWins = hs?.total_won ?? 0;
+  const closedLosses = hs?.total_lost ?? 0;
+  const closedBets = closedWins + closedLosses;
+  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
+  const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
+  const profitFactor = hs?.profit_factor ?? 0;
+
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
     dailyPnl: p.daily_pnl,
@@ -264,8 +303,17 @@ function mapKpiData(status: StatusResponse | null, health: HealthResponse | null
     wins: s.win_count,
     losses: s.loss_count,
     avgEdge: Math.round(avgEdge * 10) / 10,
-    sharpeRatio: 0, // No Sharpe from API
-    maxDrawdown: 0, // No drawdown from API
+    sharpeRatio: status.metrics?.sharpe_ratio ?? 0,
+    maxDrawdown: status.metrics?.max_drawdown_pct ?? 0,
+    // Second row
+    totalPnlValue,
+    totalRoi,
+    closedBets,
+    closedWins,
+    closedLosses,
+    expectancy: Math.round(expectancy * 100) / 100,
+    avgBetSize: Math.round(avgBetSize * 100) / 100,
+    profitFactor,
   };
 }
 
@@ -323,18 +371,25 @@ function mapOpenPositions(signals: Signal[]): OpenPosition[] {
     const edge = s.live_edge ?? s.edge ?? 0;
     const edgePct = Math.round(edge * 1000) / 10; // Convert to percentage
 
-    // Calculate time left from resolution_date
-    let timeLeft = "—";
+    // Format resolution_date as closing date
+    let closesAt = "—";
     if (s.resolution_date) {
-      const diff = new Date(s.resolution_date).getTime() - Date.now();
-      if (diff > 0) {
-        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-        timeLeft = days > 0 ? `${days}g ${hours}sa` : `${hours}sa`;
-      } else {
-        timeLeft = "Süresi doldu";
-      }
+      closesAt = new Date(s.resolution_date).toLocaleDateString("tr-TR", {
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
     }
+
+    const openedAt = s.placed_at
+      ? new Date(s.placed_at).toLocaleDateString("tr-TR", {
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
 
     return {
       id: String(s.id),
@@ -344,7 +399,8 @@ function mapOpenPositions(signals: Signal[]): OpenPosition[] {
       currentPrice: Math.round(s.current_price * 100) / 100,
       pnl: Math.round(s.unrealized_pnl * 100) / 100,
       edge: Math.round(edgePct * 10) / 10,
-      timeLeft,
+      timeLeft: closesAt,
+      openedAt,
       conditionId: s.market_id ? `${s.market_id.slice(0, 6)}…${s.market_id.slice(-4)}` : "—",
       amount: s.stake_amount ?? 0,
     };
@@ -441,6 +497,15 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       ? Math.min(1.0, h.entry_price + (h.realized_pnl / stake))
       : Math.max(0, h.entry_price - (Math.abs(h.realized_pnl) / stake));
 
+    const closedAt = h.settled_at
+      ? new Date(h.settled_at).toLocaleDateString("tr-TR", {
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "—";
+
     return {
       id: String(h.id),
       timestamp,
@@ -452,6 +517,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       result: h.result,
       edge: h.roi ? Math.round(h.roi * 10) / 10 : 0,
       duration,
+      closedAt,
       strategy: "SIA",
       conditionId: "—",
     };
@@ -492,6 +558,7 @@ export function useApiData() {
   const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [weights, setWeights] = useState<Record<string, number>>({});
+  const [slippageData, setSlippageData] = useState<SlippageEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -504,12 +571,13 @@ export function useApiData() {
     abortRef.current = controller;
 
     try {
-      const [statusRes, signalsRes, historyRes, healthRes, weightsRes] = await Promise.allSettled([
+      const [statusRes, signalsRes, historyRes, healthRes, weightsRes, slippageRes] = await Promise.allSettled([
         fetchJson<StatusResponse>("/api/status", controller.signal),
         fetchJson<{ signals: Signal[]; count: number }>("/api/signals", controller.signal),
         fetchJson<{ history: HistoryEntry[]; stats: HistoryStats }>("/api/history", controller.signal),
         fetchJson<HealthResponse>("/api/health-check", controller.signal),
         fetchJson<Record<string, number>>("/api/asi/weights", controller.signal),
+        fetchJson<{ slippage: SlippageEntry[] }>("/api/slippage", controller.signal),
       ]);
 
       if (controller.signal.aborted) return;
@@ -522,6 +590,7 @@ export function useApiData() {
       }
       if (healthRes.status === "fulfilled") setHealth(healthRes.value);
       if (weightsRes.status === "fulfilled") setWeights(weightsRes.value);
+      if (slippageRes.status === "fulfilled") setSlippageData(slippageRes.value.slippage ?? []);
 
       setError(null);
       setLastUpdated(new Date());
@@ -543,7 +612,7 @@ export function useApiData() {
   }, [fetchData]);
 
   // Map data to UI types
-  const kpiData = mapKpiData(status, health);
+  const kpiData = mapKpiData(status, health, historyStats);
   const portfolioData = mapPortfolioData(status, history);
   const openPositions = mapOpenPositions(signals);
   const activityFeed = mapActivityFeed(signals, history);
@@ -565,6 +634,7 @@ export function useApiData() {
     edgeDistribution,
     tradeHistory,
     modelScores,
+    slippageData,
     isLoading,
     error,
     lastUpdated,

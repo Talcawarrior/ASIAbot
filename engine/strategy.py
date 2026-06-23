@@ -76,6 +76,7 @@ class RiskManager:
         self._load_portfolio_from_db()
         self.open_bets_count = 0
         self.city_bet_counts: dict[str, int] = {}
+        self._last_pnl_date: datetime | None = None
         self._load_from_db()
 
     def _load_portfolio_from_db(self):
@@ -97,7 +98,13 @@ class RiskManager:
 
     def update_daily_pnl(self, pnl: float):
         """Update daily PnL and check circuit breaker."""
-        self.daily_pnl = pnl
+        now = datetime.now(timezone.utc)
+        if self._last_pnl_date is None or self._last_pnl_date.date() != now.date():
+            if self._last_pnl_date is not None:
+                logger.info("Daily PnL reset for new day (was $%.2f)", self.daily_pnl)
+            self.daily_pnl = 0.0
+            self._last_pnl_date = now
+        self.daily_pnl += pnl
         if self.daily_pnl <= -self.config.daily_loss_limit_amount:
             logger.warning("DAILY STOP-LOSS TRIGGERED! PnL: $%.2f", self.daily_pnl)
             return False
@@ -512,6 +519,9 @@ class RiskManager:
         remaining_cap = max(0, max_exposure - current_exposure)
         kelly_size = min(kelly_size, remaining_cap)
 
+        # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
+        if kelly_size <= 0:
+            return 0.0
         return max(kelly_size, self.config.MIN_BET_SIZE)
 
 
@@ -606,6 +616,9 @@ class BettingEngine:
             ) - current_exposure
             kelly_size = min(kelly_size, max_allowed)
 
+        # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
+        if kelly_size <= 0:
+            return 0.0
         return max(kelly_size, self.config.MIN_BET_SIZE)
 
     async def analyze_market(self, market_data, portfolio_value, forecast=None):

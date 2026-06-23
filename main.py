@@ -249,6 +249,34 @@ async def get_status():
             (daily_pnl / total_stake_today) * 100 if total_stake_today > 0 else 0
         )
 
+        # ── Sharpe Ratio & Max Drawdown ─────────────────────────────────
+        import math
+
+        sharpe_ratio = 0.0
+        max_drawdown_pct = 0.0
+        closed_bets = (
+            db.query(Bet.pnl, Bet.settled_at)
+            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .order_by(Bet.settled_at.asc())
+            .all()
+        )
+        if len(closed_bets) > 1:
+            pnls = [float(b.pnl or 0.0) for b in closed_bets]
+            mean_pnl = sum(pnls) / len(pnls)
+            std_pnl = math.sqrt(sum((p - mean_pnl) ** 2 for p in pnls) / len(pnls))
+            sharpe_ratio = round(mean_pnl / std_pnl, 4) if std_pnl > 0 else 0.0
+
+            # Max Drawdown: simulate portfolio from initial capital
+            port_val = float(initial_capital)
+            peak = port_val
+            for b in closed_bets:
+                port_val += float(b.pnl or 0.0)
+                if port_val > peak:
+                    peak = port_val
+                dd = (peak - port_val) / peak * 100 if peak > 0 else 0
+                if dd > max_drawdown_pct:
+                    max_drawdown_pct = round(dd, 2)
+
         return {
             "is_running": state.is_running,
             "locked": state.locked,
@@ -282,6 +310,10 @@ async def get_status():
                 "max_exposure_pct": state.config.TOTAL_EXPOSURE_PCT * 100,
                 "daily_stop_loss_pct": state.config.DAILY_LOSS_LIMIT * 100,
                 "city_cap": state.config.CITY_CAP,
+            },
+            "metrics": {
+                "sharpe_ratio": sharpe_ratio,
+                "max_drawdown_pct": max_drawdown_pct,
             },
         }
     except Exception as e:
@@ -662,11 +694,15 @@ async def get_history():
         total_lost = 0
         total_stake_all = 0.0
         total_pnl_all = 0.0
+        total_win_pnl = 0.0
+        total_loss_pnl = 0.0
         for bet in settled_bets:
             if bet.pnl > 0:
                 total_won += 1
+                total_win_pnl += bet.pnl
             else:
                 total_lost += 1
+                total_loss_pnl += abs(bet.pnl or 0.0)
             stake = bet.amount or 0.0
             pnl = bet.pnl or 0.0
             total_stake_all += stake
@@ -696,6 +732,9 @@ async def get_history():
         overall_roi = (
             (total_pnl_all / total_stake_all * 100) if total_stake_all > 0 else 0.0
         )
+        profit_factor = (
+            round(total_win_pnl / total_loss_pnl, 2) if total_loss_pnl > 0 else 0.0
+        )
         return {
             "history": history,
             "stats": {
@@ -705,8 +744,64 @@ async def get_history():
                 "overall_roi": round(overall_roi, 2),
                 "total_stake": round(total_stake_all, 2),
                 "total_pnl": round(total_pnl_all, 2),
+                "total_win_pnl": round(total_win_pnl, 2),
+                "total_loss_pnl": round(total_loss_pnl, 2),
+                "profit_factor": profit_factor,
             },
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/slippage")
+async def get_slippage():
+    """Return recent slippage data from analyses joined with bet results."""
+    db = get_db_session()
+    try:
+        rows = (
+            db.query(
+                Analysis,
+                Bet.city,
+                Bet.side,
+                Bet.entry_price,
+                Bet.pnl,
+                Bet.status,
+            )
+            .outerjoin(Bet, Bet.analysis_id == Analysis.id)
+            .filter(Analysis.slippage_pct.isnot(None))
+            .order_by(Analysis.analyzed_at.desc())
+            .limit(50)
+            .all()
+        )
+        entries = []
+        for analysis, city, side, entry_price, bet_pnl, bet_status in rows:
+            mkt = (
+                db.query(WeatherMarket.yes_price)
+                .filter(WeatherMarket.id == analysis.market_id)
+                .first()
+            )
+            current_price = float(mkt[0]) if mkt else analysis.market_implied_prob
+            entries.append(
+                {
+                    "id": str(analysis.id),
+                    "city": city or "—",
+                    "side": side or "—",
+                    "expected_price": round(current_price, 4),
+                    "entry_price": round(float(entry_price or 0), 4),
+                    "slippage_pct": round(float(analysis.slippage_pct), 4),
+                    "result": (
+                        "WIN" if bet_pnl and bet_pnl > 0 else "LOSS" if bet_pnl else "—"
+                    ),
+                    "analyzed_at": (
+                        analysis.analyzed_at.isoformat()
+                        if analysis.analyzed_at
+                        else None
+                    ),
+                }
+            )
+        return {"slippage": entries}
+    except Exception as e:
+        return {"error": str(e)}
     finally:
         db.close()
 
@@ -1126,6 +1221,7 @@ async def scan_and_bet_loop():
             await asyncio.to_thread(run_risk_management)
         except Exception as e:
             logger.error("Scan error: %s", e)
+        state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
         await asyncio.sleep(state.config.SCAN_INTERVAL)
 
 
