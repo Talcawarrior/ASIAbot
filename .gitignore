@@ -44,3 +44,6 @@ server_err.txt
 server_out.txt
 .coverage
 out/
+graphify-out/
+tool-results/
+*.egg
