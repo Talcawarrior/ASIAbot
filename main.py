@@ -213,6 +213,28 @@ async def get_status():
             db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
         )
 
+        # Open positions with details for frontend
+        open_bets = (
+            db.query(Bet)
+            .filter(Bet.status.in_(open_statuses))
+            .all()
+        )
+        open_positions = []
+        for bet in open_bets:
+            open_positions.append({
+                "id": str(bet.id),
+                "city": bet.city,
+                "side": bet.side,
+                "entry_price": float(bet.entry_price or 0),
+                "current_price": float(bet.current_price or bet.entry_price or 0),
+                "unrealized_pnl": float(bet.unrealized_pnl or 0),
+                "edge": float(bet.expected_value or 0) * 100,
+                "shares": float(bet.shares or 0),
+                "amount": float(bet.amount or 0),
+                "opened_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                "market_id": bet.market_id,
+            })
+
         exposure_db = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(Bet.status.in_(open_statuses))
@@ -315,6 +337,7 @@ async def get_status():
                 "sharpe_ratio": sharpe_ratio,
                 "max_drawdown_pct": max_drawdown_pct,
             },
+            "open_positions": open_positions,
         }
     except Exception as e:
         return {"error": str(e)}

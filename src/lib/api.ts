@@ -40,6 +40,15 @@ export interface StatusResponse {
     sharpe_ratio: number;
     max_drawdown_pct: number;
   };
+  open_positions?: Array<{
+    id: number;
+    city: string;
+    side: string;
+    shares: number;
+    current_price: number;
+    unrealized_pnl: number;
+    amount: number;
+  }>;
 }
 
 export interface Signal {
@@ -301,17 +310,18 @@ function mapKpiData(
     (sum, pos) => sum + (pos.shares || 0) * (pos.current_price || 0), 0
   ) ?? 0;
 
-  // Calculate max openable USD based on portfolio limits
-  // max_exposure = portfolio_value * MAX_EXPOSURE_PCT
-  // available_for_new = max_exposure - open_positions_value
-  // also limited by cash * MAX_BET_PCT
-  const portfolioValue = p.initial + p.realized_pnl + p.unrealized_pnl;
-  const maxExposurePct = 0.25; // from config
-  const maxBetPct = 0.03; // from config
+  // Calculate max openable USD — match bot's conservative formula:
+  // portfolio = initial + realized_pnl (exclude unrealized, same as bot)
+  // max_exposure = portfolio × 25%
+  // available_for_new = max_exposure - sum(Bet.amount) for open bets
+  const portfolioValue = p.initial + p.realized_pnl;  // conservative: no unrealized
+  const maxExposurePct = 0.25; // TOTAL_EXPOSURE_PCT from config
   const maxExposure = portfolioValue * maxExposurePct;
-  const availableForNew = Math.max(0, maxExposure - openPositionsValue);
-  const cashAvailable = (p.cash_balance || 0) * maxBetPct;
-  const maxOpenableUsd = Math.min(availableForNew, cashAvailable);
+  // Use sum(Bet.amount) for exposure — same as bet placer's check
+  const exposureAmount = status.open_positions?.reduce(
+    (sum, pos) => sum + (pos.amount || 0), 0
+  ) ?? 0;
+  const maxOpenableUsd = Math.max(0, maxExposure - exposureAmount);
 
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
