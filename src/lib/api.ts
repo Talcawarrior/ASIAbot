@@ -402,7 +402,9 @@ function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]
 
 function mapOpenPositions(signals: Signal[]): OpenPosition[] {
   return signals.map((s) => {
-    const edge = s.live_edge ?? s.edge ?? 0;
+    // Use entry_edge (edge at bet placement) — live_edge (fair_value - current) goes
+    // negative as price rises and is misleading in the table.
+    const edge = s.entry_edge ?? s.live_edge ?? s.edge ?? 0;
     const edgePct = Math.round(edge * 1000) / 10; // Convert to percentage
 
     // Format resolution_date as closing date
