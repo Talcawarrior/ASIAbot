@@ -259,12 +259,29 @@ class Calculator:
                 if recommended_side == "YES"
                 else (market.no_price or (1 - market_implied))
             )
+
+            # Extract condition_id from market.raw_data for orderbook slippage
+            condition_id = None
+            try:
+                raw = json.loads(market.raw_data) if market.raw_data else {}
+                for tok in raw.get("tokens", []):
+                    if (
+                        tok.get("outcome", "").upper()
+                        == (recommended_side or "").upper()
+                    ):
+                        condition_id = tok.get("condition_id") or tok.get("token_id")
+                        break
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+
             net_edge = (
                 adjust_edge_for_costs(raw_edge, entry_price_for_cost)
                 if recommended_side
                 else 0.0
             )
-            slippage_est = estimate_slippage(entry_price_for_cost)
+            slippage_est = estimate_slippage(
+                entry_price_for_cost, condition_id=condition_id
+            )
 
             # Bet miktarı — gerçek portföyden oku
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()

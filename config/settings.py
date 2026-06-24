@@ -125,7 +125,7 @@ class StrategyConfig:
     # "flat"   — fixed slippage_pct from strategy_params.json
     # "tiered" — 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
     # "orderbook" — live depth-based (future, falls back to tiered)
-    slippage_model: str = "tiered"
+    slippage_model: str = "orderbook"
     slippage_pct: float = 0.005  # used when slippage_model="flat"
     gas_cost_usd: float = 0.10  # Polygon gas per round-trip
 

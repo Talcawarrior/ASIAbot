@@ -40,7 +40,7 @@ logger = logging.getLogger("RESOLVED_MARKETS_INGEST")
 # ---------------------------------------------------------------------------
 
 BASE_URL = "https://api.resolvedmarkets.com"
-DEFAULT_TIMEOUT = 30.0
+DEFAULT_TIMEOUT = 60.0
 
 # Free tier: 300 req/min = 5 req/s. We leave a 20% safety margin.
 FREE_TIER_RATE_LIMIT_PER_MIN = 300

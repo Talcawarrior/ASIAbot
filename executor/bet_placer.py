@@ -250,25 +250,7 @@ class BetPlacer:
                 session.commit()
                 return None
 
-            # Resolve fill price for the chosen side, adjusted for slippage
-            raw_fill = (
-                market.yes_price
-                if analysis.recommended_side == "YES"
-                else market.no_price
-            )
-            raw_fill = float(raw_fill) if raw_fill is not None else 0.0
-            slip_est = estimate_slippage(raw_fill, stake_usd=proposed_amount)
-            fill_price = raw_fill * (1.0 + slip_est.slippage_pct)
-            fill_price = max(0.01, min(0.99, round(fill_price, 4)))
-            # Shares = amount / price (position size in contracts)
-            shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
-            logger.info(
-                f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} "
-                f"(slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
-            )
-
-            # ── Orderbook depth filter ────────────────────────────────
-            # Extract condition_id from market.raw_data for depth check
+            # Extract condition_id from market.raw_data for slippage & depth check
             condition_id = None
             try:
                 raw = json.loads(market.raw_data) if market.raw_data else {}
@@ -281,6 +263,25 @@ class BetPlacer:
                         break
             except (json.JSONDecodeError, TypeError):
                 pass
+
+            # Resolve fill price for the chosen side, adjusted for slippage
+            raw_fill = (
+                market.yes_price
+                if analysis.recommended_side == "YES"
+                else market.no_price
+            )
+            raw_fill = float(raw_fill) if raw_fill is not None else 0.0
+            slip_est = estimate_slippage(
+                raw_fill, stake_usd=proposed_amount, condition_id=condition_id
+            )
+            fill_price = raw_fill * (1.0 + slip_est.slippage_pct)
+            fill_price = max(0.01, min(0.99, round(fill_price, 4)))
+            # Shares = amount / price (position size in contracts)
+            shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
+            logger.info(
+                f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} "
+                f"(slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
+            )
 
             min_depth = float(getattr(bot_config.strategy, "min_depth_usd", 0.0) or 0.0)
             depth_ok, depth_usd = check_orderbook_depth(
@@ -319,6 +320,7 @@ class BetPlacer:
                 city_code=market.city_code,  # dashboard "City" column is populated
                 side=analysis.recommended_side,
                 amount=proposed_amount,
+                stake_amount=proposed_amount,  # FIX: set stake_amount for ROI calculations
                 price=fill_price,
                 entry_price=fill_price,  # NEW: source of truth for PNL math
                 shares=shares,  # NEW: needed for unrealized_pnl

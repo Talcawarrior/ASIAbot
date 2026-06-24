@@ -72,6 +72,7 @@ import {
   XCircle,
   RefreshCw,
   Loader2,
+  HelpCircle,
 } from "lucide-react";
 
 // ---- Color constants ----
@@ -159,6 +160,42 @@ function EdgeTooltip({ active, payload, label }: { active?: boolean; payload?: A
   );
 }
 
+// Metric info tooltip
+function MetricTooltip({ children, title, description, formula, example }: { 
+  children: React.ReactNode; 
+  title: string; 
+  description: string; 
+  formula?: string; 
+  example?: string; 
+}) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative inline-flex" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      {children}
+      {show && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-lg text-xs z-50">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <HelpCircle className="h-3.5 w-3.5" style={{ color: TEAL }} />
+            <p className="font-semibold text-gray-900">{title}</p>
+          </div>
+          <p className="text-gray-600 mb-2 text-[11px] leading-relaxed">{description}</p>
+          {formula && (
+            <div className="mb-2 p-2 rounded bg-gray-50 font-mono text-[10px] text-gray-700">
+              <span className="font-medium">Formül:</span> {formula}
+            </div>
+          )}
+          {example && (
+            <div className="p-2 rounded bg-teal-50 font-mono text-[10px] text-teal-800">
+              <span className="font-medium">Örnek:</span> {example}
+            </div>
+          )}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-200" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ==========================================
 // OVERVIEW TAB
 // ==========================================
@@ -189,46 +226,170 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
         </>
       ) : (
         <>
+          {/* Unified Metric Cards - 2 rows, same size */}
           <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {[
-              { label: "Portföy Değeri", value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, icon: <Wallet className="h-4 w-4" />, color: TEAL, sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}` },
-              { label: "Bugünkü PnL", value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, icon: <TrendingUp className="h-4 w-4" />, color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, sub: "" },
-              { label: "Açık Bahisler", value: `${kpiData.openPositions}`, icon: <Activity className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
-              { label: "Win Rate", value: `%${kpiData.winRate}`, icon: <Target className="h-4 w-4" />, color: TEXT_PRIMARY, sub: `${kpiData.wins}W / ${kpiData.losses}L` },
-              { label: "Sharpe Ratio", value: kpiData.sharpeRatio.toFixed(2), icon: <TrendingUp className="h-4 w-4" />, color: TEXT_PRIMARY, sub: "" },
-              { label: "Max Drawdown", value: `%${kpiData.maxDrawdown}`, icon: <TrendingDown className="h-4 w-4" />, color: RED, sub: "" },
+              { 
+                label: "Portföy Değeri", 
+                value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, 
+                icon: <Wallet className="h-4 w-4" />, 
+                color: TEAL, 
+                sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}`,
+                tooltip: "Nakit + açık pozisyon PnL = güncel portföy değeri"
+              },
+              { 
+                label: "Bugünkü PnL", 
+                value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, 
+                icon: <TrendingUp className="h-4 w-4" />, 
+                color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, 
+                sub: "",
+                tooltip: "Son 24 saatteki gerçekleşen + iri PnL"
+              },
+              { 
+                label: "Açık Bahisler", 
+                value: `${kpiData.openPositions}`, 
+                icon: <Activity className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: "",
+                tooltip: "Henüz çözülmemiş (open/pending) bahis sayısı"
+              },
+              { 
+                label: "Win Rate", 
+                value: `%${kpiData.winRate}`, 
+                icon: <Target className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L`,
+                tooltip: "Kapanan bahislerde kazanan oranı (closed_early dahil). Örn: 30W/20L = %60"
+              },
+              { 
+                label: "Sharpe Ratio", 
+                value: kpiData.sharpeRatio.toFixed(2), 
+                icon: <TrendingUp className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: kpiData.sharpeRatio >= 1 ? "İyi" : kpiData.sharpeRatio >= 0.5 ? "Orta" : "Düşük",
+                tooltip: "Risk-başına getiri. >1 iyi, >2 çok iyi. Formül: (Ort. getiri - Risk-free) / Std sapma. Örn: 0.38 = düşük risk ajusteli getiri"
+              },
+              { 
+                label: "Max Drawdown", 
+                value: `%${kpiData.maxDrawdown}`, 
+                icon: <TrendingDown className="h-4 w-4" />, 
+                color: RED, 
+                sub: "",
+                tooltip: "Zirveden dipine en büyük düşüş. %0.87 = çok düşük risk. <5% mükemmel, 5-15% kabul edilebilir, >20% riskli"
+              },
             ].map((kpi) => (
-              <Card key={kpi.label} className="py-4 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-                <CardContent className="px-4 pb-0 pt-0">
-                  <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
-                  <div className="flex items-center gap-2 mt-1">
+              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+                <CardContent className="px-3 pb-0 pt-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
                     <span style={{ color: kpi.color }}>{kpi.icon}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
                     <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
                   </div>
-                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
+                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
                 </CardContent>
               </Card>
             ))}
           </section>
 
-          {/* Second-row Metric Cards (smaller) */}
-          <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+          {/* Open Positions Summary */}
+          <section className="grid grid-cols-2 gap-3 mt-2">
             {[
-              { label: "Total PnL", value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}${kpiData.totalPnlValue.toFixed(2)} USD`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED, sub: "" },
-              { label: "Total ROI", value: `${kpiData.totalRoi >= 0 ? "+" : ""}${kpiData.totalRoi.toFixed(2)}%`, icon: <TrendingUp className="h-3 w-3" />, color: kpiData.totalRoi >= 0 ? TEAL : RED, sub: "" },
-              { label: "Kapalı Bahis", value: `${kpiData.closedBets}`, icon: <BarChart3 className="h-3 w-3" />, color: TEXT_PRIMARY, sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L` },
-              { label: "Expectancy", value: `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}`, icon: <Target className="h-3 w-3" />, color: kpiData.expectancy >= 0 ? "#16A34A" : RED, sub: "ortalama/bahis" },
-              { label: "Ort. Bahis", value: `$${kpiData.avgBetSize.toFixed(2)}`, icon: <Wallet className="h-3 w-3" />, color: TEXT_PRIMARY, sub: "" },
-              { label: "Profit Factor", value: kpiData.profitFactor.toFixed(2), icon: <ArrowRightLeft className="h-3 w-3" />, color: kpiData.profitFactor >= 1.5 ? TEAL : TEXT_PRIMARY, sub: kpiData.profitFactor >= 1.5 ? "✅ İyi" : "" },
+              { 
+                label: "Açık Bet Toplam Değeri", 
+                value: `$${kpiData.openPositionsValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, 
+                icon: <Activity className="h-4 w-4" />, 
+                color: TEAL, 
+                sub: `${kpiData.openPositions} pozisyon`,
+                tooltip: "Tüm açık pozisyonların güncel piyasa değeri (shares × current_price). Nakit değildir, iri PnL'dir."
+              },
+              { 
+                label: "Max Açılabilecek USD", 
+                value: `$${kpiData.maxOpenableUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, 
+                icon: <Wallet className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: "Gün itibarıyla limit",
+                tooltip: "Portföy limitlerine göre bugün açılabilecek maksimum yeni pozisyon tutarı. Formül: min(Portföy × MAX_EXPOSURE_PCT - Açık Pozisyon Değeri, Nakit × MAX_BET_PCT). Günlük resetlenir."
+              },
             ].map((kpi) => (
-              <Card key={kpi.label} className="py-2 gap-0 shadow-sm" style={{ borderColor: BORDER }}>
+              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
                 <CardContent className="px-3 pb-0 pt-0">
-                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }}>{kpi.label}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
                     <span style={{ color: kpi.color }}>{kpi.icon}</span>
-                    <span className="text-sm font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
                   </div>
-                  {kpi.sub && <p className="text-[9px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>{kpi.sub}</p>}
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+                  </div>
+                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
+                </CardContent>
+              </Card>
+            ))}
+          </section>
+
+          {/* Second row - same card size */}
+          <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mt-2">
+            {[
+              { 
+                label: "Total PnL", 
+                value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}${kpiData.totalPnlValue.toFixed(2)} USD`, 
+                icon: <TrendingUp className="h-4 w-4" />, 
+                color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED, 
+                sub: "",
+                tooltip: "Tüm kapanan bahislerin net kar/zararı. Örn: +543.28 = 50 betten $543 kar"
+              },
+              { 
+                label: "Total ROI", 
+                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${kpiData.totalRoi.toFixed(2)}%`, 
+                icon: <TrendingUp className="h-4 w-4" />, 
+                color: kpiData.totalRoi >= 0 ? TEAL : RED, 
+                sub: "",
+                tooltip: "Toplam yatırıma oranlı getiri. Formül: Total PnL / Toplam Stake × 100. Örn: +36.31% = her $100 için $36 kar"
+              },
+              { 
+                label: "Kapalı Bahis", 
+                value: `${kpiData.closedBets}`, 
+                icon: <BarChart3 className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L`,
+                tooltip: "Sonuçlanan toplam bahis (won+lost+closed_early). 50 = 30 kazanan + 20 kaybeden"
+              },
+              { 
+                label: "Expectancy", 
+                value: `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}`, 
+                icon: <Target className="h-4 w-4" />, 
+                color: kpiData.expectancy >= 0 ? "#16A34A" : RED, 
+                sub: "ortalama/bahis",
+                tooltip: "Bahis başına beklenen kar. Formül: Total PnL / Kapalı Bahis. +$10.87 = her bahiste ort $10.87 kar beklenir. >0 karlı strateji"
+              },
+              { 
+                label: "Ort. Bahis", 
+                value: `$${kpiData.avgBetSize.toFixed(2)}`, 
+                icon: <Wallet className="h-4 w-4" />, 
+                color: TEXT_PRIMARY, 
+                sub: "",
+                tooltip: "Ortalama bahis büyüklüğü. Formül: Toplam Stake / Kapalı Bahis. $29.93 = 50 bette $1,496 toplam stake"
+              },
+              { 
+                label: "Profit Factor", 
+                value: kpiData.profitFactor.toFixed(2), 
+                icon: <ArrowRightLeft className="h-4 w-4" />, 
+                color: kpiData.profitFactor >= 1.5 ? TEAL : TEXT_PRIMARY, 
+                sub: kpiData.profitFactor >= 1.5 ? "✅ İyi" : kpiData.profitFactor >= 1 ? "Kabul" : "Zayıf",
+                tooltip: "Kazananların kaybedenlere oranı. Formül: Gross Profit / Gross Loss. 2.46 = her $1 zarar için $2.46 kar. >1.5 iyi, >2 mükemmel"
+              },
+            ].map((kpi) => (
+              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+                <CardContent className="px-3 pb-0 pt-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
+                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+                  </div>
+                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
                 </CardContent>
               </Card>
             ))}
@@ -694,7 +855,7 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
 // ==========================================
 // HEALTH TAB
 // ==========================================
-function HealthTab({ health }: { health: HealthResponse | null }) {
+function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData?: KpiData }) {
   const h = health ?? {
     verdict: "healthy" as const,
     verdict_text: "Veri bekleniyor",
@@ -812,10 +973,10 @@ function HealthTab({ health }: { health: HealthResponse | null }) {
           </CardContent>
         </Card>
 
-        {/* Edge Stats */}
+        {/* Edge Stats + Risk Metrics */}
         <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
-            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge İstatistikleri</CardTitle>
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge İstatistikleri & Risk Metrikleri</CardTitle>
           </CardHeader>
           <CardContent className="px-4">
             <div className="space-y-4">
@@ -838,6 +999,60 @@ function HealthTab({ health }: { health: HealthResponse | null }) {
                   <p className="text-sm font-bold tabular-nums" style={{ color: item.color }}>{item.value}</p>
                 </div>
               ))}
+            </div>
+            
+            {/* Risk Metrics with Targets */}
+            <div className="pt-2 border-t" style={{ borderColor: BORDER }}>
+              <p className="text-[10px] font-semibold uppercase tracking-wider mb-3" style={{ color: TEXT_MUTED }}>Risk Metrikleri (Hedef Değerler)</p>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {[
+                  { 
+                    label: "Sharpe Ratio", 
+                    value: kpiData ? kpiData.sharpeRatio.toFixed(2) : "—",
+                    target: "> 1.0 İyi, > 2.0 Mükemmel",
+                    color: TEXT_PRIMARY,
+                    tooltip: "Risk-başına getiri. Formül: (Ort. Getiri - Risk-Free) / Std Sapma. <0.5 zayıf, 0.5-1 orta, >1 iyi, >2 mükemmel"
+                  },
+                  { 
+                    label: "Max Drawdown", 
+                    value: kpiData ? `%${kpiData.maxDrawdown}` : "—",
+                    target: "< 5% Mükemmel, < 15% Kabul",
+                    color: RED,
+                    tooltip: "Zirveden dipine en büyük düşüş. <5% mükemmel, 5-15% kabul edilebilir, >20% riskli"
+                  },
+                  { 
+                    label: "Expectancy", 
+                    value: kpiData ? `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}` : "—",
+                    target: "> $0 Karlı, > $5 Güçlü",
+                    color: "#16A34A",
+                    tooltip: "Bahis başına beklenen kar. Formül: Total PnL / Kapalı Bahis. >0 karlı strateji, >$5 güçlü"
+                  },
+                  { 
+                    label: "Ort. Bahis", 
+                    value: kpiData ? `$${kpiData.avgBetSize.toFixed(2)}` : "—",
+                    target: "$20-50 arası optimal",
+                    color: TEXT_PRIMARY,
+                    tooltip: "Ortalama bahis büyüklüğü. Formül: Toplam Stake / Kapalı Bahis. Çok yüksek = risk, çok düşük = verimsiz"
+                  },
+                  { 
+                    label: "Profit Factor", 
+                    value: kpiData ? kpiData.profitFactor.toFixed(2) : "—",
+                    target: "> 1.5 İyi, > 2.0 Mükemmel",
+                    color: TEAL,
+                    tooltip: "Kazanan/Kaybeden oranı. Formül: Gross Profit / Gross Loss. <1 zararlı, 1-1.5 zayıf, >1.5 iyi, >2 mükemmel"
+                  },
+                ].map((metric) => (
+                  <div key={metric.label} className="p-3 rounded-lg bg-gray-50/50" style={{ border: `1px solid ${BORDER}` }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={metric.tooltip}>{metric.label}</p>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-lg font-bold tabular-nums" style={{ color: metric.color }}>{metric.value}</span>
+                    </div>
+                    <p className="text-[9px] mt-1.5" style={{ color: TEXT_MUTED }}>{metric.target}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1122,7 +1337,7 @@ export default function DashboardPage() {
         {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} />}
         {activeTab === "models" && <ModelsTab modelScores={data.modelScores} />}
         {activeTab === "slippage" && <SlippageTab slippageData={data.slippageData} />}
-        {activeTab === "health" && <HealthTab health={data.health} />}
+        {activeTab === "health" && <HealthTab health={data.health} kpiData={data.kpiData} />}
       </main>
 
       {/* ---- FOOTER ---- */}

@@ -754,53 +754,51 @@ async def get_history():
 
 @app.get("/api/slippage")
 async def get_slippage():
-    """Return recent slippage data from analyses joined with bet results."""
+    """Return recent slippage data from analyses joined with market info and bet results."""
     db = get_db_session()
     try:
         rows = (
             db.query(
                 Analysis,
-                Bet.city,
+                WeatherMarket.city,
                 Bet.side,
                 Bet.entry_price,
                 Bet.pnl,
                 Bet.status,
             )
+            .outerjoin(WeatherMarket, WeatherMarket.id == Analysis.market_id)
             .outerjoin(Bet, Bet.analysis_id == Analysis.id)
             .filter(Analysis.slippage_pct.isnot(None))
             .order_by(Analysis.analyzed_at.desc())
             .limit(50)
             .all()
         )
-        # Batch-load market prices to avoid N+1
-        market_ids = list({r[0].market_id for r in rows})
-        mkt_prices = (
-            {
-                wm.id: float(wm.yes_price)
-                for wm in db.query(WeatherMarket)
-                .filter(WeatherMarket.id.in_(market_ids))
-                .all()
-            }
-            if market_ids
-            else {}
-        )
 
         entries = []
-        for analysis, city, side, entry_price, bet_pnl, bet_status in rows:
-            current_price = (
-                mkt_prices.get(analysis.market_id) or analysis.market_implied_prob
+        for analysis, city, bet_side, entry_price, bet_pnl, bet_status in rows:
+            # Use Analysis fields for expected values, Bet fields for actuals
+            expected_price = round(float(analysis.market_implied_prob or 0), 4)
+            side = analysis.recommended_side or "—"
+            # entry_price: 0 if no bet placed (frontend expects number)
+            entry_price_val = (
+                round(float(entry_price), 4) if entry_price is not None else 0.0
             )
+            # result: PENDING if no bet, WIN/LOSS if bet settled
+            if bet_pnl is not None:
+                result = "WIN" if bet_pnl > 0 else "LOSS"
+            else:
+                result = "PENDING"
             entries.append(
                 {
                     "id": str(analysis.id),
                     "city": city or "—",
-                    "side": side or "—",
-                    "expected_price": round(float(current_price), 4),
-                    "entry_price": round(float(entry_price or 0), 4),
-                    "slippage_pct": round(float(analysis.slippage_pct), 4),
-                    "result": (
-                        "WIN" if bet_pnl and bet_pnl > 0 else "LOSS" if bet_pnl else "—"
-                    ),
+                    "side": side,
+                    "expected_price": expected_price,
+                    "entry_price": entry_price_val,
+                    "slippage_pct": round(
+                        float(analysis.slippage_pct), 6
+                    ),  # as decimal (0.005)
+                    "result": result,
                     "analyzed_at": (
                         analysis.analyzed_at.isoformat()
                         if analysis.analyzed_at
@@ -1287,7 +1285,47 @@ def run_cli():
         "settle": run_settle,
         "report": run_report,
     }
-    if args.command == "run":
+    if args.command == "bot":
+        # ── Start bot: API + Dashboard + Background loops ────────────────────
+        _dashboard_out = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "dashboard", "out"
+        )
+        if os.path.isdir(_dashboard_out):
+            app.mount(
+                "/_next",
+                StaticFiles(directory=os.path.join(_dashboard_out, "_next")),
+                name="next-static",
+            )
+            app.mount(
+                "/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard"
+            )
+
+        # Start background loops on FastAPI startup (lifespan handler)
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def bot_lifespan(app):
+            logger.info("LIFESPAN STARTUP - Starting bot loops")
+            state.is_running = True
+            state.locked = False
+            state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop())
+            state.tasks["settlement"] = asyncio.create_task(settlement_loop())
+            logger.info("Bot loops started (scan_and_bet + settlement)")
+            yield
+            # Shutdown
+            logger.info("LIFESPAN SHUTDOWN - Stopping bot loops")
+            for t in list(state.tasks.values()):
+                if not t.done():
+                    t.cancel()
+            state.tasks.clear()
+            state.is_running = False
+
+        app.router.lifespan_context = bot_lifespan
+
+        import uvicorn  # noqa: I001
+
+        uvicorn.run(app, host=config.HOST, port=config.PORT)
+    elif args.command == "run":
         # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
         _dashboard_out = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "dashboard", "out"

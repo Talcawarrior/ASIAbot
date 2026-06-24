@@ -144,6 +144,9 @@ export interface KpiData {
   avgEdge: number;
   sharpeRatio: number;
   maxDrawdown: number;
+  // Open positions summary
+  openPositionsValue: number;  // Açık pozisyonların toplam değeri (shares × current_price)
+  maxOpenableUsd: number;      // Maksimum açılabilecek USD (gün itibarıyla)
   // Second row metrics
   totalPnlValue: number;       // Total PnL ($)
   totalRoi: number;            // Total ROI (%)
@@ -256,6 +259,8 @@ function mapKpiData(
       avgEdge: 0,
       sharpeRatio: 0,
       maxDrawdown: 0,
+      openPositionsValue: 0,
+      maxOpenableUsd: 0,
       totalPnlValue: 0,
       totalRoi: 0,
       closedBets: 0,
@@ -268,11 +273,21 @@ function mapKpiData(
   }
   const s = status.stats;
   const p = status.portfolio;
-  const totalClosed = s.total_closed || (s.win_count + s.loss_count);
-  const winRate = totalClosed > 0 ? (s.win_count / totalClosed) * 100 : 0;
+  
+  // Use historyStats for ALL win/loss metrics (includes closed_early bets for consistency)
+  const hs = historyStats;
+  const totalPnlValue = hs?.total_pnl ?? 0;
+  const totalRoi = hs?.overall_roi ?? 0;
+  const closedWins = hs?.total_won ?? 0;
+  const closedLosses = hs?.total_lost ?? 0;
+  const closedBets = closedWins + closedLosses;
+  const winRate = closedBets > 0 ? (closedWins / closedBets) * 100 : 0;
+  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
+  const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
+  const profitFactor = hs?.profit_factor ?? 0;
 
   let winRateLabel = "Veri yok";
-  if (totalClosed > 0) {
+  if (closedBets > 0) {
     if (winRate >= 70) winRateLabel = "Mükemmel";
     else if (winRate >= 60) winRateLabel = "İyi";
     else if (winRate >= 50) winRateLabel = "Orta";
@@ -281,16 +296,22 @@ function mapKpiData(
 
   const avgEdge = health?.edge_distribution?.avg_net_edge_pct ?? 0;
 
-  // Second-row metrics from historyStats
-  const hs = historyStats;
-  const totalPnlValue = hs?.total_pnl ?? 0;
-  const totalRoi = hs?.overall_roi ?? 0;
-  const closedWins = hs?.total_won ?? 0;
-  const closedLosses = hs?.total_lost ?? 0;
-  const closedBets = closedWins + closedLosses;
-  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
-  const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
-  const profitFactor = hs?.profit_factor ?? 0;
+  // Calculate open positions total value (sum of shares × current_price)
+  const openPositionsValue = status.open_positions?.reduce(
+    (sum, pos) => sum + (pos.shares || 0) * (pos.current_price || 0), 0
+  ) ?? 0;
+
+  // Calculate max openable USD based on portfolio limits
+  // max_exposure = portfolio_value * MAX_EXPOSURE_PCT
+  // available_for_new = max_exposure - open_positions_value
+  // also limited by cash * MAX_BET_PCT
+  const portfolioValue = p.initial + p.realized_pnl + p.unrealized_pnl;
+  const maxExposurePct = 0.25; // from config
+  const maxBetPct = 0.03; // from config
+  const maxExposure = portfolioValue * maxExposurePct;
+  const availableForNew = Math.max(0, maxExposure - openPositionsValue);
+  const cashAvailable = (p.cash_balance || 0) * maxBetPct;
+  const maxOpenableUsd = Math.min(availableForNew, cashAvailable);
 
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
@@ -299,12 +320,15 @@ function mapKpiData(
     openPositions: s.total_bets,
     winRate: Math.round(winRate * 10) / 10,
     winRateLabel,
-    totalTrades: totalClosed,
-    wins: s.win_count,
-    losses: s.loss_count,
+    totalTrades: closedBets,
+    wins: closedWins,
+    losses: closedLosses,
     avgEdge: Math.round(avgEdge * 10) / 10,
     sharpeRatio: status.metrics?.sharpe_ratio ?? 0,
     maxDrawdown: status.metrics?.max_drawdown_pct ?? 0,
+    // Open positions summary
+    openPositionsValue: Math.round(openPositionsValue * 100) / 100,
+    maxOpenableUsd: Math.round(maxOpenableUsd * 100) / 100,
     // Second row
     totalPnlValue,
     totalRoi,
