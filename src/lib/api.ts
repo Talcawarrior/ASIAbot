@@ -79,6 +79,7 @@ export interface HistoryEntry {
   stake_amount: number;
   realized_pnl: number;
   roi: number;
+  edge: number | null;
   result: "WIN" | "LOSS";
   placed_at: string | null;
   settled_at: string | null;
@@ -558,7 +559,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       exitPrice: Math.round(exitPrice * 100) / 100,
       pnl: h.realized_pnl,
       result: h.result,
-      edge: h.roi ? Math.round(h.roi * 10) / 10 : 0,
+      edge: h.edge ?? (h.roi ? Math.round(h.roi * 10) / 10 : 0),
       duration,
       closedAt,
       strategy: "SIA",

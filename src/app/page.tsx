@@ -858,7 +858,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
         {/* 3-Day Summary */}
         <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
-            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Genel Özet</CardTitle>
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>3 Günlük Özet</CardTitle>
           </CardHeader>
           <CardContent className="px-4">
             <div className="grid grid-cols-2 gap-3">

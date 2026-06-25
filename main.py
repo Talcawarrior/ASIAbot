@@ -748,12 +748,23 @@ async def get_history():
             .limit(50)
             .all()
         )
+
+        # Batch-load analyses for edge data (N+1 fix)
+        bet_analysis_ids = [b.analysis_id for b in settled_bets if b.analysis_id]
+        bet_analyses = {}
+        if bet_analysis_ids:
+            for a in db.query(Analysis).filter(Analysis.id.in_(bet_analysis_ids)).all():
+                bet_analyses[a.id] = a
+
         history = []
         for bet in settled_bets:
             pnl = bet.pnl or bet.realized_pnl or 0.0
             stake = bet.amount or 0.0
             roi = (pnl / stake * 100) if stake > 0 else 0.0
             close_ts = bet.settled_at or bet.closed_at
+            # Get actual edge from Analysis (net edge after slippage+fee)
+            analysis = bet_analyses.get(bet.analysis_id) if bet.analysis_id else None
+            edge_pct = round((analysis.edge or 0) * 100, 2) if analysis and analysis.edge else None
             history.append(
                 {
                     "id": bet.id,
@@ -763,6 +774,7 @@ async def get_history():
                     "stake_amount": stake,
                     "realized_pnl": pnl,
                     "roi": round(roi, 2),
+                    "edge": edge_pct,
                     "result": "WIN" if pnl > 0 else "LOSS",
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "settled_at": (close_ts.isoformat() if close_ts else None),
@@ -1025,18 +1037,19 @@ async def get_health_check():
                 }
             )
 
-        # 3. Edge distribution for placed bets
-        recent_bets = db.query(Bet).filter(Bet.placed_at >= h72).all()
+        # 3. Edge distribution for settled bets (consistent with /api/history avg_edge)
+        settled_bet_statuses = ["won", "lost", "settled"]
+        settled_for_edge = db.query(Bet).filter(Bet.status.in_(settled_bet_statuses)).all()
 
         # Batch-load analyses for all bets (N+1 fix)
-        analysis_ids = [b.analysis_id for b in recent_bets if b.analysis_id]
+        analysis_ids = [b.analysis_id for b in settled_for_edge if b.analysis_id]
         analyses_by_id = {}
         if analysis_ids:
             for a in db.query(Analysis).filter(Analysis.id.in_(analysis_ids)).all():
                 analyses_by_id[a.id] = a
 
         edge_values = []
-        for b in recent_bets:
+        for b in settled_for_edge:
             if b.analysis_id:
                 analysis = analyses_by_id.get(b.analysis_id)
                 if analysis:
@@ -1078,26 +1091,23 @@ async def get_health_check():
         min_net_edge = min(net_edges) if net_edges else 0
         max_net_edge = max(net_edges) if net_edges else 0
 
-        # 4. Settled Summary (all time — consistent with /api/history)
-        settled_all = (
+        # 4. 3-Day Summary (last 72 hours — for trend monitoring)
+        settled_72h = (
             db.query(Bet)
             .filter(
+                Bet.settled_at >= h72,
                 Bet.status.in_(("won", "lost")),
             )
             .all()
         )
 
-        total_settled = len(settled_all)
-        wins_all = sum(1 for b in settled_all if b.status == "won")
-        losses_all = sum(1 for b in settled_all if b.status == "lost")
-        win_rate_all = (wins_all / total_settled * 100) if total_settled > 0 else 0
-        total_pnl_all = sum(b.realized_pnl for b in settled_all)
-        total_stake_all = sum(b.stake_amount for b in settled_all)
-        roi_all = (total_pnl_all / total_stake_all * 100) if total_stake_all > 0 else 0
-
-        # Also compute 3-day stats for red flag checks
-        settled_72h = [b for b in settled_all if b.settled_at and b.settled_at >= h72]
+        total_settled = len(settled_72h)
+        wins_72 = sum(1 for b in settled_72h if b.status == "won")
         losses_72 = sum(1 for b in settled_72h if b.status == "lost")
+        win_rate_72 = (wins_72 / total_settled * 100) if total_settled > 0 else 0
+        total_pnl_72 = sum(b.realized_pnl for b in settled_72h)
+        total_stake_72 = sum(b.stake_amount for b in settled_72h)
+        roi_72 = (total_pnl_72 / total_stake_72 * 100) if total_stake_72 > 0 else 0
 
         # 5. Red Flags
         red_flags = []
@@ -1141,11 +1151,11 @@ async def get_health_check():
                 }
             )
 
-        if total_settled >= 5 and win_rate_all < 50:
+        if total_settled >= 5 and win_rate_72 < 50:
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
+                    "message": f"Win rate %{win_rate_72:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
                     "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
                 }
             )
@@ -1160,11 +1170,11 @@ async def get_health_check():
                 }
             )
 
-        if total_pnl_all < 0 and total_settled >= 5:
+        if total_pnl_72 < 0 and total_settled >= 5:
             red_flags.append(
                 {
                     "severity": "warning",
-                    "message": f"Toplam PnL negatif: ${total_pnl_all:.2f}. Zarar trendi devam ediyor.",
+                    "message": f"3 günlük toplam PnL negatif: ${total_pnl_72:.2f}. Zarar trendi devam ediyor.",
                     "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
                 }
             )
@@ -1228,12 +1238,12 @@ async def get_health_check():
             },
             "summary_3day": {
                 "total_settled": total_settled,
-                "wins": wins_all,
-                "losses": losses_all,
-                "win_rate_pct": round(win_rate_all, 1),
-                "total_pnl": round(total_pnl_all, 2),
-                "total_stake": round(total_stake_all, 2),
-                "roi_pct": round(roi_all, 2),
+                "wins": wins_72,
+                "losses": losses_72,
+                "win_rate_pct": round(win_rate_72, 1),
+                "total_pnl": round(total_pnl_72, 2),
+                "total_stake": round(total_stake_72, 2),
+                "roi_pct": round(roi_72, 2),
                 "avg_net_edge_pct": round(avg_net_edge, 2),
             },
             "red_flags": red_flags,
