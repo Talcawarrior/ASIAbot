@@ -111,6 +111,17 @@ export interface HealthResponse {
     total_analyses: number;
   };
   edge_distribution: {
+    values: Array<{
+      bet_id: number;
+      raw_edge_pct: number | null;
+      net_edge_pct: number | null;
+      slippage_pct: number | null;
+      market_id: string;
+      city: string;
+      stake: number;
+      status: string;
+      pnl: number;
+    }>;
     avg_net_edge_pct: number;
     min_net_edge_pct: number;
     max_net_edge_pct: number;
@@ -239,7 +250,8 @@ export type SlippageEntry = {
 
 // ---- Fetch helpers ----
 
-const REFRESH_INTERVAL = 10000; // 10 seconds
+const REFRESH_INTERVAL = 10000; // 10 seconds for fast endpoints
+const HEALTH_REFRESH_INTERVAL = 60000; // 60 seconds for slow health-check
 
 async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
@@ -453,7 +465,7 @@ function mapActivityFeed(signals: Signal[], history: HistoryEntry[]): ActivityIt
     const time = s.placed_at
       ? new Date(s.placed_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
       : "??:??";
-    const edge = s.live_edge ?? s.edge ?? 0;
+    const edge = s.entry_edge ?? s.live_edge ?? s.edge ?? 0;
     const edgePct = (Math.round(edge * 1000) / 10).toFixed(1);
     items.push({
       id: `s${idCounter}`,
@@ -486,26 +498,27 @@ function mapActivityFeed(signals: Signal[], history: HistoryEntry[]): ActivityIt
 
 function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
   const buckets: EdgeBucket[] = [
-    { range: "0-2%", count: 0 },
-    { range: "2-4%", count: 0 },
-    { range: "4-6%", count: 0 },
-    { range: "6-8%", count: 0 },
-    { range: "8-10%", count: 0 },
-    { range: "10%+", count: 0 },
+    { range: "0-5%", count: 0 },
+    { range: "5-10%", count: 0 },
+    { range: "10-15%", count: 0 },
+    { range: "15-20%", count: 0 },
+    { range: "20-30%", count: 0 },
+    { range: "30%+", count: 0 },
   ];
 
-  if (!health?.edge_distribution) return buckets;
+  if (!health?.edge_distribution?.values?.length) return buckets;
 
-  const avg = health.edge_distribution.avg_net_edge_pct;
-  const count = health.edge_distribution.count || 0;
-
-  // Distribute count based on avg edge into the right bucket
-  if (avg <= 2) buckets[0].count = count;
-  else if (avg <= 4) buckets[1].count = count;
-  else if (avg <= 6) buckets[2].count = count;
-  else if (avg <= 8) buckets[3].count = count;
-  else if (avg <= 10) buckets[4].count = count;
-  else buckets[5].count = count;
+  // Distribute each trade's net_edge_pct into the correct bucket
+  for (const v of health.edge_distribution.values) {
+    const edge = v.net_edge_pct;
+    if (edge === null || edge === undefined) continue;
+    if (edge <= 5) buckets[0].count++;
+    else if (edge <= 10) buckets[1].count++;
+    else if (edge <= 15) buckets[2].count++;
+    else if (edge <= 20) buckets[3].count++;
+    else if (edge <= 30) buckets[4].count++;
+    else buckets[5].count++;
+  }
 
   return buckets;
 }
@@ -599,6 +612,20 @@ export function useApiData() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const healthAbortRef = useRef<AbortController | null>(null);
+
+  const fetchHealth = useCallback(async () => {
+    // Separate controller for slow health-check — not aborted by fast refresh
+    healthAbortRef.current?.abort();
+    const controller = new AbortController();
+    healthAbortRef.current = controller;
+    try {
+      const res = await fetchJson<HealthResponse>("/api/health-check", controller.signal);
+      if (!controller.signal.aborted) setHealth(res);
+    } catch {
+      // silently ignore abort or network errors
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     // Cancel previous in-flight request
@@ -607,11 +634,10 @@ export function useApiData() {
     abortRef.current = controller;
 
     try {
-      const [statusRes, signalsRes, historyRes, healthRes, weightsRes, slippageRes] = await Promise.allSettled([
+      const [statusRes, signalsRes, historyRes, weightsRes, slippageRes] = await Promise.allSettled([
         fetchJson<StatusResponse>("/api/status", controller.signal),
         fetchJson<{ signals: Signal[]; count: number }>("/api/signals", controller.signal),
         fetchJson<{ history: HistoryEntry[]; stats: HistoryStats }>("/api/history", controller.signal),
-        fetchJson<HealthResponse>("/api/health-check", controller.signal),
         fetchJson<Record<string, number>>("/api/asi/weights", controller.signal),
         fetchJson<{ slippage: SlippageEntry[] }>("/api/slippage", controller.signal),
       ]);
@@ -624,7 +650,6 @@ export function useApiData() {
         setHistory(historyRes.value.history ?? []);
         setHistoryStats(historyRes.value.stats ?? null);
       }
-      if (healthRes.status === "fulfilled") setHealth(healthRes.value);
       if (weightsRes.status === "fulfilled") setWeights(weightsRes.value);
       if (slippageRes.status === "fulfilled") setSlippageData(slippageRes.value.slippage ?? []);
 
@@ -640,12 +665,16 @@ export function useApiData() {
 
   useEffect(() => {
     fetchData();
+    fetchHealth(); // fetch health immediately
     const interval = setInterval(fetchData, REFRESH_INTERVAL);
+    const healthInterval = setInterval(fetchHealth, HEALTH_REFRESH_INTERVAL);
     return () => {
       clearInterval(interval);
+      clearInterval(healthInterval);
       abortRef.current?.abort();
+      healthAbortRef.current?.abort();
     };
-  }, [fetchData]);
+  }, [fetchData, fetchHealth]);
 
   // Map data to UI types
   const kpiData = mapKpiData(status, health, historyStats);
