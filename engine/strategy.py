@@ -166,7 +166,7 @@ class RiskManager:
         return True
 
     def _conservative_portfolio_value(self) -> float:
-        """Portfolio = baslangic + gerceklesen kar/zarar (unrealized katilmaz)."""
+        """Portfolio = baslangic + gerceklesen kar/zarar + beklenen kar/zarar."""
         if not self.db:
             return self.portfolio_value
         try:
@@ -181,7 +181,16 @@ class RiskManager:
                 .scalar()
                 or 0.0
             )
-            return initial + realized
+            # Include unrealized PnL for accurate 25% cap
+            from database.models import OPEN_BET_STATUSES
+
+            unrealized = float(
+                self.db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
+                .filter(Bet.status.in_(OPEN_BET_STATUSES))
+                .scalar()
+                or 0.0
+            )
+            return initial + realized + unrealized
         except Exception:
             return self.portfolio_value
 

@@ -312,7 +312,7 @@ async def get_status():
                 "total_roi": total_roi,
                 "exposure": float(exposure_db),
                 "max_exposure": round(
-                    (initial_capital + realized_pnl_db)
+                    (initial_capital + realized_pnl_db + unrealized_pnl_db)
                     * state.config.TOTAL_EXPOSURE_PCT,
                     2,
                 ),
@@ -703,31 +703,45 @@ async def get_history():
     """Get settled bet history with win/loss stats."""
     db = get_db_session()
     try:
+        closed_statuses = ["settled", "won", "lost", "closed_early"]
+
+        # Stats from ALL closed bets via SQL (fast aggregation)
+        from sqlalchemy import case, func
+
+        stats_q = (
+            db.query(
+                func.count(Bet.id),
+                func.sum(case((Bet.pnl > 0, 1), else_=0)),
+                func.sum(case((Bet.pnl <= 0, 1), else_=0)),
+                func.coalesce(func.sum(Bet.amount), 0.0),
+                func.coalesce(func.sum(Bet.pnl), 0.0),
+                func.coalesce(func.sum(case((Bet.pnl > 0, Bet.pnl), else_=0.0)), 0.0),
+                func.coalesce(
+                    func.sum(case((Bet.pnl <= 0, func.abs(Bet.pnl)), else_=0.0)), 0.0
+                ),
+            )
+            .filter(Bet.status.in_(closed_statuses))
+            .one()
+        )
+        total_won = stats_q[1] or 0
+        total_lost = stats_q[2] or 0
+        total_stake_all = float(stats_q[3] or 0)
+        total_pnl_all = float(stats_q[4] or 0)
+        total_win_pnl = float(stats_q[5] or 0)
+        total_loss_pnl = float(stats_q[6] or 0)
+
+        # History list limited to 50 (most recent)
         settled_bets = (
             db.query(Bet)
-            .filter(Bet.status.in_(["settled", "won", "lost", "closed_early"]))
+            .filter(Bet.status.in_(closed_statuses))
             .order_by(Bet.settled_at.desc(), Bet.closed_at.desc(), Bet.placed_at.desc())
             .limit(50)
             .all()
         )
         history = []
-        total_won = 0
-        total_lost = 0
-        total_stake_all = 0.0
-        total_pnl_all = 0.0
-        total_win_pnl = 0.0
-        total_loss_pnl = 0.0
         for bet in settled_bets:
             pnl = bet.pnl or bet.realized_pnl or 0.0
-            if pnl > 0:
-                total_won += 1
-                total_win_pnl += pnl
-            else:
-                total_lost += 1
-                total_loss_pnl += abs(pnl)
             stake = bet.amount or 0.0
-            total_stake_all += stake
-            total_pnl_all += pnl
             roi = (pnl / stake * 100) if stake > 0 else 0.0
             close_ts = bet.settled_at or bet.closed_at
             history.append(

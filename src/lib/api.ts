@@ -322,18 +322,11 @@ function mapKpiData(
     (sum, pos) => sum + (pos.shares || 0) * (pos.current_price || 0), 0
   ) ?? 0;
 
-  // Calculate max openable USD — match bot's conservative formula:
-  // portfolio = initial + realized_pnl (exclude unrealized, same as bot)
-  // max_exposure = portfolio × 25%
-  // available_for_new = max_exposure - sum(Bet.amount) for open bets
-  const portfolioValue = p.initial + p.realized_pnl;  // conservative: no unrealized
+  // Calculate max openable USD — 25% of total portfolio value
+  // maxExposure = the hard limit (25% of portfolio)
+  const portfolioValue = p.initial + p.realized_pnl + p.unrealized_pnl;
   const maxExposurePct = 0.25; // TOTAL_EXPOSURE_PCT from config
   const maxExposure = portfolioValue * maxExposurePct;
-  // Use sum(Bet.amount) for exposure — same as bet placer's check
-  const exposureAmount = status.open_positions?.reduce(
-    (sum, pos) => sum + (pos.amount || 0), 0
-  ) ?? 0;
-  const maxOpenableUsd = Math.max(0, maxExposure - exposureAmount);
 
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
@@ -350,7 +343,7 @@ function mapKpiData(
     maxDrawdown: status.metrics?.max_drawdown_pct ?? 0,
     // Open positions summary
     openPositionsValue: Math.round(openPositionsValue * 100) / 100,
-    maxOpenableUsd: Math.round(maxOpenableUsd * 100) / 100,
+    maxOpenableUsd: Math.round(maxExposure * 100) / 100,
     // Second row
     totalPnlValue,
     totalRoi,
