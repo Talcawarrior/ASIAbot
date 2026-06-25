@@ -94,6 +94,7 @@ export interface HistoryStats {
   total_win_pnl: number;
   total_loss_pnl: number;
   profit_factor: number;
+  avg_edge: number;
 }
 
 export interface HealthResponse {

@@ -491,7 +491,7 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
 // ==========================================
 // TRADE HISTORY TAB
 // ==========================================
-function TradesTab({ tradeHistory, historyStats }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null }) {
+function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null; totalPnl: number }) {
   const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS">("ALL");
   const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
   const [search, setSearch] = useState("");
@@ -516,10 +516,9 @@ function TradesTab({ tradeHistory, historyStats }: { tradeHistory: TradeHistoryE
   // Summary stats from API (all settled bets, not just the 50 displayed)
   const hs = historyStats;
   const totalSettledBets = (hs?.total_won ?? 0) + (hs?.total_lost ?? 0);
-  const totalSettledPnl = hs?.total_pnl ?? 0;
   const totalSettledWinRate = totalSettledBets > 0 ? ((hs?.total_won ?? 0) / totalSettledBets) * 100 : 0;
   // Filtered stats for the displayed subset
-  const totalPnl = filtered.reduce((s, t) => s + t.pnl, 0);
+  const filteredPnl = filtered.reduce((s, t) => s + t.pnl, 0);
   const winCount = filtered.filter((t) => t.result === "WIN").length;
 
   function toggleSort(col: "date" | "pnl" | "edge") {
@@ -545,7 +544,7 @@ function TradesTab({ tradeHistory, historyStats }: { tradeHistory: TradeHistoryE
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam PnL</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: totalSettledPnl >= 0 ? TEAL : RED }}>{fmtUsd(totalSettledPnl)}</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: totalPnl >= 0 ? TEAL : RED }}>{fmtUsd(totalPnl)}</p>
           </CardContent>
         </Card>
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
@@ -557,7 +556,7 @@ function TradesTab({ tradeHistory, historyStats }: { tradeHistory: TradeHistoryE
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Edge</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_net_edge_pct?.toFixed(1) ?? "—"}%</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_edge?.toFixed(1) ?? "—"}%</p>
           </CardContent>
         </Card>
       </section>
@@ -1276,7 +1275,7 @@ export default function DashboardPage() {
             edgeDistribution={data.edgeDistribution}
           />
         )}
-        {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} historyStats={data.historyStats} />}
+        {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} historyStats={data.historyStats} totalPnl={data.status?.portfolio?.total_pnl ?? 0} />}
         {activeTab === "models" && <ModelsTab modelScores={data.modelScores} />}
         {activeTab === "slippage" && <SlippageTab slippageData={data.slippageData} />}
         {activeTab === "health" && <HealthTab health={data.health} kpiData={data.kpiData} />}

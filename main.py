@@ -730,6 +730,15 @@ async def get_history():
         total_win_pnl = float(stats_q[5] or 0)
         total_loss_pnl = float(stats_q[6] or 0)
 
+        # Average edge from settled bets (via Analysis join)
+        avg_edge_q = (
+            db.query(func.coalesce(func.avg(Analysis.edge), 0.0))
+            .join(Bet, Bet.analysis_id == Analysis.id)
+            .filter(Bet.status.in_(settled_statuses), Analysis.edge.isnot(None))
+            .scalar()
+        )
+        avg_edge = float(avg_edge_q or 0.0)
+
         # History list: all settled + closed_early (most recent 50)
         all_closed_statuses = ["settled", "won", "lost", "closed_early"]
         settled_bets = (
@@ -782,6 +791,7 @@ async def get_history():
                 "total_win_pnl": round(total_win_pnl, 2),
                 "total_loss_pnl": round(total_loss_pnl, 2),
                 "profit_factor": profit_factor,
+                "avg_edge": round(avg_edge * 100, 2) if avg_edge else 0.0,
             },
         }
     finally:
