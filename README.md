@@ -21,7 +21,7 @@
 - **🔍 Karpathy Search** — Grid search ile strateji parametre optimizasyonu (min_edge, kelly_fraction, vs.)
 - **🧪 LLM 3-Layer Loop** — Z.AI API ile araştırma, analiz ve karar katmanları
 - **📈 Canlı API** — FastAPI + WebSocket ile anlık durum, portföy, PnL, edge dağılımı
-- **🧹 Pre-commit Pipeline** — Ruff, Black, Mypy ile otomatik kalite kontrol
+- **🧹 Pre-commit Pipeline** — Ruff + Mypy ile otomatik kalite kontrol
 
 ---
 
@@ -101,27 +101,30 @@ python -c "from database.db import init_db; init_db()"
 ### Dashboard Build
 
 ```bash
-cd dashboard
-npm install
-npx next build
-cd ..
+# Root'tan build et
+npm run build
+
+# Windows (manual copy — postbuild 'cp' çalışmaz)
+Copy-Item -Path "out\*" -Destination "dashboard\out\" -Recurse -Force
+
+# Linux/Mac
+cp -r out/* dashboard/out/
 ```
 
 ### Çalıştırma
 
 ```bash
-# Bot + API + Dashboard (hepsi bir arada)
+# Bot + API + Dashboard + Background loops (hepsi bir arada)
+python main.py bot
+
+# Sadece API + Dashboard (bot loop'ları olmadan)
 python main.py run
-
-# ASI-Evolve çalıştır
-python main.py evolve
-
-# ASI-Calibrate
-python main.py calibrate
 
 # Tek seferlik operasyonlar
 python main.py fetch    # Marketleri tara
 python main.py analyze  # Analiz yap
+python main.py bet      # Bahis yerleştir
+python main.py settle   # Settlement
 python main.py report   # Rapor
 ```
 
@@ -235,10 +238,8 @@ SIA Loop tarafından optimize edilen 8 hava modeli:
 
 ```bash
 # Ana komutlar
-python main.py run          # Bot + API + Dashboard
-python main.py evolve       # ASI-Evrim çalıştır
-python main.py backfill     # Veri backfill (--days ile)
-python main.py calibrate    # Bias kalibrasyonu
+python main.py bot          # Bot + API + Dashboard + background loops
+python main.py run          # Sadece API + Dashboard
 
 # Tek seferlik işlemler
 python main.py fetch        # Marketleri tara
@@ -247,12 +248,6 @@ python main.py analyze      # Analiz yap
 python main.py bet          # Bahis yerleştir
 python main.py settle       # Settlement
 python main.py report       # Rapor
-python main.py reset        # Sıfırla
-
-# ASIAbot (gelişmiş) CLI
-python asi_main.py run      # ASI-Evolve entegre bot
-python asi_main.py evolve   # Evrim pipeline
-python asi_main.py backfill --days 90
 ```
 
 ---
@@ -282,7 +277,7 @@ coverage report
 pre-commit run --all-files
 
 # Full pipeline
-ruff check . && black --check . && mypy . && pytest
+ruff check . && mypy . && pytest
 ```
 
 ### Test Yapısı
@@ -319,10 +314,9 @@ ASIAbot/
 ├── jobs/                # Zamanlanmış görevler (scheduler)
 ├── scrapers/            # Polymarket, Open-Meteo API clients
 ├── scripts/             # Diagnostic/utility script'ler
-├── tests/               # 305+ test
+├── tests/               # 304 test
 ├── utils/               # Kelly, slippage, probability, accounting
 ├── main.py              # Bot + API + CLI giriş noktası
-├── asi_main.py          # ASI-Evolve entegre giriş noktası
 ├── .pre-commit-config.yaml  # Pre-commit hooks
 ├── mypy.ini             # Mypy yapılandırması
 └── pyrightconfig.json   # Pyright yapılandırması
