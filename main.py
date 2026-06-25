@@ -703,10 +703,10 @@ async def get_history():
     """Get settled bet history with win/loss stats."""
     db = get_db_session()
     try:
-        closed_statuses = ["settled", "won", "lost", "closed_early"]
-
-        # Stats from ALL closed bets via SQL (fast aggregation)
         from sqlalchemy import case, func
+
+        # Settlement stats: only won+lost (closed_early is early exit, not a "closed bet")
+        settled_statuses = ["settled", "won", "lost"]
 
         stats_q = (
             db.query(
@@ -720,7 +720,7 @@ async def get_history():
                     func.sum(case((Bet.pnl <= 0, func.abs(Bet.pnl)), else_=0.0)), 0.0
                 ),
             )
-            .filter(Bet.status.in_(closed_statuses))
+            .filter(Bet.status.in_(settled_statuses))
             .one()
         )
         total_won = stats_q[1] or 0
@@ -730,10 +730,11 @@ async def get_history():
         total_win_pnl = float(stats_q[5] or 0)
         total_loss_pnl = float(stats_q[6] or 0)
 
-        # History list limited to 50 (most recent)
+        # History list: all settled + closed_early (most recent 50)
+        all_closed_statuses = ["settled", "won", "lost", "closed_early"]
         settled_bets = (
             db.query(Bet)
-            .filter(Bet.status.in_(closed_statuses))
+            .filter(Bet.status.in_(all_closed_statuses))
             .order_by(Bet.settled_at.desc(), Bet.closed_at.desc(), Bet.placed_at.desc())
             .limit(50)
             .all()

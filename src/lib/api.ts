@@ -295,9 +295,9 @@ function mapKpiData(
   const s = status.stats;
   const p = status.portfolio;
   
-  // Use historyStats for ALL win/loss metrics (includes closed_early bets for consistency)
+  // Use portfolio.total_pnl for Total PnL (realized + unrealized — matches portfolio value)
   const hs = historyStats;
-  const totalPnlValue = hs?.total_pnl ?? 0;
+  const totalPnlValue = p.total_pnl ?? 0;
   const totalRoi = hs?.overall_roi ?? 0;
   const closedWins = hs?.total_won ?? 0;
   const closedLosses = hs?.total_lost ?? 0;
