@@ -115,17 +115,23 @@ class BetPlacer:
                 )
                 return None
 
-            # Zaten bet açılmış mı?
+            # Zaten bu market'e herhangi bir bahis açılmış mı?
+            # NOT: Sadece OPENstatuses kontrol etmiyoruz — closed_early,
+            # settled, won, lost durumları da dahil. Ayni market'e
+            # tekrar bahis açilmasini engelliyoruz.
             existing = (
                 session.query(Bet)
                 .filter(
                     Bet.market_id == analysis.market_id,
-                    Bet.status.in_(self._OPEN_STATUSES),
+                    Bet.status != "rejected",
                 )
                 .first()
             )
             if existing:
-                logger.info(f"Market {market.id} already has a bet")
+                logger.info(
+                    f"Market {market.id} already has a bet "
+                    f"(status={existing.status}, id={existing.id})"
+                )
                 return None
 
             # ------------------------------------------------------------------
@@ -463,34 +469,55 @@ class BetPlacer:
         raise ValueError(f"Token ID bulunamadı: {side}")
 
     def place_all_pending(self) -> int:
-        """should_bet=True olan tüm analizler için bet aç."""
+        """should_bet=True olan tum analizler icin bet ac."""
         placed = 0
+        # Build mapping of analysis_id -> market_id + set of markets that
+        # already have bets, inside a single session.
+        aid_to_market: dict[int, str] = {}
+        markets_with_bets: set[str] = set()
+
         with get_session() as session:
             pending = (
                 session.query(Analysis).filter(Analysis.should_bet.is_(True)).all()
             )
-            analysis_ids = [a.id for a in pending]
 
-            # Dedup: skip analysis_ids that already have ANY Bet record
-            processed = set()
-            if analysis_ids:
+            # Dedup: skip market_ids that already have ANY non-rejected Bet.
+            # Previous logic deduped by analysis_id which was useless — SIA
+            # creates a new analysis (new ID) each cycle for the same market,
+            # so the old check never caught duplicates.
+            market_ids = {a.market_id for a in pending}
+            if market_ids:
                 existing_rows = (
-                    session.query(Bet.analysis_id)
-                    .filter(Bet.analysis_id.in_(analysis_ids))
+                    session.query(Bet.market_id)
+                    .filter(
+                        Bet.market_id.in_(list(market_ids)),
+                        Bet.status != "rejected",
+                    )
                     .all()
                 )
-                processed = {row[0] for row in existing_rows if row[0] is not None}
+                markets_with_bets = {
+                    row[0] for row in existing_rows if row[0] is not None
+                }
 
-        for aid in analysis_ids:
-            if aid in processed:
-                logger.debug("Analysis %d already has a bet, skipping", aid)
+            for a in pending:
+                aid_to_market[a.id] = a.market_id
+
+        for aid, mkt_id in aid_to_market.items():
+            if mkt_id in markets_with_bets:
+                logger.debug(
+                    "Market %s already has a bet, skipping analysis %d",
+                    mkt_id,
+                    aid,
+                )
                 continue
             try:
                 bet = self.place_bet(aid)
                 if bet is not None:
                     placed += 1
+                    # Track this market to skip duplicate analyses in same batch
+                    markets_with_bets.add(mkt_id)
             except Exception as e:
-                logger.error(f"Bet hatası (analysis {aid}): {e}")
+                logger.error(f"Bet hatasi (analysis {aid}): {e}")
                 continue
 
         return placed
