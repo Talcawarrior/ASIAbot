@@ -80,9 +80,9 @@ class TestUnitParsing:
         assert r is not None, "expected a result"
         value_c, low_c, high_c = r
         # 90°F → 32.22°C
-        assert (
-            abs(value_c - 32.2) < 0.2
-        ), f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
+        assert abs(value_c - 32.2) < 0.2, (
+            f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
+        )
         assert low_c is None
         assert high_c is None
 

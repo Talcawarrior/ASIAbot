@@ -4,7 +4,7 @@ import enum
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
@@ -233,6 +233,28 @@ class ModelPerformance(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# Compatibility Aliases
+Market = WeatherMarket
+
+
+class HistoricalCalibration(Base):
+    """Historical calibration records for Karpathy search and backtesting."""
+
+    __tablename__ = "historical_calibrations"
+
+    id = Column(Integer, primary_key=True)
+    city_code = Column(String, nullable=False)
+    date = Column(DateTime, nullable=False)
+    metric = Column(String, nullable=False)  # "temperature_max" or "temperature_min"
+    model = Column(String, nullable=False)  # e.g., "gfs_seamless", "ecmwf_ifs025"
+    predicted_value = Column(Float, nullable=False)
+    actual_value = Column(Float, nullable=False)
+    created_at = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
 
 
 # Compatibility Aliases

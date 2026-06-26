@@ -21,9 +21,9 @@ from config.settings import bot_config, config  # noqa: E402
 def test_fee_drag():
     """Test 1: FEE_DRAG must be 0.02."""
     assert config.FEE_DRAG == 0.02, f"FEE_DRAG={config.FEE_DRAG}, expected 0.02"
-    assert (
-        bot_config.strategy.fee_drag == 0.02
-    ), f"strategy.fee_drag={bot_config.strategy.fee_drag}, expected 0.02"
+    assert bot_config.strategy.fee_drag == 0.02, (
+        f"strategy.fee_drag={bot_config.strategy.fee_drag}, expected 0.02"
+    )
     print("✅ Test 1: FEE_DRAG = 0.02")
 
 
@@ -141,9 +141,9 @@ def test_sia_status():
     src = inspect.getsource(SIALoop.analyze_model_performance)
     assert '"won"' in src, "Missing 'won' in status filter"
     assert '"lost"' in src, "Missing 'lost' in status filter"
-    assert '"settled"' not in src.replace(
-        '"won", "lost"', ""
-    ), "'settled' should not be in status filter"
+    assert '"settled"' not in src.replace('"won", "lost"', ""), (
+        "'settled' should not be in status filter"
+    )
     print("✅ Test 4: SIALoop uses 'won'/'lost' statuses")
 
 
@@ -156,13 +156,13 @@ def test_sia_brier_input():
     src = inspect.getsource(SIALoop.analyze_model_performance)
     assert "model_probs" in src, "Missing model_probs in Brier calculation"
     # Verify Brier uses _resolve_market_outcome (market resolution), not bet.status
-    assert (
-        "_resolve_market_outcome" in src
-    ), "Brier should use market resolution outcome, not bet.status"
+    assert "_resolve_market_outcome" in src, (
+        "Brier should use market resolution outcome, not bet.status"
+    )
     # Ensure Bet.fair_value is NOT the Brier prediction input
-    assert (
-        "bet.fair_value" not in src
-    ), "Brier should not use bet.fair_value; uses per-model probs from analysis"
+    assert "bet.fair_value" not in src, (
+        "Brier should not use bet.fair_value; uses per-model probs from analysis"
+    )
     print("✅ Test 5: SIALoop uses per-model probability for Brier score")
 
 
@@ -175,9 +175,9 @@ def test_ladder_pending():
     ladder = be.create_ladder_orders(signal, 30.0)
     assert len(ladder) == 3, f"Expected 3 levels, got {len(ladder)}"
     for lvl in ladder:
-        assert (
-            lvl["status"] == "pending"
-        ), f"Level {lvl['level']} status is '{lvl['status']}', expected 'pending'"
+        assert lvl["status"] == "pending", (
+            f"Level {lvl['level']} status is '{lvl['status']}', expected 'pending'"
+        )
         assert "filled_at" in lvl, f"Level {lvl['level']} missing 'filled_at'"
     print(
         f"✅ Test 6: Ladder pending OK — {ladder[0]['price']}, {ladder[1]['price']}, {ladder[2]['price']}"

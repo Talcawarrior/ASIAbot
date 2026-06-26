@@ -1,5 +1,6 @@
 """Retry utility decorator for resilient API calls."""
 
+import asyncio
 import logging
 import time
 from functools import wraps
@@ -13,7 +14,7 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            last_exception = None
+            last_exception: Exception = RuntimeError("Unknown error")
             for attempt in range(1, max_attempts + 1):
                 try:
                     return func(*args, **kwargs)
@@ -24,7 +25,12 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                         logger.warning(
                             f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. Retrying in {wait}s..."
                         )
-                        time.sleep(wait)
+                        # Use asyncio.sleep if in async context, else time.sleep
+                        try:
+                            loop = asyncio.get_running_loop()
+                            loop.run_until_complete(asyncio.sleep(wait))
+                        except RuntimeError:
+                            time.sleep(wait)
                     else:
                         logger.error(
                             f"{func.__name__} FAILED after {max_attempts} attempts: {e}"

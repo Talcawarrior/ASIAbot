@@ -53,7 +53,7 @@
 └─────────────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       API & Dashboard                                │
-│  FastAPI (port 8092) ←── Next.js 16 Static Export                 │
+│  FastAPI (port 8091) ←── Next.js 16 Static Export                 │
 │  /api/status, /api/markets, /api/bets, /api/signals, /api/history │
 │  /api/health-check, /api/asi/weights, /api/asi/evolve             │
 │  WebSocket /ws ───→ Canlı güncellemeler                            │
@@ -129,9 +129,9 @@ python main.py report   # Rapor
 ```
 
 Bot ayağa kalktığında:
-- **API**: http://localhost:8092
-- **Dashboard**: http://localhost:8092 (Next.js)
-- **Swagger**: http://localhost:8092/docs
+- **API**: http://localhost:8091
+- **Dashboard**: http://localhost:8091 (Next.js)
+- **Swagger**: http://localhost:8091/docs
 
 ---
 
@@ -193,8 +193,8 @@ Bot ayağa kalktığında:
 | `KELLY_FRACTION` | `0.15` | Fractional Kelly katsayısı |
 | `CITY_CAP` | `4` | Şehir başına maksimum pozisyon |
 | `HOST` | `127.0.0.1` | Sunucu adresi |
-| `PORT` | `8092` | API portu |
-| `FEEDRAG` | `0.02` | Polymarket taker fee (%2) |
+| `PORT` | `8091` | API portu |
+| `FEE_DRAG` | `0.02` | Polymarket taker fee (%2) |
 
 ### LLM Yapılandırması
 

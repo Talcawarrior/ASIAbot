@@ -302,8 +302,7 @@ async def get_status():
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                "current": initial_capital
-                - exposure_db,  # net sermaye = bastaki - acik bet
+                "current": initial_capital + realized_pnl_db + unrealized_pnl_db,
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),
@@ -348,11 +347,55 @@ async def get_status():
 
 @app.get("/api/asi/weights")
 async def get_asi_weights():
-    """Retrieve current evolved weights."""
+    """Retrieve current evolved weights with model performance metrics."""
+    from database.models import ModelPerformance
+    from sqlalchemy import func
+
     weights = load_weights()
     if not weights:
         weights = config.MODEL_WEIGHTS
-    return weights
+
+    # Get latest performance metrics for each model
+    db = get_db_session()
+    try:
+        # Subquery to get latest record per model
+        latest_perf = (
+            db.query(
+                ModelPerformance.model_name,
+                func.max(ModelPerformance.recorded_at).label("max_date"),
+            )
+            .group_by(ModelPerformance.model_name)
+            .subquery()
+        )
+
+        perf_records = (
+            db.query(ModelPerformance)
+            .join(
+                latest_perf,
+                (ModelPerformance.model_name == latest_perf.c.model_name)
+                & (ModelPerformance.recorded_at == latest_perf.c.max_date),
+            )
+            .all()
+        )
+
+        perf_map = {p.model_name: p for p in perf_records}
+    finally:
+        db.close()
+
+    # Return enriched weights with performance data
+    result = {}
+    for model, weight in weights.items():
+        perf = perf_map.get(model)
+        result[model] = {
+            "weight": weight,
+            "brier_score": perf.brier_score if perf else None,
+            "accuracy": perf.accuracy if perf else None,
+            "num_predictions": perf.num_predictions if perf else 0,
+            "last_updated": perf.recorded_at.isoformat()
+            if perf and perf.recorded_at
+            else None,
+        }
+    return result
 
 
 @app.get("/api/asi/cognition")
@@ -439,7 +482,7 @@ async def run_asi_autoresearch(rounds: int = 5):
         )
         stdout, stderr = await proc.communicate()
 
-        best_sharpe = 2.014
+        best_sharpe = None
         out_str = stdout.decode()
         for line in out_str.splitlines():
             if "Best Sharpe Ratio:" in line:
@@ -453,7 +496,7 @@ async def run_asi_autoresearch(rounds: int = 5):
             "output": out_str[:1000],
         }
     except Exception as e:
-        return {"status": "error", "message": str(e), "best_sharpe": 2.014}
+        return {"status": "error", "message": str(e), "best_sharpe": None}
 
 
 # ─── Standard Endpoints ──────────────────────────────────────────────────────
@@ -705,8 +748,8 @@ async def get_history():
     try:
         from sqlalchemy import case, func
 
-        # Settlement stats: only won+lost (closed_early is early exit, not a "closed bet")
-        settled_statuses = ["settled", "won", "lost"]
+        # Settlement stats: won+lost+closed_early (all closed bets)
+        settled_statuses = ["settled", "won", "lost", "closed_early"]
 
         stats_q = (
             db.query(
@@ -764,7 +807,11 @@ async def get_history():
             close_ts = bet.settled_at or bet.closed_at
             # Get actual edge from Analysis (net edge after slippage+fee)
             analysis = bet_analyses.get(bet.analysis_id) if bet.analysis_id else None
-            edge_pct = round((analysis.edge or 0) * 100, 2) if analysis and analysis.edge else None
+            edge_pct = (
+                round((analysis.edge or 0) * 100, 2)
+                if analysis and analysis.edge
+                else None
+            )
             history.append(
                 {
                     "id": bet.id,
@@ -833,7 +880,7 @@ async def get_slippage():
         )
 
         entries = []
-        for analysis, city, bet_side, entry_price, bet_pnl, bet_status in rows:
+        for analysis, city, _bet_side, entry_price, bet_pnl, _bet_status in rows:
             # Use Analysis fields for expected values, Bet fields for actuals
             expected_price = round(float(analysis.market_implied_prob or 0), 4)
             side = analysis.recommended_side or "—"
@@ -1039,7 +1086,9 @@ async def get_health_check():
 
         # 3. Edge distribution for settled bets (consistent with /api/history avg_edge)
         settled_bet_statuses = ["won", "lost", "settled"]
-        settled_for_edge = db.query(Bet).filter(Bet.status.in_(settled_bet_statuses)).all()
+        settled_for_edge = (
+            db.query(Bet).filter(Bet.status.in_(settled_bet_statuses)).all()
+        )
 
         # Batch-load analyses for all bets (N+1 fix)
         analysis_ids = [b.analysis_id for b in settled_for_edge if b.analysis_id]
@@ -1365,6 +1414,15 @@ def run_cli():
         @asynccontextmanager
         async def bot_lifespan(app):
             logger.info("LIFESPAN STARTUP - Starting bot loops")
+            init_db()
+            state.initialize_modules()
+
+            # Ensure initial portfolio row exists in DB
+            try:
+                ensure_initial_portfolio()
+            except Exception as e:
+                logger.warning("Portfolio init warning: %s", e)
+
             state.is_running = True
             state.locked = False
             state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop())

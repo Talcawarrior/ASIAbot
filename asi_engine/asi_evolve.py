@@ -658,8 +658,9 @@ def run_asi_evolve_daily(
         _save_best_metadata(best_hyp, best_stats)
 
     # 4. Generate + evaluate candidates
-    round_num = 1 + (
-        cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0]
+    round_num = (
+        1
+        + (cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0])
     )
     accepted_count = 0
 

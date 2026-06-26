@@ -230,8 +230,8 @@ export interface TradeHistoryEntry {
 
 export interface ModelScore {
   name: string;
-  brierScore: number;
-  accuracy: number;
+  brierScore: number | null;
+  accuracy: number | null;
   weight: number;
   trend: "up" | "down" | "stable";
   sampleCount: number;
@@ -568,7 +568,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
   });
 }
 
-function mapModelScores(weights: Record<string, number>): ModelScore[] {
+function mapModelScores(weights: Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>): ModelScore[] {
   const modelNames: Record<string, string> = {
     gfs_seamless: "GFS Seamless",
     ecmwf_ifs04: "ECMWF IFS04",
@@ -582,15 +582,23 @@ function mapModelScores(weights: Record<string, number>): ModelScore[] {
 
   return Object.entries(weights)
     .filter(([k]) => !k.startsWith("_"))
-    .sort((a, b) => b[1] - a[1])
-    .map(([key, weight]) => ({
-      name: modelNames[key] ?? key,
-      brierScore: Math.round((0.20 - weight * 0.5) * 1000) / 1000,
-      accuracy: Math.round((65 + weight * 100) * 10) / 10,
-      weight: Math.round(weight * 100),
-      trend: "stable" as const,
-      sampleCount: 0,
-    }));
+    .sort((a, b) => {
+      const wA = typeof a[1] === "object" ? a[1].weight : a[1];
+      const wB = typeof b[1] === "object" ? b[1].weight : b[1];
+      return wB - wA;
+    })
+    .map(([key, val]) => {
+      const w = typeof val === "object" ? val.weight : val;
+      const perf = typeof val === "object" ? val : null;
+      return {
+        name: modelNames[key] ?? key,
+        brierScore: perf?.brier_score ?? null,
+        accuracy: perf?.accuracy ?? null,
+        weight: Math.round(w * 100),
+        trend: "stable" as const,
+        sampleCount: perf?.num_predictions ?? 0,
+      };
+    });
 }
 
 // ---- Custom Hook ----
@@ -601,7 +609,7 @@ export function useApiData() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [weights, setWeights] = useState<Record<string, number>>({});
+  const [weights, setWeights] = useState<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>({});
   const [slippageData, setSlippageData] = useState<SlippageEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -633,7 +641,7 @@ export function useApiData() {
         fetchJson<StatusResponse>("/api/status", controller.signal),
         fetchJson<{ signals: Signal[]; count: number }>("/api/signals", controller.signal),
         fetchJson<{ history: HistoryEntry[]; stats: HistoryStats }>("/api/history", controller.signal),
-        fetchJson<Record<string, number>>("/api/asi/weights", controller.signal),
+        fetchJson<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>("/api/asi/weights", controller.signal),
         fetchJson<{ slippage: SlippageEntry[] }>("/api/slippage", controller.signal),
       ]);
 

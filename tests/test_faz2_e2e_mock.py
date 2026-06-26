@@ -129,9 +129,9 @@ def test_analysis_via_metric_map():
         # Restore
         settings.bot_config.strategy.min_edge = orig_min_edge
 
-        assert (
-            analysis_instance is not None
-        ), "❌ Analysis is NULL! METRIC_MAP not working."
+        assert analysis_instance is not None, (
+            "❌ Analysis is NULL! METRIC_MAP not working."
+        )
 
         # Re-query from DB to avoid DetachedInstanceError
         analysis = (
@@ -148,15 +148,15 @@ def test_analysis_via_metric_map():
         print(f"    num_sources={analysis.num_sources}")
 
         assert analysis.estimated_probability > 0, "❌ probability is 0!"
-        assert analysis.num_sources == len(
-            forecasts_data
-        ), f"❌ Expected {len(forecasts_data)} sources, got {analysis.num_sources}"
-        assert (
-            analysis.edge > 0
-        ), "❌ edge should be positive (forecasts > threshold 30C)"
-        assert (
-            analysis.should_bet is True
-        ), f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
+        assert analysis.num_sources == len(forecasts_data), (
+            f"❌ Expected {len(forecasts_data)} sources, got {analysis.num_sources}"
+        )
+        assert analysis.edge > 0, (
+            "❌ edge should be positive (forecasts > threshold 30C)"
+        )
+        assert analysis.should_bet is True, (
+            f"❌ should_bet={analysis.should_bet} — METRIC_MAP may not be working"
+        )
         assert analysis.recommended_amount > 0, "❌ recommended_amount is 0!"
 
         print("\n  ✅ TEST 1 PASSED: METRIC_MAP works correctly")
@@ -181,9 +181,9 @@ def test_analysis_via_metric_map():
         print(f"    price={bet.price:.4f}")
         print(f"    shares={bet.shares:.4f}")
 
-        assert (
-            bet.status == "placed"
-        ), f"❌ Bet status is '{bet.status}', expected 'placed'"
+        assert bet.status == "placed", (
+            f"❌ Bet status is '{bet.status}', expected 'placed'"
+        )
         assert bet.amount > 0, "❌ Bet amount is 0!"
         assert bet.price > 0, "❌ Bet price is 0!"
 
@@ -212,12 +212,12 @@ def test_scheduler_uses_calculator():
     import jobs.scheduler as scheduler
 
     src = inspect.getsource(scheduler.run_analyze)
-    assert (
-        "from engine.calculator import Calculator" in src
-    ), "❌ scheduler.run_analyze does not import Calculator!"
-    assert (
-        "calc.analyze_market" in src
-    ), "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
+    assert "from engine.calculator import Calculator" in src, (
+        "❌ scheduler.run_analyze does not import Calculator!"
+    )
+    assert "calc.analyze_market" in src, (
+        "❌ scheduler.run_analyze does not call Calculator.analyze_market!"
+    )
     print("✅ TEST 4 PASSED: scheduler.run_analyze uses Calculator.analyze_market()")
 
 

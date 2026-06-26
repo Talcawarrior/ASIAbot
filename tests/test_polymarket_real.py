@@ -169,9 +169,7 @@ class TestParseMarket:
         assert result["target_date"].month == 6
         assert result["target_date"].day == 9
 
-    def test_parse_handles_missing_tokens_uses_lastTradePrice(
-        self, scraper
-    ):  # noqa: N802
+    def test_parse_handles_missing_tokens_uses_lastTradePrice(self, scraper):  # noqa: N802
         raw = {
             "id": "test-002",
             "title": "Highest temperature in Miami above 90F on June 9, 2026?",

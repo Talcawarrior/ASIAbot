@@ -162,9 +162,9 @@ def test_should_bet_rejects_low_edge():
         print(
             f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}"
         )
-        assert (
-            r["should_bet"] is False
-        ), f"Low edge ({r['edge']:.4f}) should be rejected!"
+        assert r["should_bet"] is False, (
+            f"Low edge ({r['edge']:.4f}) should be rejected!"
+        )
         print("PASS: low edge rejected")
     finally:
         bot_config.strategy.min_edge = orig_min_edge
@@ -181,9 +181,9 @@ def test_should_bet_accepts_high_edge():
 
     r = _analyze_and_get("test-m1")
     print(f"  edge={r['edge']:.4f}, amount=, should_bet={r['should_bet']}")
-    assert (
-        r["should_bet"] is True
-    ), f"High edge ({r['edge']:.4f}) should be accepted! reason={r['reason']}"
+    assert r["should_bet"] is True, (
+        f"High edge ({r['edge']:.4f}) should be accepted! reason={r['reason']}"
+    )
     assert r["recommended_amount"] >= 5.0, "Amount too low: "
     print("PASS: high edge accepted")
 
@@ -278,9 +278,9 @@ def test_ev_positive_check():
     print(
         f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}"
     )
-    assert (
-        r["should_bet"] is False
-    ), f"Zero edge (edge={r['edge']:.4f}) should be rejected!"
+    assert r["should_bet"] is False, (
+        f"Zero edge (edge={r['edge']:.4f}) should be rejected!"
+    )
     print("PASS: zero edge rejected")
 
 

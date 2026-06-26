@@ -56,9 +56,9 @@ def test_low_is_complement():
                 mean, std=2.0, threshold=threshold, market_type="LOW"
             )
             total = p_high + p_low
-            assert (
-                abs(total - 1.0) < 1e-9
-            ), f"mean={mean}, threshold={threshold}: P_HIGH={p_high}, P_LOW={p_low}, sum={total}"
+            assert abs(total - 1.0) < 1e-9, (
+                f"mean={mean}, threshold={threshold}: P_HIGH={p_high}, P_LOW={p_low}, sum={total}"
+            )
 
 
 # ── 3. RANGE bucket probabilities ────────────────────────────────────────────
@@ -150,9 +150,9 @@ def test_low_market_signal_direction():
             kelly_frac = 0.0
             recommended_side = None
 
-    assert (
-        recommended_side == "YES"
-    ), f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
+    assert recommended_side == "YES", (
+        f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
+    )
     assert kelly_frac > 0, "Kelly fraction should be > 0 for positive-edge LOW"
 
 

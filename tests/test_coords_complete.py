@@ -16,9 +16,9 @@ def test_no_secondary_coord_dicts():
     """No other module should define its own coords dict."""
     from scrapers.meteo import MeteoFetcher
 
-    assert not hasattr(
-        MeteoFetcher, "CITY_COORDS"
-    ), "MeteoFetcher still has CITY_COORDS"
+    assert not hasattr(MeteoFetcher, "CITY_COORDS"), (
+        "MeteoFetcher still has CITY_COORDS"
+    )
 
     import inspect
 

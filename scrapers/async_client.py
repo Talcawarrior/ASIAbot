@@ -294,7 +294,7 @@ class AsyncHttpClient:
         # aiohttp path: run all pending in one event-loop iteration.
         ordered = [t for _, t in pending]
         results = asyncio.run(self._afetch(ordered))
-        for (idx, (url, params, host)), value in zip(pending, results):
+        for (idx, (url, params, _host)), value in zip(pending, results):
             out[idx] = value
             _cache_set(_cache_key(url, params), value)
         return out

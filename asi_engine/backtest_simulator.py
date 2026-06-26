@@ -56,7 +56,7 @@ class BacktestSimulator:
             # Initialize a virtual bankroll starting at $10000
             bankroll = 10000.0
 
-            for bet, analysis, market in settled_records:
+            for _bet, analysis, market in settled_records:
                 if not analysis or not analysis.model_predictions:
                     continue
 
@@ -245,7 +245,7 @@ class BacktestSimulator:
         # the YES/NO ratio close to 50/50 over the long run.
         strike_grid = [round(0.5 * k, 1) for k in range(-20, 80)]  # -10.0 .. +39.5
 
-        for city_code, city_name, date_str, metric, actual_val in groups:
+        for city_code, _city_name, date_str, metric, actual_val in groups:
             # Query all model predictions for this specific group
             cursor.execute(
                 """

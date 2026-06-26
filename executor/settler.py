@@ -119,9 +119,7 @@ class SettlementEngine:
 
     # ── Single-market settlement ───────────────────────────────────────────
 
-    def _settle_market(
-        self, session, market
-    ) -> dict | None:  # pylint: disable=too-many-locals
+    def _settle_market(self, session, market) -> dict | None:  # pylint: disable=too-many-locals
         """Settle a single market via Gamma API resolution.
 
         Returns ``{"won": bool, "pnl": float}`` on success,

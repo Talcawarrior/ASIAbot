@@ -229,12 +229,12 @@ class TestSIAReal:
             brier_a = perf["model_a"]["brier_score"]
             brier_b = perf["model_b"]["brier_score"]
 
-            assert (
-                brier_a < brier_b
-            ), f"model_a Brier ({brier_a}) should be < model_b Brier ({brier_b})"
-            assert (
-                brier_b - brier_a > 0.05
-            ), f"Brier diff too small: {brier_b} - {brier_a} = {brier_b - brier_a}"
+            assert brier_a < brier_b, (
+                f"model_a Brier ({brier_a}) should be < model_b Brier ({brier_b})"
+            )
+            assert brier_b - brier_a > 0.05, (
+                f"Brier diff too small: {brier_b} - {brier_a} = {brier_b - brier_a}"
+            )
             assert perf["model_a"]["num_predictions"] >= 20
             assert perf["model_b"]["num_predictions"] >= 20
         finally:
@@ -268,9 +268,9 @@ class TestSIAReal:
             weight_b = new_weights.get("model_b", 0.0)
             weight_c = new_weights.get("model_c", 0.0)
 
-            assert (
-                weight_a > weight_b
-            ), f"model_a weight ({weight_a}) should > model_b weight ({weight_b})"
+            assert weight_a > weight_b, (
+                f"model_a weight ({weight_a}) should > model_b weight ({weight_b})"
+            )
             total = weight_a + weight_b + weight_c
             assert abs(total - 1.0) < 0.001, f"Weights sum to {total}, expected ~1.0"
         finally:
@@ -304,9 +304,9 @@ class TestSIAReal:
             perf = sia.analyze_model_performance(days=365)
 
             for model_name in original:
-                assert perf[model_name][
-                    "frozen"
-                ], f"{model_name} should be frozen with <10 predictions"
+                assert perf[model_name]["frozen"], (
+                    f"{model_name} should be frozen with <10 predictions"
+                )
                 assert perf[model_name]["num_predictions"] == 1
 
             with (
@@ -406,15 +406,15 @@ class TestSIAReal:
             # model_a: P(YES)=0.9 vs outcome YES=1.0 → Brier = (0.9-1.0)² = 0.01
             brier_a = perf["model_a"]["brier_score"]
             expected_a = 0.01
-            assert (
-                abs(brier_a - expected_a) < 0.005
-            ), f"model_a Brier={brier_a}, expected ~{expected_a} (P(YES)=0.9 vs outcome=YES=1.0)"
+            assert abs(brier_a - expected_a) < 0.005, (
+                f"model_a Brier={brier_a}, expected ~{expected_a} (P(YES)=0.9 vs outcome=YES=1.0)"
+            )
 
             # model_b: P(YES)=0.55 vs outcome YES=1.0 → Brier = (0.55-1.0)² = 0.2025
             brier_b = perf["model_b"]["brier_score"]
             expected_b = 0.2025
-            assert (
-                abs(brier_b - expected_b) < 0.01
-            ), f"model_b Brier={brier_b}, expected ~{expected_b}"
+            assert abs(brier_b - expected_b) < 0.01, (
+                f"model_b Brier={brier_b}, expected ~{expected_b}"
+            )
         finally:
             cleanup()

@@ -55,22 +55,22 @@ def test_ensure_initial_portfolio_creates_row(fresh_db):
     # Verify portfolio was created
     pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
     assert pf is not None, "Portfolio(id=1) should exist after ensure_initial_portfolio"
-    assert (
-        pf.cash_balance == config.INITIAL_PORTFOLIO
-    ), f"cash_balance should be {config.INITIAL_PORTFOLIO}, got {pf.cash_balance}"
-    assert (
-        pf.current_value == config.INITIAL_PORTFOLIO
-    ), f"current_value should be {config.INITIAL_PORTFOLIO}, got {pf.current_value}"
-    assert (
-        pf.total_value == config.INITIAL_PORTFOLIO
-    ), f"total_value should be {config.INITIAL_PORTFOLIO}, got {pf.total_value}"
-    assert (
-        pf.initial_value == config.INITIAL_PORTFOLIO
-    ), f"initial_value should be {config.INITIAL_PORTFOLIO}, got {pf.initial_value}"
+    assert pf.cash_balance == config.INITIAL_PORTFOLIO, (
+        f"cash_balance should be {config.INITIAL_PORTFOLIO}, got {pf.cash_balance}"
+    )
+    assert pf.current_value == config.INITIAL_PORTFOLIO, (
+        f"current_value should be {config.INITIAL_PORTFOLIO}, got {pf.current_value}"
+    )
+    assert pf.total_value == config.INITIAL_PORTFOLIO, (
+        f"total_value should be {config.INITIAL_PORTFOLIO}, got {pf.total_value}"
+    )
+    assert pf.initial_value == config.INITIAL_PORTFOLIO, (
+        f"initial_value should be {config.INITIAL_PORTFOLIO}, got {pf.initial_value}"
+    )
     assert pf.daily_pnl == 0.0, f"daily_pnl should be 0.0, got {pf.daily_pnl}"
-    assert (
-        pf.total_realized_pnl == 0.0
-    ), f"total_realized_pnl should be 0.0, got {pf.total_realized_pnl}"
+    assert pf.total_realized_pnl == 0.0, (
+        f"total_realized_pnl should be 0.0, got {pf.total_realized_pnl}"
+    )
     assert pf.total_won == 0, f"total_won should be 0, got {pf.total_won}"
     assert pf.total_lost == 0, f"total_lost should be 0, got {pf.total_lost}"
 

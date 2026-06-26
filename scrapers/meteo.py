@@ -1,5 +1,6 @@
 """Meteo forecast scraper module querying Open-Meteo and WeatherAPI."""
 
+import asyncio
 import logging
 import threading
 import time
@@ -76,7 +77,12 @@ def _throttle(host: str) -> None:
             if wait <= 0:
                 _LAST_CALL_AT[host] = now
                 return
-        time.sleep(wait)
+        # Use asyncio.sleep if running in an event loop, else time.sleep
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_until_complete(asyncio.sleep(wait))
+        except RuntimeError:
+            time.sleep(wait)
 
 
 class MeteoFetcher:
@@ -395,3 +401,12 @@ class MeteoFetcher:
                 kwargs["metric"],
             )
         return 0
+
+    def fetch_for_market(
+        self, market_id: str, city: str, target_date: datetime, metric: str
+    ) -> int:
+        """Backward-compat shim: fetch weather for a single market.
+
+        Delegates to :meth:`fetch_for_markets` with a single-element list.
+        """
+        return self.fetch_for_markets([market_id], city, target_date, metric)

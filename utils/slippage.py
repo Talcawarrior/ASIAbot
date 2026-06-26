@@ -62,20 +62,22 @@ def _vwap_from_asks(
     """
     cumulative = 0.0
     vwap_num = 0.0
-    filled = 0.0
+    filled_shares = 0.0
     for level in asks:
         price = float(level.get("price", 0))
-        cost = price * float(level.get("size", 0))
+        size = float(level.get("size", 0))
+        cost = price * size
         if cumulative + cost >= stake_usd:
             needed = stake_usd - cumulative
-            vwap_num += price * (needed / price if price > 0 else 0)
-            filled += needed
+            shares_needed = needed / price if price > 0 else 0
+            vwap_num += price * shares_needed
+            filled_shares += shares_needed
             cumulative = stake_usd
             break
         cumulative += cost
         vwap_num += cost
-        filled += cost
-    fill_vwap = vwap_num / filled if filled > 0 else fallback_price
+        filled_shares += size
+    fill_vwap = vwap_num / filled_shares if filled_shares > 0 else fallback_price
     return fill_vwap, cumulative
 
 
@@ -193,6 +195,7 @@ def adjust_edge_for_costs(
     entry_price: float,
     *,
     include_fee: bool = True,
+    bet_amount_usd: float | None = None,
 ) -> float:
     """Subtract fee drag, gas cost, and estimated slippage from raw edge.
 
@@ -206,8 +209,10 @@ def adjust_edge_for_costs(
     """
     est = estimate_slippage(entry_price)
     cost = est.slippage_pct
-    # Gas cost as edge percentage (approx for a $30 bet: $0.10 / $30 ≈ 0.33 %)
-    gas_edge_pct = GAS_COST_USD / 30.0
+    # Gas cost as edge percentage: $0.10 / bet_amount_usd
+    # If bet_amount_usd not provided, fall back to $30 (legacy behavior)
+    gas_denominator = bet_amount_usd if bet_amount_usd and bet_amount_usd > 0 else 30.0
+    gas_edge_pct = GAS_COST_USD / gas_denominator
     cost += gas_edge_pct
     if include_fee:
         # Fee drag: Polymarket charges 2% on PROFIT, not on total payout.

@@ -52,9 +52,9 @@ def test_no_literal_open_status_tuples():
             if ('"active", "open", "placed", "pending"') in content:
                 violations.append(rel)
 
-    assert (
-        not violations
-    ), f"Literal open-status tuples found in: {violations}. Replace with OPEN_BET_STATUSES from database.models."
+    assert not violations, (
+        f"Literal open-status tuples found in: {violations}. Replace with OPEN_BET_STATUSES from database.models."
+    )
 
 
 # ── No mojibake ────────────────────────────────────────────────────────────

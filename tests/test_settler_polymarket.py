@@ -287,9 +287,9 @@ class TestSettlementPolymarket:
                 # Bet statuses unchanged
                 bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
-                    assert b.status in (
-                        "placed",
-                    ), f"Bet {b.id} status changed: {b.status}"
+                    assert b.status in ("placed",), (
+                        f"Bet {b.id} status changed: {b.status}"
+                    )
 
                 # Market status unchanged
                 mkt = (
@@ -395,9 +395,9 @@ class TestSettlementPolymarket:
 
                 # Cash should equal initial + (payout - fee) — loss only affects
                 # total_lost counter, no cash change (stake already deducted at open).
-                assert (
-                    pf_db.cash_balance == 1000.0 + payout - fee
-                ), f"cash={pf_db.cash_balance} != {1000.0 + payout - fee}"
+                assert pf_db.cash_balance == 1000.0 + payout - fee, (
+                    f"cash={pf_db.cash_balance} != {1000.0 + payout - fee}"
+                )
 
                 expected_total = round(win_pnl + loss_pnl, 2)
                 assert pf_db.total_realized_pnl == pytest.approx(

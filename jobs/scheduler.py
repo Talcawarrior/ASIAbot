@@ -343,6 +343,15 @@ def run_risk_management():
                 portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
                     portfolio.total_value = round(portfolio.cash_balance or 0.0, 2)
+                    portfolio.total_realized_pnl = round(
+                        (portfolio.total_realized_pnl or 0.0) + realized, 2
+                    )
+                    portfolio.total_won = (portfolio.total_won or 0) + (
+                        1 if realized > 0 else 0
+                    )
+                    portfolio.total_lost = (portfolio.total_lost or 0) + (
+                        1 if realized <= 0 else 0
+                    )
                     portfolio.last_updated = datetime.now(timezone.utc)
 
                 session.add(bet)

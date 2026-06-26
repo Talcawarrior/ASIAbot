@@ -108,9 +108,9 @@ def test_karpathy_search_finds_positive_roi_candidate():
     # should beat break-even. If this fails consistently, the search
     # space is too narrow.
     positive_roi = [r for r in leaderboard if r["roi"] > 0]
-    assert (
-        len(positive_roi) > 0
-    ), "No candidate had positive ROI — the search space is broken."
+    assert len(positive_roi) > 0, (
+        "No candidate had positive ROI — the search space is broken."
+    )
 
 
 def test_save_best_to_disk_writes_strategy_params():

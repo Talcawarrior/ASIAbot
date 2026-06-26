@@ -63,9 +63,9 @@ def _load_json(path: str) -> dict[str, Any] | None:
         return None
 
 
-def find_global_best() -> (
-    tuple[dict[str, Any] | None, dict[str, float] | None, str | None]
-):
+def find_global_best() -> tuple[
+    dict[str, Any] | None, dict[str, float] | None, str | None
+]:
     """Find the best hypothesis across all 3 layers.
 
     Returns (hypothesis_dict, stats_dict, source_layer_name).

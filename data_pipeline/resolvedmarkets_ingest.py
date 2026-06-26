@@ -300,7 +300,7 @@ class ResolvedMarketsClient:
     ) -> Iterator[pd.DataFrame]:
         """Iterate over ALL historical markets, page by page."""
         cursor = ""
-        for page in range(max_pages):
+        for _page in range(max_pages):
             df, cursor = self.list_historical_markets(category=category, cursor=cursor)
             if df.empty:
                 break
@@ -378,7 +378,7 @@ class ResolvedMarketsClient:
     ) -> Iterator[pd.DataFrame]:
         """Iterate over ALL snapshots for a market, page by page."""
         cursor = ""
-        for page in range(max_pages):
+        for _page in range(max_pages):
             df, cursor = self.get_market_snapshots(
                 condition_id,
                 start=start,

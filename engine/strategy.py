@@ -38,10 +38,11 @@ class SimpleSignal:
     edge: float = 0.0
     probability: float = 0.5
     bet_size: float = 0.0
-    ladder_orders: list = []
+    ladder_orders: list = None  # type: ignore[assignment]
     side: str = "YES"
 
     def __init__(self, **kwargs):
+        self.ladder_orders = []
         for k, v in kwargs.items():
             setattr(self, k, v)
 
@@ -268,9 +269,7 @@ class RiskManager:
 
             return RiskConfig()
 
-    def check_stop_loss(
-        self, bet, current_price: float, market=None
-    ) -> tuple:  # pylint: disable=unused-argument
+    def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
         """Stop-loss: pozisyon %stop_loss_pct'den fazla zarardaysa kapat.
 
         PnL hesaplaması: (current_price - entry_price) / entry_price
@@ -286,9 +285,7 @@ class RiskManager:
             return True, f"stop_loss: {loss_pct:.1%}"
         return False, ""
 
-    def check_take_profit(
-        self, bet, current_price: float, market=None
-    ) -> tuple:  # pylint: disable=unused-argument
+    def check_take_profit(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
         """Take-profit: pozisyon %take_profit_pct'den fazla kardaysa realize et."""
         cfg = self._get_risk_config()
         raw = bet.entry_price if bet.entry_price is not None else bet.price
@@ -303,10 +300,10 @@ class RiskManager:
     def check_time_decay(self, bet, current_price: float, market) -> tuple:
         """Time decay: settlement'a <time_decay_hours kala ve zarardaysa kapat."""
         cfg = self._get_risk_config()
-        if not market or not hasattr(market, "resolution_date"):
+        if not market or not hasattr(market, "target_date"):
             return False, ""
         try:
-            resolution = market.resolution_date
+            resolution = market.target_date
             if not resolution:
                 return False, ""
             # Naive datetime'leri timezone-aware yap

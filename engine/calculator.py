@@ -274,8 +274,19 @@ class Calculator:
             except (json.JSONDecodeError, TypeError, AttributeError):
                 pass
 
+            # Preliminary bet amount for gas cost calculation (using raw edge)
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            bankroll = (
+                portfolio.total_value if portfolio and portfolio.total_value else 1000.0
+            )
+            prelim_kelly = min(
+                kelly_frac * bankroll, bot_config.strategy.max_bet_amount
+            )
+
             net_edge = (
-                adjust_edge_for_costs(raw_edge, entry_price_for_cost)
+                adjust_edge_for_costs(
+                    raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly
+                )
                 if recommended_side
                 else 0.0
             )
@@ -283,11 +294,7 @@ class Calculator:
                 entry_price_for_cost, condition_id=condition_id
             )
 
-            # Bet miktarı — gerçek portföyden oku
-            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            bankroll = (
-                portfolio.total_value if portfolio and portfolio.total_value else 1000.0
-            )
+            # Bet miktarı — gerçek portföyden oku (using net_edge now)
             raw_kelly_amount = min(
                 kelly_frac * bankroll, bot_config.strategy.max_bet_amount
             )
