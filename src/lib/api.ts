@@ -520,7 +520,7 @@ function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
 
 function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
   return history.map((h) => {
-    const placedDate = h.placed_at ? new Date(h.settled_at ?? h.placed_at) : new Date();
+    const placedDate = h.placed_at ? new Date(h.placed_at) : new Date();
     const timestamp = placedDate.toLocaleDateString("tr-TR", {
       day: "numeric",
       month: "short",
