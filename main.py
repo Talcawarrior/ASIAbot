@@ -748,8 +748,8 @@ async def get_history():
     try:
         from sqlalchemy import case, func
 
-        # Settlement stats: won+lost+closed_early (all closed bets)
-        settled_statuses = ["settled", "won", "lost", "closed_early"]
+        # True settlement stats: only won+lost+settled (Polymarket resolved)
+        real_settled_statuses = ["settled", "won", "lost"]
 
         stats_q = (
             db.query(
@@ -763,7 +763,7 @@ async def get_history():
                     func.sum(case((Bet.pnl <= 0, func.abs(Bet.pnl)), else_=0.0)), 0.0
                 ),
             )
-            .filter(Bet.status.in_(settled_statuses))
+            .filter(Bet.status.in_(real_settled_statuses))
             .one()
         )
         total_won = stats_q[1] or 0
@@ -773,11 +773,24 @@ async def get_history():
         total_win_pnl = float(stats_q[5] or 0)
         total_loss_pnl = float(stats_q[6] or 0)
 
+        # closed_early count and PnL (separate category)
+        ce_q = (
+            db.query(
+                func.count(Bet.id),
+                func.coalesce(func.sum(Bet.amount), 0.0),
+                func.coalesce(func.sum(Bet.pnl), 0.0),
+            )
+            .filter(Bet.status == "closed_early")
+            .one()
+        )
+        total_closed_early = ce_q[0] or 0
+        ce_pnl = float(ce_q[2] or 0)
+
         # Average edge from settled bets (via Analysis join)
         avg_edge_q = (
             db.query(func.coalesce(func.avg(Analysis.edge), 0.0))
             .join(Bet, Bet.analysis_id == Analysis.id)
-            .filter(Bet.status.in_(settled_statuses), Analysis.edge.isnot(None))
+            .filter(Bet.status.in_(real_settled_statuses), Analysis.edge.isnot(None))
             .scalar()
         )
         avg_edge = float(avg_edge_q or 0.0)
@@ -843,6 +856,8 @@ async def get_history():
             "stats": {
                 "total_won": total_won,
                 "total_lost": total_lost,
+                "total_closed_early": total_closed_early,
+                "closed_early_pnl": round(ce_pnl, 2),
                 "win_rate": round(win_rate, 2),
                 "overall_roi": round(overall_roi, 2),
                 "total_stake": round(total_stake_all, 2),
