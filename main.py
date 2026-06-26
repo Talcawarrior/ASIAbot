@@ -748,8 +748,10 @@ async def get_history():
     try:
         from sqlalchemy import case, func
 
-        # True settlement stats: only won+lost+settled (Polymarket resolved)
-        real_settled_statuses = ["settled", "won", "lost"]
+        # True settlement stats: won+lost+settled+closed_early
+        # closed_early bets are real exits — their PnL is realized cash.
+        # Excluding them from stats gives a misleadingly small picture.
+        real_settled_statuses = ["settled", "won", "lost", "closed_early"]
 
         stats_q = (
             db.query(
