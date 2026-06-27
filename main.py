@@ -801,7 +801,7 @@ async def get_history():
         )
         avg_edge = float(avg_edge_q or 0.0)
 
-        # History list: all settled + closed_early (most recent 100)
+        # History list: all settled + closed_early (most recent 300)
         all_closed_statuses = ["settled", "won", "lost", "closed_early"]
         # Use coalesce(settled_at, closed_at) for correct ordering
         close_date = func.coalesce(Bet.settled_at, Bet.closed_at)
@@ -809,7 +809,7 @@ async def get_history():
             db.query(Bet)
             .filter(Bet.status.in_(all_closed_statuses))
             .order_by(close_date.desc(), Bet.placed_at.desc())
-            .limit(100)
+            .limit(300)
             .all()
         )
 
@@ -1196,6 +1196,31 @@ async def get_health_check():
             else 0
         )
 
+        # 4b. Exit type breakdown for wins/losses (donut charts)
+        exit_type_map = {
+            "take_profit": "TP",
+            "stop_loss": "SL",
+            "trailing_stop": "TS",
+            "time_decay": "TD",
+        }
+        wins_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
+        losses_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
+        for b in settled_all:
+            is_win = b.pnl and b.pnl > 0
+            if b.status == "closed_early" and b.close_reason:
+                cr = b.close_reason.lower()
+                code = "ST"
+                for prefix, c in exit_type_map.items():
+                    if cr.startswith(prefix):
+                        code = c
+                        break
+            else:
+                code = "ST"
+            if is_win:
+                wins_by_exit[code] = wins_by_exit.get(code, 0) + 1
+            else:
+                losses_by_exit[code] = losses_by_exit.get(code, 0) + 1
+
         # 5. Red Flags
         red_flags = []
 
@@ -1340,6 +1365,8 @@ async def get_health_check():
                 "total_stake": round(total_stake_all_health, 2),
                 "roi_pct": round(roi_all, 2),
                 "avg_net_edge_pct": round(avg_net_edge, 2),
+                "wins_by_exit": wins_by_exit,
+                "losses_by_exit": losses_by_exit,
             },
             "red_flags": red_flags,
             "daily_pnl_timeline": daily_pnl,

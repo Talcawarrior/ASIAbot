@@ -139,6 +139,8 @@ export interface HealthResponse {
     total_stake: number;
     roi_pct: number;
     avg_net_edge_pct: number;
+    wins_by_exit: Record<string, number>;
+    losses_by_exit: Record<string, number>;
   };
   red_flags: Array<{
     severity: "critical" | "warning" | "info";

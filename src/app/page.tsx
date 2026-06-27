@@ -927,6 +927,64 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                 </div>
               ))}
             </div>
+
+            {/* Kazanan/Kaybeden Exit Type Donut Charts */}
+            {(() => {
+              const exitColors: Record<string, string> = { TP: "#16A34A", SL: "#DC2626", TS: "#D97706", TD: "#7C3AED", ST: "#6B7280" };
+              const exitLabels: Record<string, string> = { TP: "Take Profit", SL: "Stop Loss", TS: "Trailing Stop", TD: "Time Decay", ST: "Settlement" };
+
+              function makePieData(src: Record<string, number>) {
+                return Object.entries(src)
+                  .filter(([, v]) => v > 0)
+                  .map(([k, v]) => ({ name: exitLabels[k] || k, value: v, color: exitColors[k] || "#999" }));
+              }
+
+              const winData = makePieData(h.summary_all.wins_by_exit || {});
+              const lossData = makePieData(h.summary_all.losses_by_exit || {});
+              const winTotal = winData.reduce((s, d) => s + d.value, 0);
+              const lossTotal = lossData.reduce((s, d) => s + d.value, 0);
+
+              function DonutChart({ data, total, title, titleColor }: { data: { name: string; value: number; color: string }[]; total: number; title: string; titleColor: string }) {
+                if (total === 0) return null;
+                return (
+                  <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>{title}</p>
+                    <div className="flex items-center gap-3">
+                      <div className="shrink-0">
+                        <PieChart width={110} height={110}>
+                          <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={48} paddingAngle={2} dataKey="value" strokeWidth={0}>
+                            {data.map((entry, i) => (
+                              <Cell key={i} fill={entry.color} />
+                            ))}
+                          </Pie>
+                        </PieChart>
+                      </div>
+                      <div className="flex-1 space-y-1">
+                        {data.map((d) => (
+                          <div key={d.name} className="flex items-center justify-between text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                              <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
+                              <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{d.value}</span>
+                              <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  <DonutChart data={winData} total={winTotal} title="Kazanan Dağılımı" titleColor="#16A34A" />
+                  <DonutChart data={lossData} total={lossTotal} title="Kaybeden Dağılımı" titleColor={RED} />
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
 
