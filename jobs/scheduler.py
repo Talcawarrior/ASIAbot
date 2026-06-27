@@ -184,7 +184,7 @@ def run_update_prices():
         if portfolio:
             realized_pnl_total = (
                 session.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-                .filter(Bet.status.in_(("won", "lost")))
+                .filter(Bet.status.in_(("won", "lost", "settled", "closed_early")))
                 .scalar()
             ) or 0.0
             open_exposure = (

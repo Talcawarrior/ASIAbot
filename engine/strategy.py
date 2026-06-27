@@ -1165,28 +1165,22 @@ class SIALoop:
             # --- 2. Strategy Parameter Optimization (Financial SIA) ---
             # Aggregate overall stats for the feedback agent
             # Include closed_early — these are real exits with real PnL
-            win_count = (
-                db.query(Bet)
-                .filter(
-                    Bet.status.in_(["won", "closed_early"]),
-                    Bet.pnl > 0,
-                )
-                .count()
+
+            _closed_statuses = ("won", "lost", "settled", "closed_early")
+
+            all_closed = (
+                db.query(Bet.pnl, Bet.amount)
+                .filter(Bet.status.in_(_closed_statuses))
+                .all()
             )
-            loss_count = (
-                db.query(Bet)
-                .filter(
-                    Bet.status.in_(["lost", "closed_early"]),
-                    Bet.pnl <= 0,
-                )
-                .count()
-            )
+            win_count = sum(1 for b in all_closed if (b.pnl or 0) > 0)
+            loss_count = sum(1 for b in all_closed if (b.pnl or 0) <= 0)
             total = win_count + loss_count
 
-            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
-            initial = getattr(portfolio, "initial_value", 1000.0)
-            current_val = getattr(portfolio, "total_value", 1000.0)
-            roi = ((current_val - initial) / initial) * 100 if initial > 0 else 0
+            # ROI = realized PnL / total stake (not portfolio.total_value)
+            total_realized = sum(b.pnl or 0.0 for b in all_closed)
+            total_stake = sum(b.amount or 0.0 for b in all_closed)
+            roi = (total_realized / total_stake * 100) if total_stake > 0 else 0.0
 
             summary = {
                 "win_rate": win_count / total if total > 0 else 0.5,

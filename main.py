@@ -1119,9 +1119,13 @@ async def stop_bot():
     """Stop all background loops and cancel pending tasks."""
     async with state.start_stop_lock:
         state.is_running = False
+        tasks_to_await = []
         for t in list(state.tasks.values()):
             if not t.done():
                 t.cancel()
+                tasks_to_await.append(t)
+        if tasks_to_await:
+            await asyncio.gather(*tasks_to_await, return_exceptions=True)
         state.tasks.clear()
         return {"status": "stopped"}
 
