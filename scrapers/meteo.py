@@ -297,59 +297,58 @@ class MeteoFetcher:
                         m.longitude or 0.0,
                     )
 
-        total = 0
-        we = WeatherEngine(db_session_factory=get_session)
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+            total = 0
+            we = WeatherEngine(db_session_factory=get_session)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        try:
-            for key, markets in groups.items():
-                city, city_code, target_date, lat, lon = group_info[key]
+            try:
+                for key, markets in groups.items():
+                    city, city_code, target_date, lat, lon = group_info[key]
 
-                # Separate markets by metric within the city/date group
-                mids_by_metric = defaultdict(list)
-                for mid, metric in markets:
-                    mids_by_metric[metric].append(mid)
+                    # Separate markets by metric within the city/date group
+                    mids_by_metric = defaultdict(list)
+                    for mid, metric in markets:
+                        mids_by_metric[metric].append(mid)
 
-                try:
-                    # For each metric type (max/min), we want to ensure data is persisted.
-                    # WeatherEngine fetches both in one HTTP call, but currently persists one.
-                    # Optimization: We'll call it for each unique metric in the group.
-                    # Because _FETCH_CACHE isn't in WeatherEngine, we still rely on
-                    # grouping here to reduce redundant market-level work.
-                    for metric, mids in mids_by_metric.items():
-                        # 1. Try Ensemble (8-model)
-                        try:
-                            result = loop.run_until_complete(
-                                we.get_multi_model_forecast(
-                                    city_code=city_code or city,
-                                    latitude=lat,
-                                    longitude=lon,
-                                    target_date=target_date,
-                                    market_ids=mids,
-                                    db_session=session,
-                                    metric=metric,
+                    try:
+                        for metric, mids in mids_by_metric.items():
+                            # 1. Try Ensemble (8-model)
+                            try:
+                                result = loop.run_until_complete(
+                                    we.get_multi_model_forecast(
+                                        city_code=city_code or city,
+                                        latitude=lat,
+                                        longitude=lon,
+                                        target_date=target_date,
+                                        market_ids=mids,
+                                        db_session=session,
+                                        metric=metric,
+                                    )
                                 )
+
+                                if result and result.get("model_count", 0) >= 3:
+                                    total += result["model_count"] * len(mids)
+                                    continue
+                            except Exception as e:
+                                logger.debug(
+                                    "Ensemble failed for group %s %s: %s",
+                                    key,
+                                    metric,
+                                    e,
+                                )
+
+                            # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
+                            count = self.fetch_for_markets(
+                                mids, city, target_date, metric
                             )
+                            total += count
 
-                            if result and result.get("model_count", 0) >= 3:
-                                total += result["model_count"] * len(mids)
-                                continue
-                        except Exception as e:
-                            logger.debug(
-                                "Ensemble failed for group %s %s: %s", key, metric, e
-                            )
-
-                        # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
-                        # fetch_for_markets handles its own per-host throttle and internal cache
-                        count = self.fetch_for_markets(mids, city, target_date, metric)
-                        total += count
-
-                except Exception as e:
-                    logger.error("Group %s bucket error: %s", key, e)
-                    continue
-        finally:
-            loop.close()
+                    except Exception as e:
+                        logger.error("Group %s bucket error: %s", key, e)
+                        continue
+            finally:
+                loop.close()
 
         return total
 

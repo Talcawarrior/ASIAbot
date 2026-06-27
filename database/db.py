@@ -62,6 +62,9 @@ def init_db():
     # Migration: add raw_edge / slippage_pct to analyses (cost model v2)
     _migrate_add_column("analyses", "raw_edge", "FLOAT")
     _migrate_add_column("analyses", "slippage_pct", "FLOAT")
+    # Migration: add city / bias columns to historical_calibrations
+    _migrate_add_column("historical_calibrations", "city", "VARCHAR")
+    _migrate_add_column("historical_calibrations", "bias", "FLOAT")
 
     _DB_INITIALIZED = True
     logger.info("Database initialized at %s with WAL mode", DB_PATH)

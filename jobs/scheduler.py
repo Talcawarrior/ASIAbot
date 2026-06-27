@@ -157,11 +157,10 @@ def run_update_prices():
                                 rung_size = float(
                                     rung.get("size", rung.get("amount", 0))
                                 )
-                                if bet.side and bet.side.upper() == "NO":
-                                    # NO side: fill when current NO price (1 - yes_price) <= trigger_price
-                                    should_fill = (1.0 - current) <= trigger_price
-                                else:
-                                    should_fill = current <= trigger_price
+                                # current is already in bet's side terms
+                                # (YES side = yes_price, NO side = 1 - yes_price)
+                                # Fill when current side price drops to/below trigger
+                                should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:
                                     rung["status"] = "filled"
                                     rung["filled_at"] = datetime.now(

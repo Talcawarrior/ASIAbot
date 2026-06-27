@@ -246,11 +246,13 @@ class HistoricalCalibration(Base):
 
     id = Column(Integer, primary_key=True)
     city_code = Column(String, nullable=False)
+    city = Column(String, nullable=True)  # Human-readable city name (e.g. "New York")
     date = Column(DateTime, nullable=False)
     metric = Column(String, nullable=False)  # "temperature_max" or "temperature_min"
     model = Column(String, nullable=False)  # e.g., "gfs_seamless", "ecmwf_ifs025"
     predicted_value = Column(Float, nullable=False)
     actual_value = Column(Float, nullable=False)
+    bias = Column(Float, nullable=True)  # predicted - actual
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
