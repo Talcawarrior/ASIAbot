@@ -83,6 +83,7 @@ export interface HistoryEntry {
   result: "WIN" | "LOSS";
   placed_at: string | null;
   settled_at: string | null;
+  exit_type: string;  // ST, TP, SL, TS, TD, OT
 }
 
 export interface HistoryStats {
@@ -226,6 +227,7 @@ export interface TradeHistoryEntry {
   closedAt: string;  // formatted closing date/time
   strategy: string;
   conditionId: string;
+  exitType: string;  // ST, TP, SL, TS, TD
 }
 
 export interface ModelScore {
@@ -564,6 +566,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       closedAt,
       strategy: "SIA",
       conditionId: "—",
+      exitType: h.exit_type || "ST",
     };
   });
 }

@@ -98,7 +98,17 @@ const dotColorMap: Record<ActivityItem["color"], string> = {
 
 function fmtUsd(v: number) {
   const sign = v >= 0 ? "+" : "";
-  return `${sign}$${v.toFixed(2)}`;
+  return `${sign}$${Math.abs(v).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+// Turkish number format without sign (for prices)
+function fmtPrice(v: number) {
+  return v.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Turkish format for general numbers (percentages, ratios)
+function fmtNum(v: number, decimals = 2) {
+  return v.toLocaleString("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 // ---- Loading skeleton ----
@@ -143,7 +153,7 @@ function PortfolioTooltip({ active, payload, label }: { active?: boolean; payloa
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
       <p className="font-medium text-gray-500 mb-1">{label}</p>
       <p className="font-mono font-semibold" style={{ color: TEAL }}>
-        ${payload[0].value.toLocaleString("en-US", { minimumFractionDigits: 0 })}
+        ${payload[0].value.toLocaleString("tr-TR", { minimumFractionDigits: 0 })}
       </p>
     </div>
   );
@@ -230,7 +240,7 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
             {[
               { 
                 label: "Portföy Değeri", 
-                value: `$${kpiData.portfolioValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}`, 
+                value: `$${kpiData.portfolioValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`, 
                 icon: <Wallet className="h-4 w-4" />, 
                 color: TEAL, 
                 sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}`,
@@ -285,15 +295,15 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                   <span style={{ color: TEAL }}><Activity className="h-4 w-4" /></span>
                 </div>
                 <div className="flex items-center gap-2 mt-1">
-                  <span className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>$${kpiData.openPositionsValue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                  <span className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>$${kpiData.openPositionsValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}</span>
                 </div>
-                <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>Max: $${kpiData.maxOpenableUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+                <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>Max: $${kpiData.maxOpenableUsd.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}</p>
               </CardContent>
             </Card>
             {[
               { 
                 label: "Total PnL", 
-                value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}${kpiData.totalPnlValue.toFixed(2)} USD`, 
+                value: `${kpiData.totalPnlValue >= 0 ? "+" : ""}$${Math.abs(kpiData.totalPnlValue).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD`, 
                 icon: <TrendingUp className="h-4 w-4" />, 
                 color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED, 
                 sub: "",
@@ -301,7 +311,7 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
               },
               { 
                 label: "Total ROI", 
-                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${kpiData.totalRoi.toFixed(2)}%`, 
+                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${fmtNum(kpiData.totalRoi)}%`, 
                 icon: <TrendingUp className="h-4 w-4" />, 
                 color: kpiData.totalRoi >= 0 ? TEAL : RED, 
                 sub: "",
@@ -425,8 +435,8 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                         <TableCell>
                           <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: pos.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: pos.side === "YES" ? TEAL : RED, border: `1px solid ${pos.side === "YES" ? TEAL : RED}33` }}>{pos.side}</Badge>
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.entryPrice.toFixed(2)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.currentPrice.toFixed(2)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.entryPrice)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.currentPrice)}</TableCell>
                         <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
                         <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
@@ -494,6 +504,7 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
 function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null; totalPnl: number }) {
   const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS">("ALL");
   const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
+  const [filterExit, setFilterExit] = useState<"ALL" | "ST" | "TP" | "SL" | "TS" | "TD">("ALL");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"date" | "pnl" | "edge">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -502,6 +513,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
     let data = [...tradeHistory];
     if (filterResult !== "ALL") data = data.filter((t) => t.result === filterResult);
     if (filterSide !== "ALL") data = data.filter((t) => t.side === filterSide);
+    if (filterExit !== "ALL") data = data.filter((t) => t.exitType === filterExit);
     if (search) data = data.filter((t) => t.city.toLowerCase().includes(search.toLowerCase()) || t.strategy.toLowerCase().includes(search.toLowerCase()));
     data.sort((a, b) => {
       let cmp = 0;
@@ -511,7 +523,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
       return sortDir === "desc" ? -cmp : cmp;
     });
     return data;
-  }, [tradeHistory, filterResult, filterSide, search, sortBy, sortDir]);
+  }, [tradeHistory, filterResult, filterSide, filterExit, search, sortBy, sortDir]);
 
   // Summary stats from API (all settled bets, not just the 50 displayed)
   const hs = historyStats;
@@ -550,13 +562,13 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Win Oranı</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{totalSettledBets > 0 ? totalSettledWinRate.toFixed(1) : 0}%</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{totalSettledBets > 0 ? fmtNum(totalSettledWinRate, 1) : 0}%</p>
           </CardContent>
         </Card>
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Edge</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_edge?.toFixed(1) ?? "—"}%</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_edge != null ? fmtNum(hs.avg_edge, 1) : "—"}%</p>
           </CardContent>
         </Card>
       </section>
@@ -605,6 +617,27 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                 </button>
               ))}
             </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Neden:</span>
+              {([
+                { value: "ALL" as const, label: "Tümü" },
+                { value: "ST" as const, label: "Settlement" },
+                { value: "TP" as const, label: "Take Profit" },
+                { value: "SL" as const, label: "Stop Loss" },
+                { value: "TS" as const, label: "Trailing Stop" },
+                { value: "TD" as const, label: "Time Decay" },
+              ]).map((v) => (
+                <button key={v.value} onClick={() => setFilterExit(v.value)}
+                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+                  style={{
+                    borderColor: filterExit === v.value ? TEAL : BORDER,
+                    backgroundColor: filterExit === v.value ? TEAL_LIGHT : "transparent",
+                    color: filterExit === v.value ? TEAL : TEXT_MUTED,
+                  }}>
+                  {v.label}
+                </button>
+              ))}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -633,6 +666,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL <SortIcon col="pnl" /></TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sonuç</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("edge")}>Edge <SortIcon col="edge" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center" style={{ color: TEXT_MUTED }}>Neden</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -644,8 +678,8 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                       <TableCell>
                         <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: t.side === "YES" ? TEAL : RED, border: `1px solid ${t.side === "YES" ? TEAL : RED}33` }}>{t.side}</Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.entryPrice.toFixed(2)}</TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.exitPrice.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(t.entryPrice)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(t.exitPrice)}</TableCell>
                       <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: t.pnl >= 0 ? TEAL : RED }}>{fmtUsd(t.pnl)}</TableCell>
                       <TableCell>
                         <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.result === "WIN" ? GREEN_LIGHT : RED_LIGHT, color: t.result === "WIN" ? "#16A34A" : RED, border: `1px solid ${t.result === "WIN" ? "#16A34A" : RED}33` }}>
@@ -653,6 +687,23 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.edge}%</TableCell>
+                      <TableCell className="text-center">
+                        {(() => {
+                          const exitLabels: Record<string, { label: string; color: string; bg: string }> = {
+                            ST: { label: "ST", color: "#6B7280", bg: "#F3F4F6" },
+                            TP: { label: "TP", color: "#16A34A", bg: "#DCFCE7" },
+                            SL: { label: "SL", color: "#DC2626", bg: "#FEE2E2" },
+                            TS: { label: "TS", color: "#D97706", bg: "#FEF3C7" },
+                            TD: { label: "TD", color: "#7C3AED", bg: "#EDE9FE" },
+                          };
+                          const e = exitLabels[t.exitType] || exitLabels.ST;
+                          return (
+                            <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: e.bg, color: e.color, border: `1px solid ${e.color}33` }}>
+                              {e.label}
+                            </Badge>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell className="text-xs tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{t.closedAt}</TableCell>
                     </TableRow>
                   ))}
@@ -949,35 +1000,35 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                 {[
                   { 
                     label: "Sharpe Ratio", 
-                    value: kpiData ? kpiData.sharpeRatio.toFixed(2) : "—",
+                    value: kpiData ? fmtNum(kpiData.sharpeRatio) : "—",
                     target: "> 1.0 İyi, > 2.0 Mükemmel",
                     color: TEXT_PRIMARY,
                     tooltip: "Risk-başına getiri. Formül: (Ort. Getiri - Risk-Free) / Std Sapma. <0.5 zayıf, 0.5-1 orta, >1 iyi, >2 mükemmel"
                   },
                   { 
                     label: "Max Drawdown", 
-                    value: kpiData ? `%${kpiData.maxDrawdown}` : "—",
+                    value: kpiData ? `%${fmtNum(kpiData.maxDrawdown)}` : "—",
                     target: "< 5% Mükemmel, < 15% Kabul",
                     color: RED,
                     tooltip: "Zirveden dipine en büyük düşüş. <5% mükemmel, 5-15% kabul edilebilir, >20% riskli"
                   },
                   { 
                     label: "Expectancy", 
-                    value: kpiData ? `${kpiData.expectancy >= 0 ? "+" : ""}$${kpiData.expectancy.toFixed(2)}` : "—",
+                    value: kpiData ? `${kpiData.expectancy >= 0 ? "+" : ""}$${Math.abs(kpiData.expectancy).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—",
                     target: "> $0 Karlı, > $5 Güçlü",
                     color: "#16A34A",
                     tooltip: "Bahis başına beklenen kar. Formül: Total PnL / Kapalı Bahis. >0 karlı strateji, >$5 güçlü"
                   },
                   { 
                     label: "Ort. Bahis", 
-                    value: kpiData ? `$${kpiData.avgBetSize.toFixed(2)}` : "—",
+                    value: kpiData ? `$${fmtPrice(kpiData.avgBetSize)}` : "—",
                     target: "$20-50 arası optimal",
                     color: TEXT_PRIMARY,
                     tooltip: "Ortalama bahis büyüklüğü. Formül: Toplam Stake / Kapalı Bahis. Çok yüksek = risk, çok düşük = verimsiz"
                   },
                   { 
                     label: "Profit Factor", 
-                    value: kpiData ? kpiData.profitFactor.toFixed(2) : "—",
+                    value: kpiData ? fmtNum(kpiData.profitFactor) : "—",
                     target: "> 1.5 İyi, > 2.0 Mükemmel",
                     color: TEAL,
                     tooltip: "Kazanan/Kaybeden oranı. Formül: Gross Profit / Gross Loss. <1 zararlı, 1-1.5 zayıf, >1.5 iyi, >2 mükemmel"
@@ -1103,13 +1154,13 @@ function SlippageTab({ slippageData }: { slippageData: SlippageEntry[] }) {
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Slippage</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>{(avgSlippage * 100).toFixed(2)}%</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>{fmtNum(avgSlippage * 100)}%</p>
           </CardContent>
         </Card>
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Max Slippage</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: RED }}>{(maxSlippage * 100).toFixed(2)}%</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: RED }}>{fmtNum(maxSlippage * 100)}%</p>
           </CardContent>
         </Card>
       </section>
@@ -1154,10 +1205,10 @@ function SlippageTab({ slippageData }: { slippageData: SlippageEntry[] }) {
                           border: `1px solid ${entry.side === "YES" ? TEAL : RED}33`
                         }}>{entry.side}</Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.expected_price.toFixed(4)}</TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.entry_price.toFixed(4)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.expected_price.toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</TableCell>
+                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.entry_price.toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</TableCell>
                       <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: entry.slippage_pct > 0.01 ? RED : TEAL }}>
-                        {(entry.slippage_pct * 100).toFixed(2)}%
+                        {fmtNum(entry.slippage_pct * 100)}%
                       </TableCell>
                       <TableCell>
                         <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{

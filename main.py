@@ -801,13 +801,15 @@ async def get_history():
         )
         avg_edge = float(avg_edge_q or 0.0)
 
-        # History list: all settled + closed_early (most recent 50)
+        # History list: all settled + closed_early (most recent 100)
         all_closed_statuses = ["settled", "won", "lost", "closed_early"]
+        # Use coalesce(settled_at, closed_at) for correct ordering
+        close_date = func.coalesce(Bet.settled_at, Bet.closed_at)
         settled_bets = (
             db.query(Bet)
             .filter(Bet.status.in_(all_closed_statuses))
-            .order_by(Bet.settled_at.desc(), Bet.closed_at.desc(), Bet.placed_at.desc())
-            .limit(50)
+            .order_by(close_date.desc(), Bet.placed_at.desc())
+            .limit(100)
             .all()
         )
 
@@ -831,6 +833,22 @@ async def get_history():
                 if analysis and analysis.edge
                 else None
             )
+            # Determine exit type code from status + close_reason
+            if bet.status == "closed_early" and bet.close_reason:
+                cr = bet.close_reason.lower()
+                if cr.startswith("take_profit"):
+                    exit_type = "TP"
+                elif cr.startswith("stop_loss"):
+                    exit_type = "SL"
+                elif cr.startswith("trailing_stop"):
+                    exit_type = "TS"
+                elif cr.startswith("time_decay"):
+                    exit_type = "TD"
+                else:
+                    exit_type = "OT"
+            else:
+                exit_type = "ST"  # settlement (Polymarket resolved)
+
             history.append(
                 {
                     "id": bet.id,
@@ -844,6 +862,7 @@ async def get_history():
                     "result": "WIN" if pnl > 0 else "LOSS",
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "settled_at": (close_ts.isoformat() if close_ts else None),
+                    "exit_type": exit_type,
                 }
             )
         win_rate = (
