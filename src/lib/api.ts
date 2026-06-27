@@ -482,11 +482,24 @@ function mapActivityFeed(signals: Signal[], history: HistoryEntry[]): ActivityIt
       : "??:??";
     const color = h.result === "WIN" ? "teal" : "red";
     const pnlStr = h.realized_pnl >= 0 ? `+$${h.realized_pnl.toFixed(2)}` : `-$${Math.abs(h.realized_pnl).toFixed(2)}`;
+    // Exit type label with icon
+    const exitLabels: Record<string, string> = {
+      TP: "💰 Take Profit",
+      SL: "🛑 Stop Loss",
+      TS: "📉 Trailing Stop",
+      TD: "⏰ Time Decay",
+      ST: "📊 Settlement",
+      OT: "⏰ Timeout",
+    };
+    const exitLabel = exitLabels[h.exit_type] ?? "";
+    const msg = exitLabel
+      ? `${h.city}: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"} ${pnlStr} — ${exitLabel}`
+      : `${h.city} marketi çözüldü: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"}, ${pnlStr}`;
     items.push({
       id: `h${idCounter}`,
       time,
       color,
-      message: `${h.city} marketi çözüldü: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"}, ${pnlStr}`,
+      message: msg,
     });
   }
 

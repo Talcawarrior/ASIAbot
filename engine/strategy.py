@@ -330,7 +330,8 @@ class RiskManager:
     def check_trailing_stop(self, bet, current_price: float) -> tuple:
         """Trailing stop: en yüksek fiyattan %trailing_stop_pct düşüşte kapat.
 
-        En yüksek fiyatı Bet.result_data'da 'peak_price' olarak saklar.
+        Sadece pozisyon kâra geçmişse (peak > entry) tetiklenir.
+        Peak <= entry ise pozisyon hiç kâra geçmemiş, TS koruma sağlamaz.
         """
         cfg = self._get_risk_config()
         raw = bet.entry_price if bet.entry_price is not None else bet.price
@@ -367,6 +368,11 @@ class RiskManager:
                 bet.result_data = json.dumps(data)
             except Exception:
                 pass
+
+        # Sadece pozisyon kâra geçmişse (peak > entry) TS uygula
+        # Peak <= entry ise pozisyon hiç kâra geçmemiş, TS tetiklenmesin
+        if peak <= entry:
+            return False, ""
 
         # Tepeden düşüş kontrolü
         if peak > 0:
