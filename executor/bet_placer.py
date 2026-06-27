@@ -136,10 +136,15 @@ class BetPlacer:
 
             # ------------------------------------------------------------------
             # Sync RiskManager portfolio_value from DB so risk caps reflect
-            # actual portfolio state, not stale in-memory value.
+            # actual portfolio state (ONLY realized PnL, no unrealized).
+            # This prevents the feedback loop where unrealized profits
+            # inflate portfolio → raise 25% cap → allow more bets → etc.
             _pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if _pf and _pf.total_value is not None:
-                self.risk_manager.update_portfolio(float(_pf.total_value))
+                # Use conservative value (initial + realized only)
+                self.risk_manager.update_portfolio(
+                    self.risk_manager._conservative_portfolio_value()
+                )
 
             # Risk checks. These are enforced HERE (not in run_place_bets)
             # so every entry point "" scheduler, manual API call, CLI "" is

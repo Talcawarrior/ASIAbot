@@ -111,6 +111,11 @@ function fmtNum(v: number, decimals = 2) {
   return v.toLocaleString("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+// Turkish format for integers (thousands separator, no decimals)
+function fmtInt(v: number) {
+  return v.toLocaleString("tr-TR", { maximumFractionDigits: 0 });
+}
+
 // ---- Loading skeleton ----
 function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-md bg-gray-200 ${className}`} />;
@@ -256,7 +261,7 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
               },
               { 
                 label: "Açık Bahisler", 
-                value: `${kpiData.openPositions}`, 
+                value: fmtInt(kpiData.openPositions), 
                 icon: <Activity className="h-4 w-4" />, 
                 color: TEXT_PRIMARY, 
                 sub: "",
@@ -264,10 +269,10 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
               },
               { 
                 label: "Win Rate", 
-                value: `%${kpiData.winRate}`, 
+                value: `%${fmtNum(kpiData.winRate, 1)}`, 
                 icon: <Target className="h-4 w-4" />, 
                 color: TEXT_PRIMARY, 
-                sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L`,
+                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
                 tooltip: "Kapanan bahislerde kazanan oranı (closed_early dahil). Örn: 30W/20L = %60"
               }, 
             ].map((kpi) => (
@@ -319,10 +324,10 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
               },
               { 
                 label: "Kapalı Bahis", 
-                value: `${kpiData.closedBets}`, 
+                value: fmtInt(kpiData.closedBets), 
                 icon: <BarChart3 className="h-4 w-4" />, 
                 color: TEXT_PRIMARY, 
-                sub: `${kpiData.closedWins}W / ${kpiData.closedLosses}L`,
+                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
                 tooltip: "Sonuçlanan toplam bahis (won+lost+closed_early). 50 = 30 kazanan + 20 kaybeden"
               },
             ].map((kpi) => (
@@ -392,11 +397,11 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
             <div className="flex gap-6 mt-3 text-xs">
               <div className="flex items-center gap-1.5">
                 <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TEAL }} />
-                <span style={{ color: TEXT_MUTED }}>Kazanan: <b style={{ color: TEXT_PRIMARY }}>{kpiData.wins}</b></span>
+                <span style={{ color: TEXT_MUTED }}>Kazanan: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.wins)}</b></span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: RED }} />
-                <span style={{ color: TEXT_MUTED }}>Kaybeden: <b style={{ color: TEXT_PRIMARY }}>{kpiData.losses}</b></span>
+                <span style={{ color: TEXT_MUTED }}>Kaybeden: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.losses)}</b></span>
               </div>
             </div>
           </CardContent>
@@ -550,7 +555,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
           <CardContent className="px-4 pb-0 pt-0">
             <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam İşlem</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{totalSettledBets}</p>
+            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtInt(totalSettledBets)}</p>
           </CardContent>
         </Card>
         <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
@@ -647,7 +652,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
         <CardHeader className="pb-0 pt-0 px-5">
           <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
             İşlem Geçmişi
-            <span className="ml-2 text-[11px] font-normal" style={{ color: TEXT_MUTED }}>({filtered.length} kayıt)</span>
+            <span className="ml-2 text-[11px] font-normal" style={{ color: TEXT_MUTED }}>({fmtInt(filtered.length)} kayıt)</span>
           </CardTitle>
         </CardHeader>
         <CardContent className="px-3">
@@ -881,7 +886,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
         <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
           {fmtUsd(payload[0].value)}
         </p>
-        <p className="text-gray-400">{trades} işlem</p>
+        <p className="text-gray-400">{fmtInt(trades)} işlem</p>
       </div>
     );
   }
@@ -899,7 +904,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
             </Badge>
           </div>
           <p className="text-xs mt-1" style={{ color: TEXT_MUTED }}>
-            {h.red_flags.length === 0 ? "Aktif uyarı yok" : `${h.red_flags.length} aktif uyarı`}
+            {h.red_flags.length === 0 ? "Aktif uyarı yok" : `${fmtInt(h.red_flags.length)} aktif uyarı`}
           </p>
         </div>
       </div>
@@ -914,12 +919,12 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
           <CardContent className="px-4">
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: "Sonuçlanan", value: h.summary_all.total_settled.toString(), color: TEXT_PRIMARY },
-                { label: "Kazanan", value: h.summary_all.wins.toString(), color: "#16A34A" },
-                { label: "Kaybeden", value: h.summary_all.losses.toString(), color: RED },
-                { label: "Win Rate", value: `%${h.summary_all.win_rate_pct}`, color: TEXT_PRIMARY },
+                { label: "Sonuçlanan", value: fmtInt(h.summary_all.total_settled), color: TEXT_PRIMARY },
+                { label: "Kazanan", value: fmtInt(h.summary_all.wins), color: "#16A34A" },
+                { label: "Kaybeden", value: fmtInt(h.summary_all.losses), color: RED },
+                { label: "Win Rate", value: `%${fmtNum(h.summary_all.win_rate_pct, 1)}`, color: TEXT_PRIMARY },
                 { label: "Toplam PnL", value: fmtUsd(h.summary_all.total_pnl), color: h.summary_all.total_pnl >= 0 ? TEAL : RED },
-                { label: "ROI", value: `%${h.summary_all.roi_pct}`, color: TEAL },
+                { label: "ROI", value: `%${fmtNum(h.summary_all.roi_pct, 1)}`, color: TEAL },
               ].map((item) => (
                 <div key={item.label}>
                   <p className="text-[10px]" style={{ color: TEXT_MUTED }}>{item.label}</p>
@@ -967,7 +972,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                               <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
                             </div>
                             <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
-                              <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{d.value}</span>
+                              <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{fmtInt(d.value)}</span>
                               <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
                             </div>
                           </div>
@@ -997,11 +1002,11 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
             <div className="grid grid-cols-2 gap-3 mb-3">
               <div>
                 <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Açılan Bahis</p>
-                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{h.activity_24h.bets_opened}</p>
+                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtInt(h.activity_24h.bets_opened)}</p>
               </div>
               <div>
                 <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Toplam Analiz</p>
-                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{h.activity_24h.total_analyses}</p>
+                <p className="text-xl font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtInt(h.activity_24h.total_analyses)}</p>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1014,7 +1019,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                     <span className="tabular-nums shrink-0 pt-0.5 font-mono" style={{ color: TEXT_MUTED, fontSize: 10 }}>{pr.time?.split(" ")[1] ?? "?"}</span>
                     <span style={{ color: TEXT_PRIMARY }} className="flex-1">{pr.reason}</span>
                     <Badge className="text-[9px] px-1.5 py-0 h-4 font-mono shrink-0" style={{ backgroundColor: TEAL_LIGHT, color: TEAL }}>
-                      %{pr.edge_pct}
+                      %{fmtNum(pr.edge_pct, 1)}
                     </Badge>
                   </div>
                 ))
@@ -1033,16 +1038,16 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
               <div>
                 <div className="flex justify-between items-baseline mb-1">
                   <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Ort. Net Edge</p>
-                  <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>%{h.edge_distribution.avg_net_edge_pct}</p>
+                  <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>%{fmtNum(h.edge_distribution.avg_net_edge_pct, 1)}</p>
                 </div>
                 <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className="h-full rounded-full" style={{ width: `${Math.min(h.edge_distribution.avg_net_edge_pct * 7, 100)}%`, backgroundColor: TEAL }} />
                 </div>
               </div>
               {[
-                { label: "Min Net Edge", value: `%${h.edge_distribution.min_net_edge_pct}`, color: TEXT_MUTED },
-                { label: "Max Net Edge", value: `%${h.edge_distribution.max_net_edge_pct}`, color: TEAL },
-                { label: "Toplam İşlem", value: h.edge_distribution.count.toString(), color: TEXT_PRIMARY },
+                { label: "Min Net Edge", value: `%${fmtNum(h.edge_distribution.min_net_edge_pct, 1)}`, color: TEXT_MUTED },
+                { label: "Max Net Edge", value: `%${fmtNum(h.edge_distribution.max_net_edge_pct, 1)}`, color: TEAL },
+                { label: "Toplam İşlem", value: fmtInt(h.edge_distribution.count), color: TEXT_PRIMARY },
               ].map((item) => (
                 <div key={item.label} className="flex justify-between items-baseline">
                   <p className="text-[11px]" style={{ color: TEXT_MUTED }}>{item.label}</p>
@@ -1148,7 +1153,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
               backgroundColor: h.red_flags.length === 0 ? GREEN_LIGHT : RED_LIGHT,
               color: h.red_flags.length === 0 ? "#16A34A" : RED,
             }}>
-              {h.red_flags.length === 0 ? "Temiz" : `${h.red_flags.length} uyarı`}
+              {h.red_flags.length === 0 ? "Temiz" : `${fmtInt(h.red_flags.length)} uyarı`}
             </Badge>
           </div>
         </CardHeader>

@@ -167,7 +167,7 @@ async def root():
 
 
 @app.get("/api/status")
-async def get_status():
+def get_status():
     """Get bot status and metrics with strict accounting."""
     from sqlalchemy import func
 
@@ -209,9 +209,10 @@ async def get_status():
             .scalar()
         ) or 0.0
 
-        # 3. Counts
-        win_count = db.query(Bet).filter(Bet.status == "won").count()
-        loss_count = db.query(Bet).filter(Bet.status == "lost").count()
+        # 3. Counts — win/loss based on PnL (includes closed_early)
+        _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
+        win_count = sum(1 for b in _all_closed if (b.pnl or 0) > 0)
+        loss_count = sum(1 for b in _all_closed if (b.pnl or 0) <= 0)
         total_bets_db = db.query(Bet).filter(Bet.status.in_(open_statuses)).count()
         total_signals_db = (
             db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
@@ -251,6 +252,19 @@ async def get_status():
         total_stake_settled = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(Bet.status.in_(_closed_statuses))
+            .scalar()
+        ) or 0.0
+
+        # Realized PnL from bets closed BEFORE today (for daily exposure cap)
+        realized_before_today = (
+            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+            .filter(
+                Bet.status.in_(_closed_statuses),
+                or_(
+                    Bet.settled_at < _today_start,
+                    Bet.closed_at < _today_start,
+                ),
+            )
             .scalar()
         ) or 0.0
 
@@ -315,7 +329,7 @@ async def get_status():
                 "total_roi": total_roi,
                 "exposure": float(exposure_db),
                 "max_exposure": round(
-                    (initial_capital + realized_pnl_db + unrealized_pnl_db)
+                    (initial_capital + realized_before_today)
                     * state.config.TOTAL_EXPOSURE_PCT,
                     2,
                 ),
@@ -350,7 +364,7 @@ async def get_status():
 
 
 @app.get("/api/asi/weights")
-async def get_asi_weights():
+def get_asi_weights():
     """Retrieve current evolved weights with model performance metrics."""
     from database.models import ModelPerformance
     from sqlalchemy import func
@@ -403,7 +417,7 @@ async def get_asi_weights():
 
 
 @app.get("/api/asi/cognition")
-async def get_asi_cognition():
+def get_asi_cognition():
     """Retrieve ASI Cognition Base insights."""
     if not state.orchestrator:
         state.orchestrator = ASIAbotOrchestrator()
@@ -437,7 +451,7 @@ async def run_asi_backfill(days: int = 90):
 
 
 @app.get("/api/asi/calibration")
-async def get_asi_calibration():
+def get_asi_calibration():
     """Retrieve the pre-calculated bias calibration maps for each city."""
     if not state.calibration_engine:
         state.calibration_engine = CalibrationEngine()
@@ -445,7 +459,7 @@ async def get_asi_calibration():
 
 
 @app.post("/api/asi/calibration/recalculate")
-async def run_asi_calibration_recalculate():
+def run_asi_calibration_recalculate():
     """Manually recalculate model biases from the historical calibrations table."""
     if not state.calibration_engine:
         state.calibration_engine = CalibrationEngine()
@@ -454,7 +468,7 @@ async def run_asi_calibration_recalculate():
 
 
 @app.get("/api/asi/trades")
-async def get_asi_trades():
+def get_asi_trades():
     """Retrieve on-chain Polymarket trades fetched from warproxxx/poly_data."""
     pipeline = PolyDataPipeline()
     df = pipeline.load_trades_dataset()
@@ -462,7 +476,7 @@ async def get_asi_trades():
 
 
 @app.get("/api/asi/orderbook")
-async def get_asi_orderbook(market_id: str = "2513866"):
+def get_asi_orderbook(market_id: str = "2513866"):
     """Retrieve high-fidelity CLOB orderbook depth from resolvedmarkets.com."""
     client = ResolvedMarketsClient()
     orderbook = client.fetch_historical_orderbook(market_id)
@@ -507,7 +521,7 @@ async def run_asi_autoresearch(rounds: int = 5):
 
 
 @app.get("/api/markets")
-async def get_markets():
+def get_markets():
     """Get all future active weather markets AND missed signals (rejected bets)."""
     from datetime import timedelta
 
@@ -614,7 +628,7 @@ async def get_markets():
 
 
 @app.get("/api/bets")
-async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
+def get_bets(status: str = "", limit: int = 100, offset: int = 0):
     """Get all bets with optional status filter and pagination.
 
     Query params:
@@ -674,7 +688,7 @@ def _safe_parse_ladder(raw):
 
 
 @app.get("/api/signals")
-async def get_signals():
+def get_signals():
     """Get all currently active (open) bets with live edge/price data."""
     db = get_db_session()
     try:
@@ -745,7 +759,7 @@ async def get_signals():
 
 
 @app.get("/api/history")
-async def get_history():
+def get_history():
     """Get settled bet history with win/loss stats."""
     db = get_db_session()
     try:
@@ -897,7 +911,7 @@ async def get_history():
 
 
 @app.get("/api/equity-curve")
-async def get_equity_curve():
+def get_equity_curve():
     """Daily equity curve from ALL settled + closed_early bets (no limit).
 
     Returns [{date, pnl, count}] for every day that had at least one closure.
@@ -980,7 +994,7 @@ async def get_equity_curve():
 
 
 @app.get("/api/slippage")
-async def get_slippage():
+def get_slippage():
     """Return recent slippage data from analyses joined with market info."""
     db = get_db_session()
     try:
@@ -1041,7 +1055,7 @@ async def get_slippage():
 
 
 @app.post("/api/cleanup")
-async def cleanup_old_data():
+def cleanup_old_data():
     """Cancel stale open bets and refund their stakes (ladder-aware)."""
     db = get_db_session()
     try:
@@ -1163,7 +1177,7 @@ async def reset_bot():
 
 
 @app.get("/api/health-check")
-async def get_health_check():
+def get_health_check():
     """Comprehensive health check for bot performance evaluation."""
     from datetime import timedelta
 
@@ -1303,16 +1317,37 @@ async def get_health_check():
             else:
                 losses_by_exit[code] = losses_by_exit.get(code, 0) + 1
 
-        # 5. Red Flags
+        # 5. Red Flags — son 48 saatlik verilere göre
         red_flags = []
 
-        if total_settled >= 10 and losses_all >= 7:
+        # Son 48 saatteki kayıpları say
+        recent_losses = sum(
+            1
+            for b in settled_all
+            if b.pnl is not None
+            and b.pnl <= 0
+            and (
+                (b.settled_at and b.settled_at >= h24)
+                or (b.closed_at and b.closed_at >= h24)
+            )
+        )
+        recent_total = sum(
+            1
+            for b in settled_all
+            if (
+                (b.settled_at and b.settled_at >= h24)
+                or (b.closed_at and b.closed_at >= h24)
+            )
+        )
+        recent_win_rate = (wins_all / total_settled * 100) if total_settled > 0 else 0
+
+        if recent_total >= 10 and recent_losses >= 7:
             red_flags.append(
                 {
                     "severity": "critical",
                     "message": (
-                        f"Son 3 günde {losses_all} kayıp "
-                        f"(toplam {total_settled} sonuçlanan). "
+                        f"Son 48 saatte {recent_losses} kayıp "
+                        f"(toplam {recent_total} sonuçlanan). "
                         f"Calibration bozuk olabilir."
                     ),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
@@ -1363,7 +1398,7 @@ async def get_health_check():
                 }
             )
 
-        if total_settled >= 5 and win_rate_all < 50:
+        if recent_total >= 5 and recent_win_rate < 50:
             red_flags.append(
                 {
                     "severity": "critical",
@@ -1389,13 +1424,21 @@ async def get_health_check():
                 }
             )
 
-        if total_pnl_all_health < 0 and total_settled >= 5:
+        recent_pnl = sum(
+            b.pnl or 0.0
+            for b in settled_all
+            if (
+                (b.settled_at and b.settled_at >= h24)
+                or (b.closed_at and b.closed_at >= h24)
+            )
+        )
+        if recent_pnl < 0 and recent_total >= 5:
             red_flags.append(
                 {
                     "severity": "warning",
                     "message": (
-                        f"Toplam PnL negatif: "
-                        f"${total_pnl_all_health:.2f}. "
+                        f"Son 48 saatte PnL negatif: "
+                        f"${recent_pnl:.2f}. "
                         f"Zarar trendi devam ediyor."
                     ),
                     "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",

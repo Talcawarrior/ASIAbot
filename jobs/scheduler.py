@@ -300,7 +300,7 @@ def run_risk_management():
                 # Calculate proceeds: for ladder bets, sum ONLY filled rungs
                 entry = float(bet.entry_price or bet.price or 0.0)
                 shares = float(bet.shares or 0.0)
-                realized = round(shares * (current_price - entry), 2)
+                raw_pnl = round(shares * (current_price - entry), 2)
                 proceeds = round(shares * current_price, 2)  # principal + PnL
 
                 # Ladder: only filled rungs were debited, so only filled
@@ -322,11 +322,18 @@ def run_risk_management():
                             )
                             if filled_shares > 0:
                                 proceeds = round(filled_shares * current_price, 2)
-                                realized = round(
+                                raw_pnl = round(
                                     filled_shares * (current_price - entry), 2
                                 )
                     except Exception:
                         pass  # fall back to simple calculation
+
+                # Polymarket fee: 2% on profit (same as settler)
+                stake = float(bet.amount or 0.0)
+                fee_rate = 0.02
+                fee = round(max(0.0, proceeds - stake) * fee_rate, 2)
+                realized = round(raw_pnl - fee, 2)
+                proceeds_net = round(proceeds - fee, 2)
 
                 bet.status = "closed_early"
                 bet.close_reason = reason
@@ -335,10 +342,10 @@ def run_risk_management():
                 bet.pnl = realized
                 bet.current_price = current_price
 
-                # Credit proceeds to cash via central accounting.
-                # After credit_sale, cash_balance already includes proceeds.
-                # total_value = cash_balance (bet is closed, no unrealized PnL).
-                credit_sale(session, proceeds, f"early_exit:{bet.market_id}:{reason}")
+                # Credit net proceeds (after fee) to cash via central accounting.
+                credit_sale(
+                    session, proceeds_net, f"early_exit:{bet.market_id}:{reason}"
+                )
 
                 portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
@@ -358,12 +365,13 @@ def run_risk_management():
                 session.add(portfolio) if portfolio else None
                 closed_count += 1
                 logger.info(
-                    "Early exit bet=%s market=%s reason=%s realized=$%.2f proceeds=$%.2f",
+                    "Early exit bet=%s market=%s reason=%s realized=$%.2f fee=$%.2f proceeds=$%.2f",
                     bet.id,
                     bet.market_id,
                     reason,
                     realized,
-                    proceeds,
+                    fee,
+                    proceeds_net,
                 )
 
         session.commit()

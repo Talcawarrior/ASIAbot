@@ -251,12 +251,15 @@ class TestTrailingStop:
         assert data["peak_price"] == 0.80
 
     def test_trailing_stop_no_peak_data(self):
-        """result_data'da peak_price yoksa entry_price kullanılmalı."""
+        """result_data'da peak_price yoksa entry_price kullanilir.
+        peak <= entry ise (pozisyon hic karli olmadi) trailing stop tetiklenmez.
+        Bu durumda trailing stop yerine stop_loss calismalidir."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50, result_data=None)
-        # 0.50'den 0.42'ye düşüş = %16 -> tetiklenmeli
+        # 0.50'den 0.42'ye dusus = %16
+        # Ama peak = entry (0.50 <= 0.50) oldugu icin trailing stop tetiklenmez
         should_exit, reason = rm.check_trailing_stop(bet, 0.42)
-        assert should_exit is True
+        assert should_exit is False
 
     def test_trailing_stop_sifir_entry(self):
         """Entry price 0'sa hata vermemeli."""
@@ -476,12 +479,12 @@ class TestEdgeCases:
         assert result is not None  # edge 5x > 0.10
 
     def test_trailing_stop_corrupted_json(self):
-        """Bozuk JSON'da hata vermemeli."""
+        """Bozuk JSON'da hata vermemeli, peak=entry_oldugu icin tetiklenmez."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50, result_data="{corrupted json!!!}")
         should_exit, reason = rm.check_trailing_stop(bet, 0.40)
-        # Bozuk JSON -> peak=entry_price -> 0.50->0.40 = %20 düşüş
-        assert should_exit is True
+        # Bozuk JSON -> peak=entry_price -> peak <= entry oldugu icin tetiklenmez
+        assert should_exit is False
 
     def test_model_reversal_same_probability(self):
         """Prob aynıysa çıkılmaz."""

@@ -106,7 +106,7 @@ class RiskManager:
             self.daily_pnl = 0.0
             self._last_pnl_date = now
         self.daily_pnl += pnl
-        if self.daily_pnl <= -self.config.daily_loss_limit_amount:
+        if self.daily_pnl <= -self.daily_loss_limit_amount:
             logger.warning("DAILY STOP-LOSS TRIGGERED! PnL: $%.2f", self.daily_pnl)
             return False
         return True
@@ -167,37 +167,54 @@ class RiskManager:
         return True
 
     def _conservative_portfolio_value(self) -> float:
-        """Portfolio = baslangic + gerceklesen kar/zarar + beklenen kar/zarar."""
+        """Portfolio = dünkü kapanış sermayesi (bugünkü realize edilmemiş).
+
+        Bugünden önce kapanan bahislerin PnL'i hesaba katılır.
+        Bugün realizado olan kârlar bugünkü exposure cap'ini şişirmez.
+        Yarınki başlangıç = bugünkü kapanış.
+
+        Bu sayede:
+        - Daily starting capital = önceki günün kapanış sermayesi
+        - Max exposure = %25 × dünkü kapanış
+        - Feedback loop önlenir (unrealized PnL dahil edilmez)
+        """
         if not self.db:
             return self.portfolio_value
         try:
-            from sqlalchemy import func
+            from datetime import datetime, timezone
+
+            from sqlalchemy import or_
 
             from database.models import Bet
 
             initial = self.config.INITIAL_PORTFOLIO
+            # Sadece BUGÜNDEN ÖNCE kapanan bahislerin PnL'i
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             realized = float(
                 self.db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-                .filter(Bet.status.in_(("won", "lost", "settled")))
+                .filter(
+                    Bet.status.in_(("won", "lost", "settled", "closed_early")),
+                    or_(
+                        Bet.settled_at < today_start,
+                        Bet.closed_at < today_start,
+                    ),
+                )
                 .scalar()
                 or 0.0
             )
-            # Include unrealized PnL for accurate 25% cap
-            from database.models import OPEN_BET_STATUSES
-
-            unrealized = float(
-                self.db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
-                .filter(Bet.status.in_(OPEN_BET_STATUSES))
-                .scalar()
-                or 0.0
-            )
-            return initial + realized + unrealized
+            return initial + realized
         except Exception:
             return self.portfolio_value
 
+    @property
+    def daily_loss_limit_amount(self) -> float:
+        """Günlük zarar limiti = dünkü kapanış sermayesi × DAILY_LOSS_LIMIT."""
+        return self._conservative_portfolio_value() * self.config.DAILY_LOSS_LIMIT
+
     def is_bot_locked(self) -> bool:
         """Check if bot is locked."""
-        return self.daily_pnl <= -self.config.daily_loss_limit_amount
+        return self.daily_pnl <= -self.daily_loss_limit_amount
 
     def get_daily_pnl(self) -> float:
         """Get daily PnL."""
@@ -623,8 +640,10 @@ class BettingEngine:
             current_exposure = risk_manager.get_total_exposure()
 
         if not risk_manager.check_exposure_cap(current_exposure, kelly_size):
+            # Use conservative portfolio value (initial + realized only)
+            conservative_value = risk_manager._conservative_portfolio_value()
             max_allowed = (
-                portfolio_value * self.config.TOTAL_EXPOSURE_PCT
+                conservative_value * self.config.TOTAL_EXPOSURE_PCT
             ) - current_exposure
             kelly_size = min(kelly_size, max_allowed)
 
@@ -881,8 +900,8 @@ class SIALoop:
                 .join(Analysis, Bet.analysis_id == Analysis.id, isouter=True)
                 .join(WeatherMarket, Bet.market_id == WeatherMarket.id, isouter=True)
                 .filter(
-                    Bet.status.in_(["won", "lost"]),
-                    Bet.settled_at >= cutoff,
+                    Bet.status.in_(["won", "lost", "closed_early"]),
+                    func.coalesce(Bet.settled_at, Bet.closed_at) >= cutoff,
                 )
                 .all()
             )
@@ -1145,8 +1164,23 @@ class SIALoop:
 
             # --- 2. Strategy Parameter Optimization (Financial SIA) ---
             # Aggregate overall stats for the feedback agent
-            win_count = db.query(Bet).filter(Bet.status == "won").count()
-            loss_count = db.query(Bet).filter(Bet.status == "lost").count()
+            # Include closed_early — these are real exits with real PnL
+            win_count = (
+                db.query(Bet)
+                .filter(
+                    Bet.status.in_(["won", "closed_early"]),
+                    Bet.pnl > 0,
+                )
+                .count()
+            )
+            loss_count = (
+                db.query(Bet)
+                .filter(
+                    Bet.status.in_(["lost", "closed_early"]),
+                    Bet.pnl <= 0,
+                )
+                .count()
+            )
             total = win_count + loss_count
 
             portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
