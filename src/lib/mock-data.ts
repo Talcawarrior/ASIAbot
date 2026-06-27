@@ -288,7 +288,7 @@ export interface HealthData {
     max_net_edge_pct: number;
     count: number;
   };
-  summary_3day: {
+  summary_all: {
     total_settled: number;
     wins: number;
     losses: number;
@@ -323,7 +323,7 @@ export const healthData: HealthData = {
     max_net_edge_pct: 14.5,
     count: 38,
   },
-  summary_3day: {
+  summary_all: {
     total_settled: 18,
     wins: 14,
     losses: 4,

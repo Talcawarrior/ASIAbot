@@ -129,7 +129,7 @@ export interface HealthResponse {
     max_net_edge_pct: number;
     count: number;
   };
-  summary_3day: {
+  summary_all: {
     total_settled: number;
     wins: number;
     losses: number;

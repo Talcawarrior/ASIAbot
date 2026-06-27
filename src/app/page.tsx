@@ -803,7 +803,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
     verdict_color: "#9CA3AF",
     activity_24h: { bets_opened: 0, pass_reasons: [], total_analyses: 0 },
     edge_distribution: { avg_net_edge_pct: 0, min_net_edge_pct: 0, max_net_edge_pct: 0, count: 0 },
-    summary_3day: { total_settled: 0, wins: 0, losses: 0, win_rate_pct: 0, total_pnl: 0, total_stake: 0, roi_pct: 0, avg_net_edge_pct: 0 },
+    summary_all: { total_settled: 0, wins: 0, losses: 0, win_rate_pct: 0, total_pnl: 0, total_stake: 0, roi_pct: 0, avg_net_edge_pct: 0 },
     red_flags: [],
     daily_pnl_timeline: [],
   };
@@ -858,17 +858,17 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
         {/* 3-Day Summary */}
         <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
-            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>3 Günlük Özet</CardTitle>
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Tüm Zamanlar</CardTitle>
           </CardHeader>
           <CardContent className="px-4">
             <div className="grid grid-cols-2 gap-3">
               {[
-                { label: "Sonuçlanan", value: h.summary_3day.total_settled.toString(), color: TEXT_PRIMARY },
-                { label: "Kazanan", value: h.summary_3day.wins.toString(), color: "#16A34A" },
-                { label: "Kaybeden", value: h.summary_3day.losses.toString(), color: RED },
-                { label: "Win Rate", value: `%${h.summary_3day.win_rate_pct}`, color: TEXT_PRIMARY },
-                { label: "Toplam PnL", value: fmtUsd(h.summary_3day.total_pnl), color: h.summary_3day.total_pnl >= 0 ? TEAL : RED },
-                { label: "ROI", value: `%${h.summary_3day.roi_pct}`, color: TEAL },
+                { label: "Sonuçlanan", value: h.summary_all.total_settled.toString(), color: TEXT_PRIMARY },
+                { label: "Kazanan", value: h.summary_all.wins.toString(), color: "#16A34A" },
+                { label: "Kaybeden", value: h.summary_all.losses.toString(), color: RED },
+                { label: "Win Rate", value: `%${h.summary_all.win_rate_pct}`, color: TEXT_PRIMARY },
+                { label: "Toplam PnL", value: fmtUsd(h.summary_all.total_pnl), color: h.summary_all.total_pnl >= 0 ? TEAL : RED },
+                { label: "ROI", value: `%${h.summary_all.roi_pct}`, color: TEAL },
               ].map((item) => (
                 <div key={item.label}>
                   <p className="text-[10px]" style={{ color: TEXT_MUTED }}>{item.label}</p>

@@ -182,18 +182,22 @@ async def get_status():
 
         _ts = datetime.now(timezone.utc).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
+        # All closed bet statuses (settled + bot-closed early exits)
+        _closed_statuses = ("won", "lost", "settled", "closed_early")
+        from sqlalchemy import or_
+
         daily_pnl = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
             .filter(
-                Bet.status.in_(("won", "lost", "settled")),
-                Bet.settled_at >= _today_start,
+                Bet.status.in_(_closed_statuses),
+                or_(Bet.settled_at >= _today_start, Bet.closed_at >= _today_start),
             )
             .scalar()
         ) or 0.0
 
         realized_pnl_db = (
             db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .filter(Bet.status.in_(_closed_statuses))
             .scalar()
         ) or 0.0
 
@@ -246,7 +250,7 @@ async def get_status():
         # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
         total_stake_settled = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .filter(Bet.status.in_(_closed_statuses))
             .scalar()
         ) or 0.0
 
@@ -260,8 +264,8 @@ async def get_status():
         total_stake_today = (
             db.query(func.coalesce(func.sum(Bet.amount), 0.0))
             .filter(
-                Bet.status.in_(("won", "lost", "settled")),
-                Bet.settled_at >= _today_start,
+                Bet.status.in_(_closed_statuses),
+                or_(Bet.settled_at >= _today_start, Bet.closed_at >= _today_start),
             )
             .scalar()
         ) or 0.0
@@ -276,7 +280,7 @@ async def get_status():
         max_drawdown_pct = 0.0
         closed_bets = (
             db.query(Bet.pnl, Bet.settled_at)
-            .filter(Bet.status.in_(("won", "lost", "settled")))
+            .filter(Bet.status.in_(_closed_statuses))
             .order_by(Bet.settled_at.asc())
             .all()
         )
@@ -1066,7 +1070,6 @@ async def get_health_check():
     try:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         h24 = now - timedelta(hours=48)
-        h72 = now - timedelta(hours=72)
 
         # 1. Activity in last 24h
         bets_opened_24h = (
@@ -1101,8 +1104,8 @@ async def get_health_check():
                 }
             )
 
-        # 3. Edge distribution for settled bets (consistent with /api/history avg_edge)
-        settled_bet_statuses = ["won", "lost", "settled"]
+        # 3. Edge distribution for all closed bets (settled + closed_early)
+        settled_bet_statuses = ["won", "lost", "settled", "closed_early"]
         settled_for_edge = (
             db.query(Bet).filter(Bet.status.in_(settled_bet_statuses)).all()
         )
@@ -1142,11 +1145,7 @@ async def get_health_check():
                             "city": b.city,
                             "stake": b.stake_amount,
                             "status": b.status,
-                            "pnl": (
-                                b.realized_pnl
-                                if b.status in ("won", "lost")
-                                else b.unrealized_pnl
-                            ),
+                            "pnl": b.pnl or 0.0,
                         }
                     )
 
@@ -1157,32 +1156,35 @@ async def get_health_check():
         min_net_edge = min(net_edges) if net_edges else 0
         max_net_edge = max(net_edges) if net_edges else 0
 
-        # 4. 3-Day Summary (last 72 hours — for trend monitoring)
-        settled_72h = (
+        # 4. All-Time Closed Bets Summary (settled + closed_early)
+        settled_all = (
             db.query(Bet)
             .filter(
-                Bet.settled_at >= h72,
-                Bet.status.in_(("won", "lost")),
+                Bet.status.in_(("won", "lost", "settled", "closed_early")),
             )
             .all()
         )
 
-        total_settled = len(settled_72h)
-        wins_72 = sum(1 for b in settled_72h if b.status == "won")
-        losses_72 = sum(1 for b in settled_72h if b.status == "lost")
-        win_rate_72 = (wins_72 / total_settled * 100) if total_settled > 0 else 0
-        total_pnl_72 = sum(b.realized_pnl for b in settled_72h)
-        total_stake_72 = sum(b.stake_amount for b in settled_72h)
-        roi_72 = (total_pnl_72 / total_stake_72 * 100) if total_stake_72 > 0 else 0
+        total_settled = len(settled_all)
+        wins_all = sum(1 for b in settled_all if b.pnl and b.pnl > 0)
+        losses_all = sum(1 for b in settled_all if b.pnl is not None and b.pnl <= 0)
+        win_rate_all = (wins_all / total_settled * 100) if total_settled > 0 else 0
+        total_pnl_all_health = sum(b.pnl or 0.0 for b in settled_all)
+        total_stake_all_health = sum(b.amount or 0.0 for b in settled_all)
+        roi_all = (
+            (total_pnl_all_health / total_stake_all_health * 100)
+            if total_stake_all_health > 0
+            else 0
+        )
 
         # 5. Red Flags
         red_flags = []
 
-        if total_settled >= 10 and losses_72 >= 7:
+        if total_settled >= 10 and losses_all >= 7:
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Son 3 günde {losses_72} kayıp (toplam {total_settled} sonuçlanan). Calibration bozuk olabilir.",
+                    "message": f"Son 3 günde {losses_all} kayıp (toplam {total_settled} sonuçlanan). Calibration bozuk olabilir.",
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
                 }
             )
@@ -1217,11 +1219,11 @@ async def get_health_check():
                 }
             )
 
-        if total_settled >= 5 and win_rate_72 < 50:
+        if total_settled >= 5 and win_rate_all < 50:
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Win rate %{win_rate_72:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
+                    "message": f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
                     "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
                 }
             )
@@ -1236,16 +1238,18 @@ async def get_health_check():
                 }
             )
 
-        if total_pnl_72 < 0 and total_settled >= 5:
+        if total_pnl_all_health < 0 and total_settled >= 5:
             red_flags.append(
                 {
                     "severity": "warning",
-                    "message": f"3 günlük toplam PnL negatif: ${total_pnl_72:.2f}. Zarar trendi devam ediyor.",
+                    "message": f"Toplam PnL negatif: ${total_pnl_all_health:.2f}. Zarar trendi devam ediyor.",
                     "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
                 }
             )
 
         # 6. Daily PnL Timeline (last 7 days)
+        from sqlalchemy import or_
+
         daily_pnl = []
         for i in range(7):
             day_start = (now - timedelta(days=i + 1)).replace(
@@ -1257,15 +1261,21 @@ async def get_health_check():
             day_bets = (
                 db.query(Bet)
                 .filter(
-                    Bet.settled_at >= day_start,
-                    Bet.settled_at < day_end,
-                    Bet.status.in_(("won", "lost")),
+                    or_(
+                        Bet.settled_at >= day_start,
+                        Bet.closed_at >= day_start,
+                    ),
+                    or_(
+                        Bet.settled_at < day_end,
+                        Bet.closed_at < day_end,
+                    ),
+                    Bet.status.in_(("won", "lost", "settled", "closed_early")),
                 )
                 .all()
             )
-            day_pnl = sum(b.realized_pnl for b in day_bets)
-            day_wins = sum(1 for b in day_bets if b.status == "won")
-            day_losses = sum(1 for b in day_bets if b.status == "lost")
+            day_pnl = sum(b.pnl or 0.0 for b in day_bets)
+            day_wins = sum(1 for b in day_bets if b.pnl and b.pnl > 0)
+            day_losses = sum(1 for b in day_bets if b.pnl is not None and b.pnl <= 0)
             daily_pnl.append(
                 {
                     "date": day_start.strftime("%m/%d"),
@@ -1302,14 +1312,14 @@ async def get_health_check():
                 "max_net_edge_pct": round(max_net_edge, 2),
                 "count": len(edge_values),
             },
-            "summary_3day": {
+            "summary_all": {
                 "total_settled": total_settled,
-                "wins": wins_72,
-                "losses": losses_72,
-                "win_rate_pct": round(win_rate_72, 1),
-                "total_pnl": round(total_pnl_72, 2),
-                "total_stake": round(total_stake_72, 2),
-                "roi_pct": round(roi_72, 2),
+                "wins": wins_all,
+                "losses": losses_all,
+                "win_rate_pct": round(win_rate_all, 1),
+                "total_pnl": round(total_pnl_all_health, 2),
+                "total_stake": round(total_stake_all_health, 2),
+                "roi_pct": round(roi_all, 2),
                 "avg_net_edge_pct": round(avg_net_edge, 2),
             },
             "red_flags": red_flags,
