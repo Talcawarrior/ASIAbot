@@ -659,9 +659,8 @@ async def get_bets(status: str = "", limit: int = 100, offset: int = 0):
         db.close()
 
 
-# Keep other endpoints (signals, history, cleanup, start, stop, reset, ws, loops, run_cli)
-# exactly as they were in the previous successful read, but I'll write the full file
-# to ensure no truncation.
+# Keep other endpoints (signals, history, cleanup, start, stop,
+# reset, ws, loops, run_cli) exactly as they were.
 
 
 def _safe_parse_ladder(raw):
@@ -897,9 +896,92 @@ async def get_history():
         db.close()
 
 
+@app.get("/api/equity-curve")
+async def get_equity_curve():
+    """Daily equity curve from ALL settled + closed_early bets (no limit).
+
+    Returns [{date, pnl, count}] for every day that had at least one closure.
+    The frontend starts from INITIAL_PORTFOLIO and accumulates daily PnL.
+    """
+    from sqlalchemy import func
+
+    db = get_db_session()
+    try:
+        initial = state.config.INITIAL_PORTFOLIO
+        closed_statuses = ("won", "lost", "settled", "closed_early")
+        close_col = func.coalesce(Bet.settled_at, Bet.closed_at)
+        # SQLite: use date() function to extract calendar date from datetime string
+        day_expr = func.date(close_col)
+
+        # Group PnL by calendar date (UTC)
+        rows = (
+            db.query(
+                day_expr.label("day"),
+                func.sum(Bet.pnl).label("daily_pnl"),
+                func.count(Bet.id).label("cnt"),
+            )
+            .filter(Bet.status.in_(closed_statuses))
+            .group_by(day_expr)
+            .order_by(day_expr.asc())
+            .all()
+        )
+
+        points = []
+        running = initial
+        for row in rows:
+            # row.day is "YYYY-MM-DD" string from SQLite date()
+            day_str = row.day  # "2026-06-24"
+            pnl = float(row.daily_pnl or 0)
+            running += pnl
+            # Format: "24 Haz"
+            from datetime import datetime as dt
+
+            d = dt.strptime(day_str, "%Y-%m-%d")
+            label = f"{d.day} {d.strftime('%b')}"
+            points.append(
+                {
+                    "date": label,
+                    "value": round(running, 2),
+                    "pnl": round(pnl, 2),
+                    "count": row.cnt,
+                }
+            )
+
+        # Add today with current unrealized value
+        unrealized = (
+            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
+            .filter(Bet.status.in_(OPEN_BET_STATUSES))
+            .scalar()
+        ) or 0.0
+        realized_now = running - initial  # all realized PnL accumulated
+        today_val = initial + realized_now + float(unrealized)
+        from datetime import datetime, timezone as tz
+
+        today = datetime.now(tz.utc).replace(tzinfo=None)
+        label = f"{today.day} {today.strftime('%b')}"
+        if points and points[-1]["date"] == label:
+            points[-1]["value"] = round(today_val, 2)
+        else:
+            points.append(
+                {
+                    "date": label,
+                    "value": round(today_val, 2),
+                    "pnl": 0,
+                    "count": 0,
+                }
+            )
+
+        return {"initial": initial, "points": points}
+    except Exception as e:
+        logger.error("Equity curve error: %s", e)
+        return {"error": str(e), "initial": 10000, "points": []}
+    finally:
+        db.close()
+
+
 @app.get("/api/slippage")
 async def get_slippage():
-    """Return recent slippage data from analyses joined with market info and bet results."""
+    """Return recent slippage data from analyses joined with market info."""
     db = get_db_session()
     try:
         rows = (
@@ -1228,7 +1310,11 @@ async def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Son 3 günde {losses_all} kayıp (toplam {total_settled} sonuçlanan). Calibration bozuk olabilir.",
+                    "message": (
+                        f"Son 3 günde {losses_all} kayıp "
+                        f"(toplam {total_settled} sonuçlanan). "
+                        f"Calibration bozuk olabilir."
+                    ),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
                 }
             )
@@ -1241,7 +1327,11 @@ async def get_health_check():
                 red_flags.append(
                     {
                         "severity": "warning",
-                        "message": f"Son 24 saatte {any_analyses} analiz yapıldı ama hiç bet açılmadı. Edge threshold çok yüksek olabilir.",
+                        "message": (
+                            f"Son 24 saatte {any_analyses} analiz yapıldı"
+                            f" ama hiç bet açılmadı."
+                            f" Edge threshold çok yüksek olabilir."
+                        ),
                         "action": "min_edge'i düşür veya marketleri kontrol et.",
                     }
                 )
@@ -1249,7 +1339,10 @@ async def get_health_check():
                 red_flags.append(
                     {
                         "severity": "info",
-                        "message": "Son 24 saatte hiç analiz yapılmadı. Market taraması çalışıyor mu?",
+                        "message": (
+                            "Son 24 saatte hiç analiz yapılmadı. "
+                            "Market taraması çalışıyor mu?"
+                        ),
                         "action": "Market taramasını kontrol et.",
                     }
                 )
@@ -1258,8 +1351,15 @@ async def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Tüm net edge'ler %2.5 altında (ortalama: %{avg_net_edge:.1f}). Maliyeti karşılamıyor.",
-                    "action": "Botu durdur. min_edge veya kalibrasyon ayarlarını gözden geçir.",
+                    "message": (
+                        f"Tüm net edge'ler %2.5 altında "
+                        f"(ortalama: %{avg_net_edge:.1f}). "
+                        f"Maliyeti karşılamıyor."
+                    ),
+                    "action": (
+                        "Botu durdur. min_edge veya "
+                        "kalibrasyon ayarlarını gözden geçir."
+                    ),
                 }
             )
 
@@ -1267,7 +1367,11 @@ async def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez.",
+                    "message": (
+                        f"Win rate %{win_rate_all:.1f} "
+                        f"(5+ sonuçlanmış bet). "
+                        f"Model tahminleri güvenilmez."
+                    ),
                     "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
                 }
             )
@@ -1277,7 +1381,10 @@ async def get_health_check():
             red_flags.append(
                 {
                     "severity": "warning",
-                    "message": f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, {open_total} açık. Risk yönetimi aşılıyor.",
+                    "message": (
+                        f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, "
+                        f"{open_total} açık. Risk yönetimi aşılıyor."
+                    ),
                     "action": "min_edge'i yükselt, Kelly fraction'ı düşür.",
                 }
             )
@@ -1286,7 +1393,11 @@ async def get_health_check():
             red_flags.append(
                 {
                     "severity": "warning",
-                    "message": f"Toplam PnL negatif: ${total_pnl_all_health:.2f}. Zarar trendi devam ediyor.",
+                    "message": (
+                        f"Toplam PnL negatif: "
+                        f"${total_pnl_all_health:.2f}. "
+                        f"Zarar trendi devam ediyor."
+                    ),
                     "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
                 }
             )
@@ -1441,7 +1552,7 @@ async def settlement_loop():
 
 
 def run_cli():
-    """CLI entry point: run, reset, fetch, parse, weather, analyze, bet, settle, report."""
+    """CLI entry point: run, reset, fetch, parse, weather, analyze."""
     parser = argparse.ArgumentParser()
     parser.add_argument("command")
     args = parser.parse_args()

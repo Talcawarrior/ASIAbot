@@ -616,6 +616,7 @@ export function useApiData() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [weights, setWeights] = useState<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>({});
   const [slippageData, setSlippageData] = useState<SlippageEntry[]>([]);
+  const [equityCurve, setEquityCurve] = useState<{ initial: number; points: Array<{ date: string; value: number; pnl: number; count: number }> } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -642,12 +643,13 @@ export function useApiData() {
     abortRef.current = controller;
 
     try {
-      const [statusRes, signalsRes, historyRes, weightsRes, slippageRes] = await Promise.allSettled([
+      const [statusRes, signalsRes, historyRes, weightsRes, slippageRes, equityRes] = await Promise.allSettled([
         fetchJson<StatusResponse>("/api/status", controller.signal),
         fetchJson<{ signals: Signal[]; count: number }>("/api/signals", controller.signal),
         fetchJson<{ history: HistoryEntry[]; stats: HistoryStats }>("/api/history", controller.signal),
         fetchJson<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>("/api/asi/weights", controller.signal),
         fetchJson<{ slippage: SlippageEntry[] }>("/api/slippage", controller.signal),
+        fetchJson<{ initial: number; points: Array<{ date: string; value: number; pnl: number; count: number }> }>("/api/equity-curve", controller.signal),
       ]);
 
       if (controller.signal.aborted) return;
@@ -660,6 +662,7 @@ export function useApiData() {
       }
       if (weightsRes.status === "fulfilled") setWeights(weightsRes.value);
       if (slippageRes.status === "fulfilled") setSlippageData(slippageRes.value.slippage ?? []);
+      if (equityRes.status === "fulfilled") setEquityCurve(equityRes.value);
 
       setError(null);
       setLastUpdated(new Date());
@@ -686,7 +689,12 @@ export function useApiData() {
 
   // Map data to UI types
   const kpiData = mapKpiData(status, health, historyStats);
-  const portfolioData = mapPortfolioData(status, history);
+  // Use equity curve from backend (all dates, no 300 limit)
+  const portfolioData: PortfolioPoint[] = equityCurve?.points?.map((p) => ({
+    date: p.date,
+    value: Math.round(p.value),
+    drawdown: 0,
+  })) ?? mapPortfolioData(status, history);
   const openPositions = mapOpenPositions(signals);
   const activityFeed = mapActivityFeed(signals, history);
   const edgeDistribution = mapEdgeDistribution(health);
