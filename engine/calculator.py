@@ -150,11 +150,13 @@ class Calculator:
                 .all()
             )
 
-            # Her kaynaktan en son tahmini al
+            # Her kaynaktan en son tahmini al + ağırlıkları topla
             latest_by_source = {}
+            source_weights = {}
             for f in forecasts:
                 if f.source not in latest_by_source:
                     latest_by_source[f.source] = f.predicted_value
+                    source_weights[f.source] = f.model_weight or 0.0
 
             forecast_values = list(latest_by_source.values())
 
@@ -163,14 +165,36 @@ class Calculator:
                     f"Market {market_id}: Yetersiz kaynak ({len(forecast_values)}/{bot_config.strategy.min_sources})"
                 )
 
-            # Compute std early — needed for both consensus and per-model probs
+            # Compute weighted std early — needed for both consensus and per-model probs
+            total_weight = sum(source_weights.get(s, 0.0) for s in latest_by_source)
             if forecast_values and len(forecast_values) > 1:
-                avg = sum(forecast_values) / len(forecast_values)
-                std_val = math.sqrt(
-                    sum((x - avg) ** 2 for x in forecast_values)
-                    / (len(forecast_values) - 1)
-                )
+                if total_weight > 0:
+                    # Weighted average
+                    avg = (
+                        sum(
+                            latest_by_source[s] * source_weights.get(s, 0.0)
+                            for s in latest_by_source
+                        )
+                        / total_weight
+                    )
+                    # Weighted std
+                    std_val = math.sqrt(
+                        sum(
+                            source_weights.get(s, 0.0)
+                            * (latest_by_source[s] - avg) ** 2
+                            for s in latest_by_source
+                        )
+                        / total_weight
+                    )
+                else:
+                    # Fallback to simple average if no weights
+                    avg = sum(forecast_values) / len(forecast_values)
+                    std_val = math.sqrt(
+                        sum((x - avg) ** 2 for x in forecast_values)
+                        / (len(forecast_values) - 1)
+                    )
             else:
+                avg = forecast_values[0] if forecast_values else 0.5
                 std_val = None
 
             # days_ahead: use calendar days (>=0) and treat "today" as 1 day
@@ -180,7 +204,7 @@ class Calculator:
             ).days
             days_ahead_for_check = max(days_ahead, 1)
 
-            # Olasılık hesapla — market_type-aware
+            # Olasılık hesapla — weighted mean/std ile (market_type-aware)
             # RANGE markets: pass explicit bucket bounds if stored
             range_low = None
             range_high = None
@@ -191,8 +215,10 @@ class Calculator:
                 ):
                     range_low = float(market.threshold_low)
                     range_high = float(market.threshold_high)
-            estimated_prob = self.estimate_probability(
-                forecast_values,
+            total_std = float(std_val) if std_val is not None else 2.0
+            estimated_prob = _estimate_probability(
+                mean=avg,
+                std=total_std,
                 threshold=float(market.threshold or 0),
                 days_ahead=days_ahead_for_check,
                 market_type=(market.market_type or "HIGH"),

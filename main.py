@@ -838,7 +838,6 @@ def get_history():
             pnl = bet.pnl or bet.realized_pnl or 0.0
             stake = bet.amount or 0.0
             roi = (pnl / stake * 100) if stake > 0 else 0.0
-            close_ts = bet.settled_at or bet.closed_at
             # Get actual edge from Analysis (net edge after slippage+fee)
             analysis = bet_analyses.get(bet.analysis_id) if bet.analysis_id else None
             edge_pct = (
@@ -874,7 +873,10 @@ def get_history():
                     "edge": edge_pct,
                     "result": "WIN" if pnl > 0 else "LOSS",
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
-                    "settled_at": (close_ts.isoformat() if close_ts else None),
+                    "settled_at": (
+                        bet.settled_at.isoformat() if bet.settled_at else None
+                    ),
+                    "closed_at": (bet.closed_at.isoformat() if bet.closed_at else None),
                     "exit_type": exit_type,
                 }
             )

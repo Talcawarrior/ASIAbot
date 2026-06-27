@@ -83,6 +83,7 @@ export interface HistoryEntry {
   result: "WIN" | "LOSS";
   placed_at: string | null;
   settled_at: string | null;
+  closed_at: string | null;  // Early exit time
   exit_type: string;  // ST, TP, SL, TS, TD, OT
 }
 
@@ -541,7 +542,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
     const timestamp = placedDate.toLocaleDateString("tr-TR", {
       day: "numeric",
       month: "short",
-    }) + " " + placedDate.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    }) + " " + placedDate.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
     // Compute duration if possible
     let duration = "—";
@@ -558,12 +559,15 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       ? Math.min(1.0, h.entry_price + (h.realized_pnl / stake))
       : Math.max(0, h.entry_price - (Math.abs(h.realized_pnl) / stake));
 
-    const closedAt = h.settled_at
-      ? new Date(h.settled_at).toLocaleDateString("tr-TR", {
+    // closed_at for early exits, settled_at for normal settlements
+    const closeDate = h.closed_at || h.settled_at;
+    const closedAt = closeDate
+      ? new Date(closeDate).toLocaleDateString("tr-TR", {
           day: "numeric",
           month: "short",
           hour: "2-digit",
           minute: "2-digit",
+          second: "2-digit",
         })
       : "—";
 

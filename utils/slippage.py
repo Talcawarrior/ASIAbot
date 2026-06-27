@@ -216,8 +216,13 @@ def adjust_edge_for_costs(
     cost += gas_edge_pct
     if include_fee:
         # Fee drag: Polymarket charges 2% on PROFIT, not on total payout.
-        # Fee as fraction of stake ≈ 0.02 × (1/p - 1) ≈ 0.02 × (1 - entry_price).
-        fee_drag = FEE_PCT * (1 - entry_price)
+        # Fee as fraction of stake = 0.02 × (1/p - 1) = 0.02 × (1-p) / p.
+        # This matches the settlement code: fee = (payout - stake) * fee_rate
+        # where payout = stake / entry_price.
+        if entry_price > 0:
+            fee_drag = FEE_PCT * (1.0 - entry_price) / entry_price
+        else:
+            fee_drag = 0.0
         cost += fee_drag
     return raw_edge - cost
 
