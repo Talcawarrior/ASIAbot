@@ -36,6 +36,9 @@ def make_mock_bet(**kwargs):
     bet.result_data = kwargs.get("result_data", None)
     bet.close_reason = kwargs.get("close_reason", None)
     bet.closed_at = kwargs.get("closed_at", None)
+    bet.placed_at = kwargs.get(
+        "placed_at", datetime.now(timezone.utc) - timedelta(hours=1)
+    )
     return bet
 
 

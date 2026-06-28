@@ -407,6 +407,19 @@ class RiskManager:
 
         Returns: (should_exit: bool, reason: str)
         """
+        # Minimum hold: bet aynı scan döngüsünde açıldıysa kapatma.
+        # Bu, resolve edilmiş market'lere anında bet açılıp kapanmasını engeller.
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        placed = getattr(bet, "placed_at", None)
+        if placed:
+            if placed.tzinfo is None:
+                placed = placed.replace(tzinfo=timezone.utc)
+            hold_seconds = (now - placed).total_seconds()
+            if hold_seconds < 180:  # 3 dakika minimum hold
+                return False, "Hold (minimum hold period)"
+
         # 1. Stop-loss
         exit_bool, reason = self.check_stop_loss(bet, current_price, market)
         if exit_bool:

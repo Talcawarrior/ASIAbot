@@ -70,7 +70,7 @@ class StrategyConfig:
     # vig + a thin profit margin in paper mode.  Can be lowered once a
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
-    max_bet_amount: float = 30.0  # Maximum $30 per bet (paper-mode safety cap)
+    max_bet_amount: float = 3.0  # Maximum $3 per bet (binde 3 of $1,000)
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
     # markets don't expose a `liquidity` field reliably
     # (it's always 0). The current_price already reflects
@@ -172,9 +172,9 @@ class BotConfig:
 class Config:
     """Central configuration for the ASIAbot Weather Prediction Bot."""
 
-    INITIAL_PORTFOLIO = float(os.getenv("INITIAL_PORTFOLIO", "10000.0"))
+    INITIAL_PORTFOLIO = float(os.getenv("INITIAL_PORTFOLIO", "1000.0"))
     MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
-    MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.03"))
+    MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.003"))
     MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
     # Minimum market price to place a bet. Bids at 0.001 have no real
     # liquidity on Polymarket; paper PnL at those levels is fantasy.
@@ -396,7 +396,7 @@ class Config:
     @classmethod
     def get_max_bet_amount(cls, portfolio_value: float) -> float:
         """Return maximum allowed bet amount."""
-        return min(portfolio_value * cls.MAX_BET_PCT, portfolio_value * 0.03)
+        return portfolio_value * cls.MAX_BET_PCT
 
     @classmethod
     def get_max_exposure_amount(cls, portfolio_value: float) -> float:

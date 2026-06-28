@@ -990,7 +990,7 @@ def get_equity_curve():
         return {"initial": initial, "points": points}
     except Exception as e:
         logger.error("Equity curve error: %s", e)
-        return {"error": str(e), "initial": 10000, "points": []}
+        return {"error": str(e), "initial": config.INITIAL_PORTFOLIO, "points": []}
     finally:
         db.close()
 

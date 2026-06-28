@@ -199,10 +199,10 @@ class Portfolio(Base):
     __tablename__ = "portfolio"
 
     id = Column(Integer, primary_key=True)
-    initial_value = Column(Float, default=10000.0)
-    current_value = Column(Float, default=10000.0)
-    cash_balance = Column(Float, default=10000.0)
-    total_value = Column(Float, default=10000.0)
+    initial_value = Column(Float, default=1000.0)
+    current_value = Column(Float, default=1000.0)
+    cash_balance = Column(Float, default=1000.0)
+    total_value = Column(Float, default=1000.0)
     total_realized_pnl = Column(Float, default=0.0)
     total_won = Column(Integer, default=0)
     total_lost = Column(Integer, default=0)
