@@ -145,7 +145,7 @@ class SettlementEngine:
         if (
             outcome is None
             and market.target_date
-            and (now_naive - market.target_date) > timedelta(hours=48)
+            and (now_naive - market.target_date) > timedelta(hours=24)
         ):
             # Fallback: resolution tarihi +48h geçmişse, outcomePrices'a bak
             outcome = self._fallback_price_resolution(market)

@@ -1562,6 +1562,7 @@ async def scan_and_bet_loop():
         run_update_prices,
     )
 
+    stale_check_counter = 0
     while state.is_running:
         try:
             await asyncio.to_thread(run_fetch_markets)
@@ -1572,10 +1573,67 @@ async def scan_and_bet_loop():
             await asyncio.to_thread(run_update_prices)
             # Aktif risk yönetimi: stop-loss, take-profit, time-decay, trailing stop
             await asyncio.to_thread(run_risk_management)
+
+            # Her 10 döngüde bir stale bet temizliği (test marketleri ve
+            # target_date'i çoktan geçmiş betleri kapat)
+            stale_check_counter += 1
+            if stale_check_counter >= 10:
+                stale_check_counter = 0
+                await asyncio.to_thread(_cleanup_stale_bets)
         except Exception as e:
             logger.error("Scan error: %s", e)
         state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
         await asyncio.sleep(state.config.SCAN_INTERVAL)
+
+
+def _cleanup_stale_bets():
+    """Cancel open bets whose target_date has passed by >48h and market is unresolvable."""
+    from database.db import get_session
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with get_session() as session:
+        stale = (
+            session.query(Bet)
+            .filter(
+                Bet.status.in_(OPEN_BET_STATUSES),
+                Bet.placed_at < cutoff,
+            )
+            .all()
+        )
+        cancelled = 0
+        for bet in stale:
+            market = (
+                session.query(WeatherMarket)
+                .filter(WeatherMarket.id == bet.market_id)
+                .first()
+            )
+            # Only cancel if:
+            # 1. Market doesn't exist (test market), OR
+            # 2. target_date + 48h has passed and market still not resolved
+            should_cancel = False
+            if not market:
+                should_cancel = True  # Test market — can never resolve
+            elif (
+                market.target_date
+                and (now - market.target_date).total_seconds() > 48 * 3600
+            ):
+                should_cancel = True  # Too old, force cancel
+
+            if should_cancel:
+                from utils.accounting import credit_sale
+
+                bet.status = "cancelled"
+                bet.settled_at = now
+                bet.close_reason = "stale_cleanup"
+                amount = float(bet.amount or 0)
+                if amount > 0:
+                    credit_sale(session, amount, f"stale_cleanup:bet_{bet.id}")
+                cancelled += 1
+
+        if cancelled > 0:
+            session.commit()
+            logger.info("Stale cleanup: cancelled %d old bets", cancelled)
 
 
 async def settlement_loop():
