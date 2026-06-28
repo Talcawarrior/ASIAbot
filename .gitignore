@@ -25,6 +25,7 @@ data/karpathy_results.tsv
 data/asi_evolve_best.json
 data/asi_evolve_results.tsv
 data/asi_evolve_experiments.db
+data/experiments.db
 data/sia_hourly_best.json
 data/sia_hourly_results.tsv
 data/llm_loop_runs.jsonl
@@ -54,3 +55,8 @@ tool-results/
 *.jpeg
 screenshots/
 dashboard-verification/
+
+# Misc
+asiabot.db
+Caddyfile
+examples/
