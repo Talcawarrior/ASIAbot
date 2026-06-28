@@ -47,3 +47,10 @@ out/
 graphify-out/
 tool-results/
 *.egg
+
+# Screenshots & dashboard verification images
+*.png
+*.jpg
+*.jpeg
+screenshots/
+dashboard-verification/

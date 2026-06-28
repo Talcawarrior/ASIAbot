@@ -184,12 +184,12 @@ Bot ayağa kalktığında:
 | Değişken | Varsayılan | Açıklama |
 |----------|-----------|----------|
 | `DRY_RUN` | `true` | Gerçek emir göndermeden simülasyon |
-| `INITIAL_PORTFOLIO` | `10000.0` | Başlangıç portföy değeri ($) |
+| `INITIAL_PORTFOLIO` | `1000.0` | Başlangıç portföy değeri ($) |
 | `SCAN_INTERVAL` | `300` | Market tarama aralığı (saniye) |
 | `SETTLEMENT_INTERVAL` | `120` | Settlement kontrol aralığı (saniye) |
 | `SIA_INTERVAL` | `86400` | SIA optimizasyon aralığı (saniye) |
 | `MAX_EXPOSURE_PCT` | `0.25` | Maksimum exposure oranı |
-| `MAX_BET_PCT` | `0.03` | Maksimum bet büyüklüğü (portföy %) |
+| `MAX_BET_PCT` | `0.003` | Maksimum bet büyüklüğü (portföy %) |
 | `KELLY_FRACTION` | `0.15` | Fractional Kelly katsayısı |
 | `CITY_CAP` | `4` | Şehir başına maksimum pozisyon |
 | `HOST` | `127.0.0.1` | Sunucu adresi |
