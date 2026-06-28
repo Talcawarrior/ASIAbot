@@ -209,10 +209,12 @@ def adjust_edge_for_costs(
     """
     est = estimate_slippage(entry_price)
     cost = est.slippage_pct
-    # Gas cost as edge percentage: $0.10 / bet_amount_usd
-    # If bet_amount_usd not provided, fall back to $30 (legacy behavior)
+    # Gas cost as edge percentage: $0.10 / bet_amount_usd gives return %.
+    # Convert to probability edge units by multiplying by entry_price.
+    # Edge = prob - price, so return% = edge/price. Gas return% = gas/price = gas edge.
+    # If bet_amount_usd not provided, fall back to $30 (legacy behavior).
     gas_denominator = bet_amount_usd if bet_amount_usd and bet_amount_usd > 0 else 30.0
-    gas_edge_pct = GAS_COST_USD / gas_denominator
+    gas_edge_pct = (GAS_COST_USD / gas_denominator) * entry_price
     cost += gas_edge_pct
     if include_fee:
         # Fee drag: Polymarket charges 2% on PROFIT, not on total payout.

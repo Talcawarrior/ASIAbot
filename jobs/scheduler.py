@@ -328,9 +328,11 @@ def run_risk_management():
                         pass  # fall back to simple calculation
 
                 # Polymarket fee: 2% on profit (same as settler)
-                stake = float(bet.amount or 0.0)
                 fee_rate = 0.02
-                fee = round(max(0.0, proceeds - stake) * fee_rate, 2)
+                # Use raw_pnl for fee: fee = max(0, profit) * 2%
+                # raw_pnl is already based on filled_shares for ladder bets,
+                # so this correctly charges fee only on realized profit.
+                fee = round(max(0.0, raw_pnl) * fee_rate, 2)
                 realized = round(raw_pnl - fee, 2)
                 proceeds_net = round(proceeds - fee, 2)
 
@@ -348,7 +350,14 @@ def run_risk_management():
 
                 portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
-                    portfolio.total_value = round(portfolio.cash_balance or 0.0, 2)
+                    open_exposure = (
+                        session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                        .filter(Bet.status.in_(OPEN_BET_STATUSES))
+                        .scalar()
+                    ) or 0.0
+                    portfolio.total_value = round(
+                        float(portfolio.cash_balance or 0.0) + float(open_exposure), 2
+                    )
                     portfolio.total_realized_pnl = round(
                         (portfolio.total_realized_pnl or 0.0) + realized, 2
                     )

@@ -129,6 +129,10 @@ class StrategyConfig:
     slippage_pct: float = 0.005  # used when slippage_model="flat"
     gas_cost_usd: float = 0.10  # Polygon gas per round-trip
 
+    # ── Flat bet override & Daily loss limit (synced from Config) ─────────
+    flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
+    daily_loss_limit: float = 0.05  # 5% daily max loss
+
 
 @dataclass
 class RiskConfig:
@@ -145,11 +149,9 @@ class RiskConfig:
 
     # Rebalancing
     min_rebalance_edge_ratio: float = 2.0  # Yeni edge en az 2x eski edge
-    max_city_positions: int = 3  # Şehir başına max pozisyon (rebalance)
     rebalance_min_loss: float = -0.15  # Rebalance için min zarar eşiği
 
     # Risk management loop interval (seconds)
-    risk_scan_interval: int = 300  # Her 5 dakikada bir tara
 
 
 @dataclass
@@ -394,11 +396,6 @@ class Config:
         return cls.MODEL_WEIGHTS
 
     @classmethod
-    def get_max_bet_amount(cls, portfolio_value: float) -> float:
-        """Return maximum allowed bet amount."""
-        return portfolio_value * cls.MAX_BET_PCT
-
-    @classmethod
     def get_max_exposure_amount(cls, portfolio_value: float) -> float:
         """Return maximum allowed total exposure."""
         return portfolio_value * cls.MAX_EXPOSURE_PCT
@@ -476,7 +473,10 @@ def apply_persisted_strategy_params() -> dict:
     if "max_bet_pct" in persisted:
         try:
             Config.MAX_BET_PCT = float(persisted["max_bet_pct"])
+            # Keep StrategyConfig.max_bet_amount in sync (dollars = portfolio * pct)
+            s.max_bet_amount = round(Config.INITIAL_PORTFOLIO * Config.MAX_BET_PCT, 2)
             applied["max_bet_pct"] = Config.MAX_BET_PCT
+            applied["max_bet_amount"] = s.max_bet_amount
         except (TypeError, ValueError):
             pass
     if "min_entry_price" in persisted:
