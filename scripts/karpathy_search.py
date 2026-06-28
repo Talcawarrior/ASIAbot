@@ -275,6 +275,8 @@ def _run_backtest(parameters: dict) -> dict:
     if total_trades == 0:
         return {
             "trades": 0,
+            "won": 0,
+            "lost": 0,
             "roi": 0.0,
             "sharpe": 0.0,
             "win_rate": 0.0,

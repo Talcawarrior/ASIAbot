@@ -457,7 +457,6 @@ class WeatherEngine:
     def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
         self.config = cfg or config
-        self.session: aiohttp.ClientSession | None = None
         self.model_weights = self.config.get_normalized_weights()
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
@@ -466,15 +465,6 @@ class WeatherEngine:
     def _compute_effective_min_edge(market, std: float | None = None) -> float:
         """Return the time-to-close-scaled min_edge. Delegates to utils.probability."""
         return compute_effective_min_edge(market, std=std)
-
-    async def start(self):
-        if self.session is None:
-            self.session = aiohttp.ClientSession()
-
-    async def stop(self):
-        if self.session and not self.session.closed:
-            await self.session.close()
-            self.session = None
 
     async def get_multi_model_forecast(
         self,
@@ -516,22 +506,20 @@ class WeatherEngine:
             }
 
             try:
-                if not self.session or self.session.closed:
-                    await self.start()
-
-                async with self.session.get(
-                    url, params=params, timeout=aiohttp.ClientTimeout(total=30)
-                ) as resp:
-                    if resp.status == 429:
-                        logger.warning(
-                            "Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s..."
-                        )
-                        await asyncio.sleep(30)
-                        return None
-                    if resp.status != 200:
-                        return None
-                    data = await resp.json()
-                    self._forecast_cache[cache_key] = data
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url, params=params, timeout=aiohttp.ClientTimeout(total=30)
+                    ) as resp:
+                        if resp.status == 429:
+                            logger.warning(
+                                "Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s..."
+                            )
+                            await asyncio.sleep(30)
+                            return None
+                        if resp.status != 200:
+                            return None
+                        data = await resp.json()
+                        self._forecast_cache[cache_key] = data
             except Exception as e:
                 logger.error("get_multi_model_forecast fetch error: %s", e)
                 return None
