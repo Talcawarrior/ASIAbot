@@ -222,6 +222,11 @@ def get_status():
         open_bets = db.query(Bet).filter(Bet.status.in_(open_statuses)).all()
         open_positions = []
         for bet in open_bets:
+            wm = (
+                db.query(WeatherMarket)
+                .filter(WeatherMarket.id == bet.market_id)
+                .first()
+            )
             open_positions.append(
                 {
                     "id": str(bet.id),
@@ -235,6 +240,10 @@ def get_status():
                     "amount": float(bet.amount or 0),
                     "opened_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "market_id": bet.market_id,
+                    "market_type": wm.market_type if wm else None,
+                    "threshold": float(wm.threshold) if wm and wm.threshold else None,
+                    "question": wm.question if wm else None,
+                    "metric": wm.metric if wm else None,
                 }
             )
 
@@ -751,6 +760,12 @@ def get_signals():
                     "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "resolution_date": res_date.isoformat() if res_date else None,
                     "status": bet.status,
+                    "market_type": market.market_type if market else None,
+                    "threshold": float(market.threshold)
+                    if market and market.threshold
+                    else None,
+                    "question": market.question if market else None,
+                    "metric": market.metric if market else None,
                 }
             )
         return {"signals": signals, "count": len(signals)}

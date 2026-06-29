@@ -171,10 +171,13 @@ export interface KpiData {
   sharpeRatio: number;
   maxDrawdown: number;
   // Open positions summary
-  openPositionsValue: number;  // Açık pozisyonların toplam değeri (shares × current_price)
+  openPositionsValue: number;  // Açık pozisyonların toplam stake tutarı
   maxOpenableUsd: number;      // Maksimum açılabilecek USD (gün itibarıyla)
   // Second row metrics
   totalPnlValue: number;       // Total PnL ($)
+  realizedPnl: number;         // Kapalı bahislerden realized PnL
+  unrealizedPnl: number;       // Açık pozisyonlardan unrealized PnL
+  totalStake: number;          // Toplam yatırılan tutar (tüm bahisler)
   totalRoi: number;            // Total ROI (%)
   closedBets: number;          // Kapalı Bahis
   closedWins: number;
@@ -202,6 +205,8 @@ export interface OpenPosition {
   openedAt: string;   // formatted date string
   conditionId: string;
   amount: number;
+  metric: string | null;  // temperature_max → H, temperature_min → L
+  threshold: number | null;   // °C
 }
 
 export interface ActivityItem {
@@ -228,6 +233,7 @@ export interface TradeHistoryEntry {
   edge: number;
   duration: string;
   closedAt: string;  // formatted closing date/time
+  closedAtISO: string | null;  // raw ISO date for filtering
   strategy: string;
   conditionId: string;
   exitType: string;  // ST, TP, SL, TS, TD
@@ -289,8 +295,11 @@ function mapKpiData(
       maxDrawdown: 0,
       openPositionsValue: 0,
       maxOpenableUsd: 0,
-      totalPnlValue: 0,
-      totalRoi: 0,
+        totalPnlValue: 0,
+        realizedPnl: 0,
+        unrealizedPnl: 0,
+        totalStake: 0,
+        totalRoi: 0,
       closedBets: 0,
       closedWins: 0,
       closedLosses: 0,
@@ -302,9 +311,12 @@ function mapKpiData(
   const s = status.stats;
   const p = status.portfolio;
   
-  // Use portfolio.total_pnl for Total PnL (realized + unrealized — matches portfolio value)
+  // Use historyStats.total_pnl (realized only) — consistent with trade history
   const hs = historyStats;
-  const totalPnlValue = p.total_pnl ?? 0;
+  const realizedPnl = hs?.total_pnl ?? 0;
+  const unrealizedPnl = status.open_positions?.reduce((sum: number, pos: Record<string, unknown>) => sum + ((pos.unrealized_pnl as number) || 0), 0) ?? 0;
+  const totalPnlValue = realizedPnl + unrealizedPnl;
+  const totalStake = (hs?.total_stake ?? 0) + (status.open_positions?.reduce((sum: number, pos: Record<string, unknown>) => sum + ((pos.amount as number) || 0), 0) ?? 0);
   const totalRoi = hs?.overall_roi ?? 0;
   const closedWins = hs?.total_won ?? 0;
   const closedLosses = hs?.total_lost ?? 0;
@@ -324,9 +336,9 @@ function mapKpiData(
 
   const avgEdge = health?.edge_distribution?.avg_net_edge_pct ?? 0;
 
-  // Calculate open positions total value (sum of shares × current_price)
+  // Calculate open positions total value (sum of stake amounts — cash locked)
   const openPositionsValue = status.open_positions?.reduce(
-    (sum, pos) => sum + (pos.shares || 0) * (pos.current_price || 0), 0
+    (sum, pos) => sum + (pos.amount || 0), 0
   ) ?? 0;
 
   // Calculate max openable USD — 25% of total portfolio value
@@ -338,7 +350,7 @@ function mapKpiData(
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
     dailyPnl: p.daily_pnl,
-    totalPnl: p.total_pnl,
+    totalPnl: hs?.total_pnl ?? 0,
     openPositions: s.total_bets,
     winRate: Math.round(winRate * 10) / 10,
     winRateLabel,
@@ -353,6 +365,9 @@ function mapKpiData(
     maxOpenableUsd: Math.round(maxExposure * 100) / 100,
     // Second row
     totalPnlValue,
+    realizedPnl,
+    unrealizedPnl,
+    totalStake,
     totalRoi,
     closedBets,
     closedWins,
@@ -451,6 +466,8 @@ function mapOpenPositions(signals: Signal[]): OpenPosition[] {
       openedAt,
       conditionId: s.market_id ? `${s.market_id.slice(0, 6)}…${s.market_id.slice(-4)}` : "—",
       amount: s.stake_amount ?? 0,
+      threshold: (s as Record<string, unknown>).threshold as number ?? null,
+      metric: (s as Record<string, unknown>).metric as string ?? null,
     };
   });
 }
@@ -583,6 +600,7 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       edge: h.edge ?? (h.roi ? Math.round(h.roi * 10) / 10 : 0),
       duration,
       closedAt,
+      closedAtISO: h.closed_at || h.settled_at || null,
       strategy: "SIA",
       conditionId: "—",
       exitType: h.exit_type || "ST",
