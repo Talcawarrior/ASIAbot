@@ -28,6 +28,10 @@ class BetPlacer:
         #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
         from engine.strategy import RiskManager
 
+        # NOTE: RiskManager is created WITHOUT a db_session here.
+        # The session is bound per-call in place_bet() so that
+        # _conservative_portfolio_value() always sees fresh committed data
+        # instead of falling back to INITIAL_PORTFOLIO ($1000).
         self.risk_manager = RiskManager()
 
         # Hard guard: the user requires paper-only mode.
@@ -71,6 +75,9 @@ class BetPlacer:
     def place_bet(self, analysis_id: int) -> Bet | None:
         """Analiz sonucuna göre bet aç."""
         with get_session() as session:
+            # Bind session to risk manager so _conservative_portfolio_value()
+            # queries DB instead of returning stale INITIAL_PORTFOLIO.
+            self.risk_manager.db = session
             analysis = session.query(Analysis).filter_by(id=analysis_id).first()
             if not analysis or not analysis.should_bet:
                 return None
@@ -482,8 +489,22 @@ class BetPlacer:
         markets_with_bets: set[str] = set()
 
         with get_session() as session:
+            # Only use the LATEST analysis per market (highest id).
+            # This prevents old analyses with stale recommended_amount
+            # (e.g. pre-config-change $29.70) from being placed.
+            from sqlalchemy import func as sa_func
+
+            subq = (
+                session.query(
+                    Analysis.market_id,
+                    sa_func.max(Analysis.id).label("max_id"),
+                )
+                .filter(Analysis.should_bet.is_(True))
+                .group_by(Analysis.market_id)
+                .subquery()
+            )
             pending = (
-                session.query(Analysis).filter(Analysis.should_bet.is_(True)).all()
+                session.query(Analysis).join(subq, Analysis.id == subq.c.max_id).all()
             )
 
             # Dedup: skip market_ids that already have ANY non-rejected Bet.
