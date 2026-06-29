@@ -341,11 +341,10 @@ function mapKpiData(
     (sum, pos) => sum + (pos.amount || 0), 0
   ) ?? 0;
 
-  // Calculate max openable USD — 25% of total portfolio value
-  // maxExposure = the hard limit (25% of portfolio)
-  const portfolioValue = p.initial + p.realized_pnl + p.unrealized_pnl;
-  const maxExposurePct = 0.25; // TOTAL_EXPOSURE_PCT from config
-  const maxExposure = portfolioValue * maxExposurePct;
+  // Use the conservative max_exposure from the backend API
+  // (initial + realized_before_today) × TOTAL_EXPOSURE_PCT
+  // NOT current portfolio — that would inflate the cap with unrealized gains
+  const maxExposure = status.portfolio.max_exposure;
 
   return {
     portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
