@@ -8,6 +8,11 @@ from sqlalchemy import func
 
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
+from utils.formulas import (
+    polymarket_fee,
+    portfolio_total_value,
+    unrealized_pnl as compute_unrealized_pnl,
+)
 
 logger = logging.getLogger("JOBS_SCHEDULER")
 
@@ -134,7 +139,9 @@ def run_update_prices():
             # 1. unrealized_pnl
             # current_price is already in side terms (YES=yes_price, NO=no_price)
             # so the same (current - entry) * shares formula works for both sides.
-            bet.unrealized_pnl = round(shares * (current - entry), 2)
+            bet.unrealized_pnl = round(
+                compute_unrealized_pnl(shares, current, entry), 2
+            )
 
             total_unrealized += bet.unrealized_pnl or 0.0
 
@@ -197,7 +204,7 @@ def run_update_prices():
                 cash = float(portfolio.cash_balance)
             else:
                 cash = (portfolio.initial_value or 1000.0) + float(realized_pnl_total)
-            portfolio.total_value = round(cash + float(open_exposure), 2)
+            portfolio.total_value = portfolio_total_value(cash, float(open_exposure))
             portfolio.current_value = portfolio.total_value  # Sync current_value
             portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(portfolio)
@@ -298,9 +305,11 @@ def run_risk_management():
 
                 # Calculate proceeds: for ladder bets, sum ONLY filled rungs
                 entry = float(bet.entry_price or bet.price or 0.0)
-                shares = float(bet.shares or 0.0)
-                raw_pnl = round(shares * (current_price - entry), 2)
-                proceeds = round(shares * current_price, 2)  # principal + PnL
+                exit_shares = float(bet.shares or 0.0)
+                raw_pnl = round(
+                    compute_unrealized_pnl(exit_shares, current_price, entry), 2
+                )
+                proceeds = round(exit_shares * current_price, 2)  # principal + PnL
 
                 # Ladder: only filled rungs were debited, so only filled
                 # rung shares can be sold.  Pending rungs are cancelled.
@@ -320,19 +329,25 @@ def run_risk_management():
                                 if r.get("status") == "filled"
                             )
                             if filled_shares > 0:
-                                proceeds = round(filled_shares * current_price, 2)
+                                exit_shares = filled_shares
+                                proceeds = round(exit_shares * current_price, 2)
                                 raw_pnl = round(
-                                    filled_shares * (current_price - entry), 2
+                                    compute_unrealized_pnl(
+                                        exit_shares, current_price, entry
+                                    ),
+                                    2,
                                 )
                     except Exception:
                         pass  # fall back to simple calculation
 
-                # Polymarket fee: 2% on profit (same as settler)
-                fee_rate = 0.02
-                # Use raw_pnl for fee: fee = max(0, profit) * 2%
-                # raw_pnl is already based on filled_shares for ladder bets,
-                # so this correctly charges fee only on realized profit.
-                fee = round(max(0.0, raw_pnl) * fee_rate, 2)
+                # Polymarket taker fee on early exit (sell order).
+                # Official formula: fee = C × feeRate × p × (1-p)
+                # where C = exit_shares, feeRate = 0.05 (Weather), p = exit price.
+                # Unlike settlement (where p→1 gives fee=0), an early exit
+                # is a real trade that triggers the fee formula.
+                # See utils/formulas.py → polymarket_fee() for the canonical version.
+                fee_rate = 0.05  # Weather category rate
+                fee = round(polymarket_fee(exit_shares, current_price, fee_rate), 2)
                 realized = round(raw_pnl - fee, 2)
                 proceeds_net = round(proceeds - fee, 2)
 
@@ -355,8 +370,8 @@ def run_risk_management():
                         .filter(Bet.status.in_(OPEN_BET_STATUSES))
                         .scalar()
                     ) or 0.0
-                    portfolio.total_value = round(
-                        float(portfolio.cash_balance or 0.0) + float(open_exposure), 2
+                    portfolio.total_value = portfolio_total_value(
+                        float(portfolio.cash_balance or 0.0), float(open_exposure)
                     )
                     portfolio.total_realized_pnl = round(
                         (portfolio.total_realized_pnl or 0.0) + realized, 2

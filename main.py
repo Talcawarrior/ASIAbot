@@ -41,6 +41,7 @@ from engine.calculator import WeatherEngine
 from engine.strategy import BettingEngine, RiskManager, SIALoop
 from executor.settler import SettlementEngine
 from scrapers.polymarket import PolymarketScraper
+from utils.formulas import max_exposure_cap, portfolio_current_value
 from utils.price_sanity import safe_ev
 from utils.weights_store import load_weights
 
@@ -329,7 +330,9 @@ def get_status():
             "locked": state.locked,
             "portfolio": {
                 "initial": initial_capital,
-                "current": initial_capital + realized_pnl_db + unrealized_pnl_db,
+                "current": portfolio_current_value(
+                    initial_capital, realized_pnl_db, unrealized_pnl_db
+                ),
                 "daily_pnl": daily_pnl,
                 "daily_roi": daily_roi,
                 "unrealized_pnl": float(unrealized_pnl_db),
@@ -338,8 +341,11 @@ def get_status():
                 "total_roi": total_roi,
                 "exposure": float(exposure_db),
                 "max_exposure": round(
-                    (initial_capital + realized_before_today)
-                    * state.config.TOTAL_EXPOSURE_PCT,
+                    max_exposure_cap(
+                        initial_capital,
+                        realized_before_today,
+                        state.config.TOTAL_EXPOSURE_PCT,
+                    ),
                     2,
                 ),
             },

@@ -65,6 +65,8 @@ def init_db():
     # Migration: add city / bias columns to historical_calibrations
     _migrate_add_column("historical_calibrations", "city", "VARCHAR")
     _migrate_add_column("historical_calibrations", "bias", "FLOAT")
+    # Migration: add entry_fee to bets (Polymarket taker fee at entry time)
+    _migrate_add_column("bets", "entry_fee", "FLOAT")
 
     _DB_INITIALIZED = True
     logger.info("Database initialized at %s with WAL mode", DB_PATH)

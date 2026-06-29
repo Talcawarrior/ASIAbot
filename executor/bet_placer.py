@@ -10,6 +10,12 @@ from sqlalchemy import func
 from config.settings import Config, bot_config
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
+from utils.formulas import (
+    bet_shares,
+    max_bet_cap,
+    polymarket_fee_from_stake,
+    portfolio_total_value,
+)
 from utils.price_sanity import is_valid_binary_price
 from utils.slippage import check_orderbook_depth, estimate_slippage
 
@@ -176,11 +182,12 @@ class BetPlacer:
                 )
                 proposed_amount = flat_bet
 
-            # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). The engine's
-            # Kelly sizing already enforces this in calculator.py, but
-            # we re-apply it here as a hard ceiling.
-            max_bet = float(self.risk_manager.portfolio_value) * float(
-                self.risk_manager.config.MAX_BET_PCT
+            # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). Formula from
+            # utils/formulas.py → max_bet_cap(). Kelly sizing in calculator.py
+            # already enforces this, but we re-apply here as a hard ceiling.
+            max_bet = max_bet_cap(
+                float(self.risk_manager.portfolio_value),
+                float(self.risk_manager.config.MAX_BET_PCT),
             )
             if proposed_amount > max_bet:
                 logger.warning(
@@ -201,13 +208,16 @@ class BetPlacer:
             if not self.risk_manager.check_exposure_cap(
                 current_exposure, proposed_amount
             ):
-                max_exposure = float(self.risk_manager.portfolio_value) * float(
+                # Log the SAME conservative max_exposure that check_exposure_cap uses
+                conservative_value = self.risk_manager._conservative_portfolio_value()
+                max_exposure = float(conservative_value) * float(
                     self.risk_manager.config.TOTAL_EXPOSURE_PCT
                 )
                 logger.warning(
                     f"Risk cap: Market {market.id} rejected — exposure would "
                     f"reach ${current_exposure + proposed_amount:.2f}, "
-                    f"exceeding cap ${max_exposure:.2f}."
+                    f"exceeding cap ${max_exposure:.2f} "
+                    f"(conservative=${conservative_value:.2f})."
                 )
                 # Record a synthetic "rejected" bet row for audit visibility
                 # so the user can see WHY exposure is being held back.
@@ -225,7 +235,8 @@ class BetPlacer:
                     ),
                     status="rejected",
                     error_message=(
-                        f"Exposure cap: ${current_exposure:.2f} + ${proposed_amount:.2f} > ${max_exposure:.2f}"
+                        f"Exposure cap: ${current_exposure:.2f} + ${proposed_amount:.2f} > "
+                        f"${max_exposure:.2f} (conservative=${conservative_value:.2f})"
                     ),
                 )
                 session.add(rejected)
@@ -294,8 +305,9 @@ class BetPlacer:
             )
             fill_price = raw_fill * (1.0 + slip_est.slippage_pct)
             fill_price = max(0.01, min(0.99, round(fill_price, 4)))
-            # Shares = amount / price (position size in contracts)
-            shares = (proposed_amount / fill_price) if fill_price > 0 else 0.0
+            # Shares = amount / price (position size in contracts).
+            # Formula from utils/formulas.py → bet_shares().
+            shares = bet_shares(proposed_amount, fill_price)
             logger.info(
                 f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} "
                 f"(slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
@@ -329,6 +341,13 @@ class BetPlacer:
                 session.commit()
                 return None
 
+            # Calculate Polymarket taker fee at entry time.
+            # Official formula: fee = stake × feeRate × (1-p)
+            # This is charged at match time, NOT at settlement.
+            # See utils/formulas.py → polymarket_fee_from_stake().
+            fee_rate = Config.WEATHER_FEE_RATE
+            entry_fee = polymarket_fee_from_stake(proposed_amount, fill_price, fee_rate)
+
             # Bet objesi oluştur
             fair_value = float(analysis.estimated_probability or 0.5)
             bet = Bet(
@@ -346,6 +365,7 @@ class BetPlacer:
                 status="pending",
                 fair_value=fair_value,
                 expected_value=float(analysis.edge or 0.0),
+                entry_fee=round(entry_fee, 4),
             )
 
             bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
@@ -450,6 +470,11 @@ class BetPlacer:
                     bet.ladder_data = json.dumps(ladder_orders)
             try:
                 debit_stake(session, initial_stake, f"bet_open:{bet.market_id}")
+                # Also debit the Polymarket taker fee paid at match time.
+                # On Polymarket, fee = stake × feeRate × (1-p) is charged at
+                # entry, NOT at settlement. See utils/formulas.py → polymarket_fee*().
+                if entry_fee > 0:
+                    debit_stake(session, entry_fee, f"bet_fee:{bet.market_id}")
             except ValueError as e:
                 logger.error("Cannot open bet %s: %s", bet.market_id, e)
                 bet.status = "failed"
@@ -465,7 +490,9 @@ class BetPlacer:
                     .filter(Bet.status.in_(OPEN_BET_STATUSES))
                     .scalar()
                 ) or 0.0
-                portfolio.current_value = portfolio.cash_balance + float(open_exposure)
+                portfolio.current_value = portfolio_total_value(
+                    portfolio.cash_balance or 0.0, float(open_exposure)
+                )
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
             session.commit()

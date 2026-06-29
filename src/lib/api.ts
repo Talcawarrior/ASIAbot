@@ -572,8 +572,8 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
     // Compute exit price from pnl and entry
     const stake = h.stake_amount || 10;
     const exitPrice = h.result === "WIN"
-      ? Math.min(1.0, h.entry_price + (h.realized_pnl / stake))
-      : Math.max(0, h.entry_price - (Math.abs(h.realized_pnl) / stake));
+      ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / stake))
+      : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / stake));
 
     // closed_at for early exits, settled_at for normal settlements
     const closeDate = h.closed_at || h.settled_at;

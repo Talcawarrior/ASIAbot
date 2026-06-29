@@ -165,11 +165,13 @@ def test_portfolio_cash_decreases_after_bet():
             )
             bet = session.query(Bet).filter(Bet.market_id == "test-faz5-nyc").first()
             assert bet is not None
-            # Level 1 = 50% of recommended, cash -= Level 1
+            # Level 1 = 50% of recommended, cash -= Level 1 + entry_fee
             expected_level1 = bet.amount * 0.5
-            expected_cash = round(initial_cash - expected_level1, 2)
+            entry_fee = bet.entry_fee or 0.0
+            expected_cash = round(initial_cash - expected_level1 - entry_fee, 2)
             assert abs(pf.cash_balance - expected_cash) < 0.1, (
-                f"cash={pf.cash_balance}, expected={expected_cash}"
+                f"cash={pf.cash_balance}, expected={expected_cash} "
+                f"(bet={bet.amount}, l1={expected_level1}, fee={entry_fee})"
             )
     finally:
         _clean()

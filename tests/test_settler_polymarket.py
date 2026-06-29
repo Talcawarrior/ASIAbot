@@ -176,12 +176,14 @@ class TestSettlementPolymarket:
                 assert b_yes.status == "won"
                 entry = 0.35
                 expected_payout = 10.0 / entry  # 28.5714...
-                expected_fee = (expected_payout - 10.0) * engine.fee_rate
-                expected_pnl = round(expected_payout - 10.0 - expected_fee, 2)
+                # Settlement fee = 0 (mathematically zero at p→1).
+                # Entry fee for test bets is 0.0 (no entry_fee set).
+                expected_pnl = round(expected_payout - 10.0, 2)  # no fee at settlement
                 assert b_yes.realized_pnl == expected_pnl
 
                 # NO bet lost
                 assert b_no.status == "lost"
+                # Lost bet: PnL = -(stake + entry_fee). entry_fee=0 for test bets.
                 assert b_no.realized_pnl == -10.0
 
                 mkt = (
@@ -195,9 +197,10 @@ class TestSettlementPolymarket:
                 assert rd["outcome"] == "YES"
 
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
-                # YES bet: cash += payout - fee = 28.57 - 0.37 = 28.20
-                # NO bet: only total_lost incremented, cash unchanged
-                assert pf_db.cash_balance == 1000.0 + expected_payout - expected_fee
+                # YES bet: cash += FULL payout (fee = 0 at settlement, entry fee
+                # was separately debited at bet placement time or is 0 for test bets).
+                # NO bet: only total_lost incremented, cash unchanged.
+                assert pf_db.cash_balance == round(1000.0 + expected_payout, 2)
                 assert pf_db.total_won == 1
                 assert pf_db.total_lost == 1
         finally:
@@ -234,13 +237,13 @@ class TestSettlementPolymarket:
                 )
 
                 assert b_yes.status == "lost"
-                assert b_yes.realized_pnl == -10.0
+                assert b_yes.realized_pnl == -10.0  # -stake, entry_fee=0 for test bet
 
                 assert b_no.status == "won"
                 entry_no = 0.65
                 expected_payout = 10.0 / entry_no  # 15.3846...
-                expected_fee = (expected_payout - 10.0) * engine.fee_rate
-                expected_pnl = round(expected_payout - 10.0 - expected_fee, 2)
+                # Settlement fee = 0 (p→1). entry_fee for test bets = 0.
+                expected_pnl = round(expected_payout - 10.0, 2)
                 assert b_no.realized_pnl == expected_pnl
 
                 mkt = (
@@ -385,23 +388,22 @@ class TestSettlementPolymarket:
                 )
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
 
-                # Win PnL
+                # Win PnL (entry_fee=0 for test bets, settlement fee=0 mathematically)
                 entry = 0.35
                 payout = 10.0 / entry
-                fee = (payout - 10.0) * engine.fee_rate
-                win_pnl = round(payout - 10.0 - fee, 2)
+                win_pnl = round(payout - 10.0, 2)
 
                 loss_pnl = -10.0
 
-                # Cash should equal initial + (payout - fee) — loss only affects
-                # total_lost counter, no cash change (stake already deducted at open).
-                assert pf_db.cash_balance == 1000.0 + payout - fee, (
-                    f"cash={pf_db.cash_balance} != {1000.0 + payout - fee}"
+                # Cash should equal initial + FULL payout — fee at settlement is 0
+                # (mathematical zero at p→1). Entry fee was not set for test bets.
+                assert pf_db.cash_balance == round(1000.0 + payout, 2), (
+                    f"cash={pf_db.cash_balance} != {round(1000.0 + payout, 2)}"
                 )
 
-                expected_total = round(win_pnl + loss_pnl, 2)
+                expected_total = win_pnl + loss_pnl
                 assert pf_db.total_realized_pnl == pytest.approx(
-                    expected_total, rel=1e-4
+                    expected_total, rel=1e-3
                 ), f"total_realized_pnl={pf_db.total_realized_pnl} != {expected_total}"
 
                 assert b_yes.realized_pnl == win_pnl

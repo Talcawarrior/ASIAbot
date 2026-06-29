@@ -189,6 +189,10 @@ class Config:
     KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
     DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
     CITY_CAP = int(os.getenv("CITY_CAP", "4"))
+    # Polymarket fee rate for Weather category (0.05 = 5 %).
+    # Other categories: Crypto=0.07, Sports=0.03, Politics/Finance/Tech/Mentions=0.04,
+    # Economics/Culture/Other=0.05, Geopolitics=0 (free).
+    WEATHER_FEE_RATE = float(os.getenv("WEATHER_FEE_RATE", "0.05"))
     SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
     SETTLEMENT_INTERVAL = int(os.getenv("SETTLEMENT_INTERVAL", "120"))
     SIA_INTERVAL = int(os.getenv("SIA_INTERVAL", "86400"))
@@ -470,15 +474,12 @@ def apply_persisted_strategy_params() -> dict:
             applied["kelly_fraction"] = s.kelly_fraction
         except (TypeError, ValueError):
             pass
-    if "max_bet_pct" in persisted:
-        try:
-            Config.MAX_BET_PCT = float(persisted["max_bet_pct"])
-            # Keep StrategyConfig.max_bet_amount in sync (dollars = portfolio * pct)
-            s.max_bet_amount = round(Config.INITIAL_PORTFOLIO * Config.MAX_BET_PCT, 2)
-            applied["max_bet_pct"] = Config.MAX_BET_PCT
-            applied["max_bet_amount"] = s.max_bet_amount
-        except (TypeError, ValueError):
-            pass
+    # NOTE: max_bet_pct is intentionally NOT handled here.
+    # It MUST come ONLY from .env / Config.MAX_BET_PCT so that
+    # calculator.py, bet_placer.py, and utils/kelly.py all use the
+    # same `portfolio_value × MAX_BET_PCT` formula via max_bet_cap().
+    # Persisting it in strategy_params.json caused the "max_bet_amount
+    # = $30.00" bug where all bets were rejected by the exposure cap.
     if "min_entry_price" in persisted:
         try:
             s.min_entry_price = float(persisted["min_entry_price"])

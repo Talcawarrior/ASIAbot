@@ -14,6 +14,8 @@ from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
 from utils.price_sanity import is_valid_binary_price
 from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
+from utils.formulas import max_bet_cap
+from utils.kelly import kelly_fraction as _kelly_fraction
 from utils.slippage import (
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,
@@ -60,29 +62,14 @@ class Calculator:
             range_high=range_high,
         )
 
+    # NOTE: Kelly fraction is NOT duplicated here.
+    # Use utils.kelly.kelly_fraction() instead of a local copy.
+    # This method wrapper exists only to apply the strategy's kelly_fraction.
     def kelly_criterion(
         self, prob: float, price: float, fraction: float = 0.15
     ) -> float:
-        """Pure f* fraction.
-
-        Parameter ``price`` is the *market price* of the bet (0..1), the
-        same convention the in-process callers use
-        (``market_implied = market.yes_price``). The decimal odds are
-        computed internally as ``1/price - 1``.
-
-        Note: the parameter is still named in the public signature to
-        preserve the legacy call sites in :func:`analyze_market`, but
-        callers should treat it as a price, not as a decimal odd.
-        """
-        if price <= 0 or price >= 1 or prob <= 0 or prob >= 1:
-            return 0.0
-        b = (1.0 / price) - 1.0
-        if b <= 0:
-            return 0.0
-        q = 1.0 - prob
-        f_star = (b * prob - q) / b
-        if f_star <= 0:
-            return 0.0
+        """Wrapper around utils.kelly.kelly_fraction + fraction multiplier."""
+        f_star = _kelly_fraction(prob, price)
         return f_star * fraction
 
     def analyze_market(self, market_id: str) -> Analysis | None:
@@ -306,7 +293,7 @@ class Calculator:
                 portfolio.total_value if portfolio and portfolio.total_value else 1000.0
             )
             prelim_kelly = min(
-                kelly_frac * bankroll, bot_config.strategy.max_bet_amount
+                kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT)
             )
 
             net_edge = (
@@ -322,7 +309,7 @@ class Calculator:
 
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
             raw_kelly_amount = min(
-                kelly_frac * bankroll, bot_config.strategy.max_bet_amount
+                kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT)
             )
             # Reduce Kelly size by estimated slippage cost
             recommended_amount = adjust_kelly_for_slippage(

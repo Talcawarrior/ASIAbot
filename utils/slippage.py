@@ -21,7 +21,9 @@ logger = logging.getLogger("UTIL_SLIPPAGE")
 # ---------------------------------------------------------------------------
 # Default cost constants (mirrors strategy_params.json / karpathy_weekly.py)
 # ---------------------------------------------------------------------------
-FEE_PCT: float = 0.02  # Polymarket 2 % taker fee on winning payouts
+FEE_PCT: float = 0.05  # Polymarket Weather category taker fee rate (5 %)
+# Correct formula: fee = C × feeRate × p × (1-p) = stake × feeRate × (1-p)
+# See utils/formulas.py → polymarket_fee() for the canonical implementation.
 GAS_COST_USD: float = 0.10  # Polygon gas per round-trip
 
 
@@ -217,12 +219,13 @@ def adjust_edge_for_costs(
     gas_edge_pct = (GAS_COST_USD / gas_denominator) * entry_price
     cost += gas_edge_pct
     if include_fee:
-        # Fee drag: Polymarket charges 2% on PROFIT, not on total payout.
-        # Fee as fraction of stake = 0.02 × (1/p - 1) = 0.02 × (1-p) / p.
-        # This matches the settlement code: fee = (payout - stake) * fee_rate
-        # where payout = stake / entry_price.
+        # Polymarket taker fee (correct formula):
+        #   fee = C × feeRate × p × (1-p)   [official Polymarket formula]
+        #   fee_per_share = feeRate × p × (1-p)
+        # Since edge is measured in price/probability units (same as p),
+        # the fee drag in edge units = feeRate × p × (1-p).
         if entry_price > 0:
-            fee_drag = FEE_PCT * (1.0 - entry_price) / entry_price
+            fee_drag = FEE_PCT * entry_price * (1.0 - entry_price)
         else:
             fee_drag = 0.0
         cost += fee_drag

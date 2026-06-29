@@ -186,6 +186,9 @@ class Bet(Base):
     order_id = Column(String)
     tx_hash = Column(String)
     error_message = Column(String)  # Hata varsa
+    entry_fee = Column(
+        Float, default=0.0
+    )  # Polymarket taker fee at entry (feeRate × stake × (1-p))
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)

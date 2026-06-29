@@ -157,9 +157,11 @@ def deploy_best_to_live() -> dict[str, Any]:
         "min_edge": hyp.get("min_edge", 0.05),
         "kelly_fraction": hyp.get("kelly_fraction", 0.15),
     }
-    # Preserve any extra keys the live trader reads from the existing file
+    # Preserve any extra keys the live trader reads from the existing file.
+    # NOTE: max_bet_pct is EXCLUDED — it comes from Config.MAX_BET_PCT (.env)
+    # and should never be overridden by SIA, as it controls the hard per-bet cap.
     existing = _load_json(LIVE_STRATEGY_PATH) or {}
-    for k in ("max_bet_pct", "min_entry_price", "inefficiency_min"):
+    for k in ("min_entry_price", "inefficiency_min"):
         if k in existing:
             strategy_params[k] = existing[k]
         elif k in hyp:

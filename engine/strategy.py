@@ -15,6 +15,7 @@ from database.models import (
     Portfolio,
     WeatherMarket,
 )
+from utils.formulas import conservative_portfolio_value, max_exposure_cap
 from utils.kelly import kelly_bet_amount
 from utils.weights_store import (
     load_strategy_params,
@@ -153,7 +154,11 @@ class RiskManager:
         Limit = portfolio * 25%. Her gun PnL sermayeye eklenir.
         """
         conservative_value = self._conservative_portfolio_value()
-        max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
+        max_exposure = max_exposure_cap(
+            self.config.INITIAL_PORTFOLIO,
+            conservative_value - self.config.INITIAL_PORTFOLIO,
+            self.config.TOTAL_EXPOSURE_PCT,
+        )
         if (current_exposure + additional_bet) > max_exposure:
             logger.warning(
                 "Exposure cap: $%.2f + $%.2f = $%.2f > $%.2f (25%% of $%.2f conservative)",
@@ -177,6 +182,8 @@ class RiskManager:
         - Daily starting capital = önceki günün kapanış sermayesi
         - Max exposure = %25 × dünkü kapanış
         - Feedback loop önlenir (unrealized PnL dahil edilmez)
+
+        Formula from: utils/formulas.py → conservative_portfolio_value()
         """
         if not self.db:
             return self.portfolio_value
@@ -203,7 +210,8 @@ class RiskManager:
                 .scalar()
                 or 0.0
             )
-            return initial + realized
+            # Use central formula
+            return conservative_portfolio_value(initial, realized)
         except Exception:
             return self.portfolio_value
 
@@ -551,13 +559,10 @@ class RiskManager:
             max_bet_pct=self.config.MAX_BET_PCT,
         )
 
-        # 2. Max bet %3
-        max_bet = portfolio_value * self.config.MAX_BET_PCT
-        kelly_size = min(kelly_size, max_bet)
-
-        # 3. Exposure cap
+        # 2. Exposure cap (conservative: initial + realized_before_today)
+        conservative_value = self._conservative_portfolio_value()
         current_exposure = self.get_total_exposure()
-        max_exposure = portfolio_value * self.config.TOTAL_EXPOSURE_PCT
+        max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
         remaining_cap = max(0, max_exposure - current_exposure)
         kelly_size = min(kelly_size, remaining_cap)
 

@@ -10,9 +10,9 @@ import requests  # pylint: disable=import-error
 
 from sqlalchemy import func
 
-from config.settings import config
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Bet, Portfolio, WeatherMarket
+from utils.formulas import portfolio_total_value, settlement_payout, settlement_pnl
 
 logger = logging.getLogger("EXECUTOR_SETTLER")
 
@@ -29,7 +29,7 @@ class SettlementEngine:
     """
 
     def __init__(self):
-        self.fee_rate = float(getattr(config, "FEE_DRAG", 0.02))
+        pass
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -96,7 +96,9 @@ class SettlementEngine:
                         .scalar()
                     ) or 0.0
                     cash = float(portfolio.cash_balance or 0)
-                    portfolio.total_value = round(cash + float(open_exposure), 2)
+                    portfolio.total_value = portfolio_total_value(
+                        cash, float(open_exposure)
+                    )
                     portfolio.current_value = portfolio.total_value
                     portfolio.last_updated = datetime.now(timezone.utc).replace(
                         tzinfo=None
@@ -185,15 +187,13 @@ class SettlementEngine:
 
             stake = float(bet.amount or 0)
             entry_price = float(bet.entry_price or bet.price or 0.5)
+            # Load entry_fee stored at bet placement time (default 0 for pre-migration bets)
+            entry_fee = float(getattr(bet, "entry_fee", 0.0) or 0.0)
 
-            payout = 0.0
-            fee = 0.0
-            if bet_won:
-                payout = stake / entry_price if entry_price > 0 else 0.0
-                fee = (payout - stake) * self.fee_rate
-                realized_pnl = payout - stake - fee
-            else:
-                realized_pnl = -stake
+            # Settlement PnL — Polymarket charges fee at entry, NOT at settlement.
+            # At settlement (p→1) the fee formula gives 0: p×(1-p) = 1×0 = 0.
+            realized_pnl = settlement_pnl(stake, entry_price, entry_fee, bet_won)
+            payout = settlement_payout(stake, entry_price) if bet_won else 0.0
 
             bet.realized_pnl = round(realized_pnl, 2)
             bet.pnl = round(realized_pnl, 2)
@@ -207,8 +207,11 @@ class SettlementEngine:
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 if bet_won:
+                    # Credit FULL payout — the entry fee was already debited
+                    # at bet placement time (bet_placer.py :: debit_stake for fee).
+                    # Settlement fee is always 0 (mathematical zero at p→1).
                     credit_settlement(
-                        session, payout, fee, f"settle:{bet.market_id}:won"
+                        session, payout, 0.0, f"settle:{bet.market_id}:won"
                     )
                     portfolio.total_won = (portfolio.total_won or 0) + 1
                 else:

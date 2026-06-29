@@ -4,7 +4,7 @@ from executor.settler import SettlementEngine
 
 
 def test_settle_win():
-    """SettlementEngine initializes with correct fee_rate."""
+    """SettlementEngine initializes without fee_rate (fee is now at entry)."""
     engine = SettlementEngine()
-    assert engine.fee_rate == 0.02
-    print("PASS: SettlementEngine initializes with fee_rate=0.02")
+    assert engine is not None
+    print("PASS: SettlementEngine initializes without fee_rate")
