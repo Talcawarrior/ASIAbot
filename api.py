@@ -155,7 +155,10 @@ async def broadcast_message(message: dict):
 @app.get("/")
 async def root():
     """Serve Next.js Dashboard"""
-    dashboard_out = os.path.join(os.path.dirname(__file__), "dashboard", "out")
+    _base = os.path.dirname(os.path.abspath(__file__))
+    _out = os.path.join(_base, "out")
+    _dash = os.path.join(_base, "dashboard", "out")
+    dashboard_out = _out if os.path.isdir(_out) else _dash
     index_path = os.path.join(dashboard_out, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)

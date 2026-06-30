@@ -146,7 +146,10 @@ def run_cli():
     }
     if args.command == "bot":
         # ── Start bot: API + Dashboard + Background loops ────────────────────
-        _dashboard_out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "out")
+        _base = os.path.dirname(os.path.abspath(__file__))
+        _out = os.path.join(_base, "out")
+        _dash = os.path.join(_base, "dashboard", "out")
+        _dashboard_out = _out if os.path.isdir(_out) else _dash
         if os.path.isdir(_dashboard_out):
             from fastapi.staticfiles import StaticFiles
 
@@ -192,7 +195,10 @@ def run_cli():
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "run":
         # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
-        _dashboard_out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard", "out")
+        _base = os.path.dirname(os.path.abspath(__file__))
+        _out = os.path.join(_base, "out")
+        _dash = os.path.join(_base, "dashboard", "out")
+        _dashboard_out = _out if os.path.isdir(_out) else _dash
         if os.path.isdir(_dashboard_out):
             from fastapi.staticfiles import StaticFiles
 
