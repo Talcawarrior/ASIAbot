@@ -11,8 +11,12 @@ import sqlite3
 
 from database.db import DB_PATH, get_session
 from database.models import Analysis, Bet, WeatherMarket
+from utils.formulas import polymarket_fee
 from utils.kelly import kelly_bet_amount
 from utils.probability import estimate_probability
+
+# Weather category fee rate (Polymarket official: fee = C × feeRate × p × (1-p))
+WEATHER_FEE_RATE = 0.05
 
 logger = logging.getLogger("ASI_BACKTESTER")
 
@@ -75,11 +79,7 @@ class BacktestSimulator:
                     continue
 
                 recalculated_prob = (
-                    sum(
-                        model_weights.get(m, 0.0) * float(prob)
-                        for m, prob in model_probs.items()
-                    )
-                    / weight_sum
+                    sum(model_weights.get(m, 0.0) * float(prob) for m, prob in model_probs.items()) / weight_sum
                 )
 
                 # 2. Check if the market outcome matches the YES direction
@@ -88,9 +88,7 @@ class BacktestSimulator:
                     continue
 
                 # Add to Brier Score calculation (YES probability vs actual outcome)
-                brier_errors.append(
-                    (recalculated_prob - (1.0 if outcome_yes else 0.0)) ** 2
-                )
+                brier_errors.append((recalculated_prob - (1.0 if outcome_yes else 0.0)) ** 2)
 
                 # 3. Simulate bet eligibility and sizing
                 yes_price = float(market.yes_price or 0.5)
@@ -116,11 +114,7 @@ class BacktestSimulator:
                     total_bets_opened += 1
 
                     # Kelly size it
-                    prob_win = (
-                        recalculated_prob
-                        if sim_side == "YES"
-                        else (1.0 - recalculated_prob)
-                    )
+                    prob_win = recalculated_prob if sim_side == "YES" else (1.0 - recalculated_prob)
                     bet_size = kelly_bet_amount(
                         bankroll,
                         prob_win,
@@ -131,15 +125,15 @@ class BacktestSimulator:
                     )
 
                     # Evaluate bet outcome
-                    won = (sim_side == "YES" and outcome_yes) or (
-                        sim_side == "NO" and not outcome_yes
-                    )
+                    won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
                     total_wagered += bet_size
 
                     if won:
                         bets_won += 1
                         payout = bet_size / entry_price
-                        fee = (payout - bet_size) * 0.02
+                        # Polymarket taker fee: C × feeRate × p × (1-p)
+                        shares = bet_size / entry_price
+                        fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
                         pnl = payout - bet_size - fee
                     else:
                         bets_lost += 1
@@ -264,10 +258,7 @@ class BacktestSimulator:
             if weight_sum <= 0:
                 continue
 
-            weighted_temp = (
-                sum(model_weights.get(m, 0.0) * val for m, val in preds.items())
-                / weight_sum
-            )
+            weighted_temp = sum(model_weights.get(m, 0.0) * val for m, val in preds.items()) / weight_sum
 
             # ── HONEST STRIKE PRICE ────────────────────────────────────────
             # Pick a strike from a wide grid. Half the scenarios will resolve
@@ -280,8 +271,7 @@ class BacktestSimulator:
             mean = sum(pred_vals) / len(pred_vals)
             std = (
                 max(
-                    (sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1))
-                    ** 0.5,
+                    (sum((x - mean) ** 2 for x in pred_vals) / (len(pred_vals) - 1)) ** 0.5,
                     1.0,
                 )
                 if len(pred_vals) > 1
@@ -341,15 +331,15 @@ class BacktestSimulator:
                     max_bet_pct=0.03,
                 )
 
-                won = (sim_side == "YES" and outcome_yes) or (
-                    sim_side == "NO" and not outcome_yes
-                )
+                won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
                 total_wagered += bet_size
 
                 if won:
                     trades_won += 1
                     payout = bet_size / entry_price
-                    fee = (payout - bet_size) * 0.02
+                    # Polymarket taker fee: C × feeRate × p × (1-p)
+                    shares = bet_size / entry_price
+                    fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
                     pnl = payout - bet_size - fee
                 else:
                     trades_lost += 1

@@ -97,6 +97,12 @@ class BetPlacer:
                 return None
             d.market_id = market.id
 
+            # Guard: daily loss limit (circuit breaker)
+            if self.risk_manager.is_bot_locked():
+                d.check("daily_loss_limit", False, daily_pnl=self.risk_manager.daily_pnl)
+                d.log(logging.WARNING)
+                return None
+
             # Price sanity check - skip invalid binary markets
             price_valid = is_valid_binary_price(market.yes_price or 0, market.no_price or 0)
             d.check("price_valid", price_valid, yes=market.yes_price, no=market.no_price)

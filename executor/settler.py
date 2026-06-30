@@ -12,6 +12,7 @@ from sqlalchemy import func
 
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Bet, Portfolio, WeatherMarket
+from engine.strategy import RiskManager
 from utils.formulas import portfolio_total_value, settlement_payout, settlement_pnl
 
 logger = logging.getLogger("EXECUTOR_SETTLER")
@@ -47,6 +48,13 @@ class SettlementEngine:
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
 
         with get_session() as session:
+            # Create RiskManager for daily PnL tracking (circuit breaker)
+            risk_manager = RiskManager()
+            risk_manager.db = session
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            if portfolio and portfolio.total_value:
+                risk_manager.update_portfolio(float(portfolio.total_value))
+
             open_statuses = ("open", "bet_placed")
             markets_to_settle = (
                 session.query(WeatherMarket)
@@ -66,7 +74,7 @@ class SettlementEngine:
 
             for market in markets_to_settle:
                 try:
-                    result = self._settle_market(session, market)
+                    result = self._settle_market(session, market, risk_manager)
                     if result is None:
                         pending_count += 1
                         # 48-hour pending alert (status unchanged)
@@ -118,7 +126,7 @@ class SettlementEngine:
 
     # ── Single-market settlement ───────────────────────────────────────────
 
-    def _settle_market(self, session, market) -> dict | None:  # pylint: disable=too-many-locals
+    def _settle_market(self, session, market, risk_manager=None) -> dict | None:  # pylint: disable=too-many-locals
         """Settle a single market via Gamma API resolution.
 
         Returns ``{"won": bool, "pnl": float}`` on success,
@@ -193,6 +201,10 @@ class SettlementEngine:
             bet.unrealized_pnl = 0.0
             total_market_pnl += realized_pnl
             any_settled = True
+
+            # Update daily PnL for circuit breaker (strategy.py)
+            if risk_manager:
+                risk_manager.update_daily_pnl(realized_pnl)
 
             # Update portfolio via central accounting
             from utils.accounting import credit_settlement

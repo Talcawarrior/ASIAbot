@@ -11,11 +11,10 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from asi_engine.calibration_engine import CalibrationEngine
@@ -48,7 +47,24 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-# Global State tracking for FastAPI Web App
+# ── API Key Authentication ──────────────────────────────────────────────────
+# Protects sensitive POST endpoints (reset, asi/*, start, stop, cleanup).
+# Set ASIABOT_API_KEY env var to enable. If not set, auth is disabled (dev mode).
+
+API_KEY = os.getenv("ASIABOT_API_KEY", "")
+
+
+async def verify_api_key(x_api_key: str = Header(default="")):
+    """FastAPI dependency: verify X-API-Key header for protected endpoints."""
+    if not API_KEY:
+        return  # No key configured — dev mode, allow all
+    if x_api_key != API_KEY:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+# ── Global State tracking for FastAPI Web App ───────────────────────────────
 class BotState:
     """Global bot state tracking running status, modules, and tasks."""
 
@@ -414,7 +430,7 @@ def get_asi_cognition():
 
 
 @app.post("/api/asi/evolve")
-async def run_asi_evolve():
+async def run_asi_evolve(_key: str = Depends(verify_api_key)):
     """Run an autonomous evolution pipeline round (5 rounds)."""
     if not state.orchestrator:
         state.orchestrator = ASIAbotOrchestrator()
@@ -424,7 +440,7 @@ async def run_asi_evolve():
 
 
 @app.post("/api/asi/backfill")
-async def run_asi_backfill(days: int = 90):
+async def run_asi_backfill(days: int = 90, _key: str = Depends(verify_api_key)):
     """Trigger a deep historical weather backfill from Open-Meteo APIs."""
     if not state.backfiller:
         state.backfiller = DataBackfiller()
@@ -444,7 +460,7 @@ def get_asi_calibration():
 
 
 @app.post("/api/asi/calibration/recalculate")
-def run_asi_calibration_recalculate():
+def run_asi_calibration_recalculate(_key: str = Depends(verify_api_key)):
     """Manually recalculate model biases from the historical calibrations table."""
     if not state.calibration_engine:
         state.calibration_engine = CalibrationEngine()
@@ -466,38 +482,6 @@ def get_asi_orderbook(market_id: str = "2513866"):
     client = ResolvedMarketsClient()
     orderbook = client.fetch_historical_orderbook(market_id)
     return orderbook
-
-
-@app.post("/api/asi/autoresearch/run")
-async def run_asi_autoresearch(rounds: int = 5):
-    """Trigger the standalone AutoResearch AI Scientist engine."""
-    scientist_path = os.path.join(os.path.dirname(__file__), "autoresearch", "auto_scientist.py")
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            scientist_path,
-            "--rounds",
-            str(rounds),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-
-        best_sharpe = None
-        out_str = stdout.decode()
-        for line in out_str.splitlines():
-            if "Best Sharpe Ratio:" in line:
-                try:
-                    best_sharpe = float(line.split(":")[1].strip())
-                except (ValueError, IndexError):
-                    pass
-        return {
-            "status": "success",
-            "best_sharpe": best_sharpe,
-            "output": out_str[:1000],
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e), "best_sharpe": None}
 
 
 # --- Standard Endpoints ---
@@ -1004,7 +988,7 @@ def get_slippage():
 
 
 @app.post("/api/cleanup")
-def cleanup_old_data():
+def cleanup_old_data(_key: str = Depends(verify_api_key)):
     """Cancel stale open bets and refund their stakes (ladder-aware)."""
     db = get_db_session()
     try:
@@ -1041,7 +1025,7 @@ def cleanup_old_data():
 
 
 @app.post("/api/start")
-async def start_bot():
+async def start_bot(_key: str = Depends(verify_api_key)):
     """Start the scan-and-bet and settlement background loops."""
     async with state.start_stop_lock:
         if state.is_running:
@@ -1054,7 +1038,7 @@ async def start_bot():
 
 
 @app.post("/api/stop")
-async def stop_bot():
+async def stop_bot(_key: str = Depends(verify_api_key)):
     """Stop all background loops and cancel pending tasks."""
     async with state.start_stop_lock:
         state.is_running = False
@@ -1070,7 +1054,7 @@ async def stop_bot():
 
 
 @app.post("/api/reset")
-async def reset_bot():
+async def reset_bot(_key: str = Depends(verify_api_key)):
     """Reset the bot state and clear in-flight DB rows WITHOUT auto-restart."""
     await stop_bot()
     db = get_db_session()

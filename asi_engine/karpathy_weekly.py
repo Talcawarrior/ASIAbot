@@ -45,6 +45,10 @@ import pandas as pd
 
 from asi_engine.llm_client import chat_json
 from data_pipeline.unified_datastore import UnifiedDatastore
+from utils.formulas import polymarket_fee
+
+# Weather category fee rate (Polymarket official: fee = C × feeRate × p × (1-p))
+WEATHER_FEE_RATE = 0.05
 
 logger = logging.getLogger("KARPATHY_WEEKLY")
 
@@ -118,9 +122,7 @@ class Hypothesis:
 # ---------------------------------------------------------------------------
 
 
-def _weighted_mean_prob(
-    row: pd.Series, weights: dict[str, float], models: list[str]
-) -> float | None:
+def _weighted_mean_prob(row: pd.Series, weights: dict[str, float], models: list[str]) -> float | None:
     """Return ensemble YES probability for one row.
 
     Expects `row` to contain columns named f"prob_{model}" for each model in
@@ -226,9 +228,7 @@ def evaluate_hypothesis_oos(
         # If a snapshot_yes_price column exists (from resolvedmarkets_ingest),
         # prefer that.
         market_yes_price: float | None = None
-        if "snapshot_yes_price" in row and not pd.isna(
-            row.get("snapshot_yes_price", float("nan"))
-        ):
+        if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
             market_yes_price = float(row["snapshot_yes_price"])
         elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
             # Use the resolved yes_price as a degraded market proxy.
@@ -284,15 +284,13 @@ def evaluate_hypothesis_oos(
         total_staked += stake
 
         # PnL resolution — with realistic cost model
-        #   Polymarket fee: 2% on winning payout (not on stake)
+        #   Polymarket fee: C × feeRate × p × (1-p) at entry time
         #   Slippage: price-impact model — low-liquidity markets (entry < 0.05)
         #     suffer worse fill. Estimated from CLOB orderbook depth:
         #     - High liquidity (entry > 0.10): 0.5% of stake
         #     - Medium (0.05–0.10): 1.0% of stake
         #     - Low liquidity (entry < 0.05): 3.0% of stake (thin books)
         #   Gas / on-chain cost: ~$0.10 flat per trade (Polygon tx)
-        # These match data/strategy_params.json for single-source-of-truth.
-        FEE_PCT = 0.02  # noqa: N806  # 2% Polymarket taker fee on winnings
         GAS_COST_USD = 0.10  # noqa: N806  # Polygon gas per trade
 
         # Adaptive slippage based on entry price (liquidity proxy)
@@ -311,7 +309,9 @@ def evaluate_hypothesis_oos(
         won = (realized_f >= 0.5) == side_yes
         if won:
             gross_payout = effective_stake / effective_entry  # shares at worse price
-            fee = gross_payout * FEE_PCT
+            # Polymarket taker fee: C × feeRate × p × (1-p)
+            shares = effective_stake / effective_entry
+            fee = polymarket_fee(shares, effective_entry, WEATHER_FEE_RATE)
             pnl = gross_payout - fee - effective_stake
         else:
             pnl = -effective_stake - GAS_COST_USD  # lose stake + gas
@@ -329,9 +329,7 @@ def evaluate_hypothesis_oos(
             "roi_pct": 0.0,
             "win_rate": 0.0,
             "total_trades": 0,
-            "brier_score": (
-                sum(brier_errors) / len(brier_errors) if brier_errors else 0.25
-            ),
+            "brier_score": (sum(brier_errors) / len(brier_errors) if brier_errors else 0.25),
             "total_pnl": 0.0,
             "total_staked": 0.0,
         }
@@ -543,9 +541,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
 
     new_min_edge = max(0.01, min(0.15, parent.min_edge + mutation["min_edge_delta"]))
     new_kelly = max(0.05, min(0.30, parent.kelly_fraction + mutation["kelly_delta"]))
-    new_max_bet = max(
-        0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0))
-    )
+    new_max_bet = max(0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0)))
 
     return Hypothesis(
         description=mutation["description"],
@@ -553,9 +549,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
         min_edge=round(new_min_edge, 4),
         kelly_fraction=round(new_kelly, 4),
         max_bet_pct=round(new_max_bet, 4),
-        tail_filter_enabled=mutation.get(
-            "tail_filter_enabled", parent.tail_filter_enabled
-        ),
+        tail_filter_enabled=mutation.get("tail_filter_enabled", parent.tail_filter_enabled),
         tail_filter_threshold_high=parent.tail_filter_threshold_high,
         tail_filter_threshold_low=parent.tail_filter_threshold_low,
         tail_filter_correction_high=parent.tail_filter_correction_high,
@@ -569,9 +563,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
 # ---------------------------------------------------------------------------
 
 
-def llm_propose_hypothesis(
-    parent: Hypothesis, context: dict[str, Any]
-) -> Hypothesis | None:
+def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypothesis | None:
     """Ask the LLM to propose a hypothesis (optional).
 
     If no ``ZAI_API_KEY`` is set in the environment, returns None and the loop
@@ -642,12 +634,7 @@ def llm_propose_hypothesis(
     try:
         # Validate and merge with parent defaults
         weights = data.get("model_weights", parent.model_weights)
-        weights = _normalise(
-            {
-                m: float(weights.get(m, parent.model_weights.get(m, 0.125)))
-                for m in DEFAULT_MODELS
-            }
-        )
+        weights = _normalise({m: float(weights.get(m, parent.model_weights.get(m, 0.125))) for m in DEFAULT_MODELS})
 
         return Hypothesis(
             description=str(data.get("description", "LLM proposal"))[:200],
@@ -657,12 +644,8 @@ def llm_propose_hypothesis(
                 0.05,
                 min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction))),
             ),
-            max_bet_pct=max(
-                0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))
-            ),
-            tail_filter_enabled=bool(
-                data.get("tail_filter_enabled", parent.tail_filter_enabled)
-            ),
+            max_bet_pct=max(0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))),
+            tail_filter_enabled=bool(data.get("tail_filter_enabled", parent.tail_filter_enabled)),
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,
             tail_filter_correction_high=parent.tail_filter_correction_high,
@@ -774,9 +757,7 @@ def add_per_model_probabilities(
     forecasts_joined = False
     join_origin = "none"
     brier_df = brier_df.copy()
-    brier_df["join_date"] = pd.to_datetime(
-        brier_df["target_date"], utc=True, errors="coerce"
-    ).dt.date.astype(str)
+    brier_df["join_date"] = pd.to_datetime(brier_df["target_date"], utc=True, errors="coerce").dt.date.astype(str)
 
     forecasts_df = ds.read_forecasts()
     cached_pairs: set[tuple[str, str]] = set()
@@ -785,12 +766,8 @@ def add_per_model_probabilities(
         forecasts_df["join_date"] = pd.to_datetime(
             forecasts_df["target_date"], utc=True, errors="coerce"
         ).dt.date.astype(str)
-        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna(
-            "temperature_2m_max"
-        )
-        forecasts_df = forecasts_df[
-            forecasts_df["variable_key"].astype(str).str.contains("max", na=False)
-        ]
+        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
+        forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
         # Snapshot the cached pairs BEFORE we append the dynamically-fetched
         # rows, so the join-origin label below correctly distinguishes
         # "cached_table" (all pairs were already on disk) from
@@ -880,18 +857,10 @@ def add_per_model_probabilities(
                     fetched_df["join_date"] = pd.to_datetime(
                         fetched_df["date"], utc=True, errors="coerce"
                     ).dt.date.astype(str)
-                    fetched_df["target_date"] = pd.to_datetime(
-                        fetched_df["date"], utc=True, errors="coerce"
-                    )
+                    fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
                     fetched_df["fetched_at"] = pd.Timestamp.utcnow()
-                    fetched_df["variable_key"] = fetched_df.get(
-                        "variable", "temperature_2m_max"
-                    )
-                    fetched_df = fetched_df[
-                        fetched_df["variable_key"]
-                        .astype(str)
-                        .str.contains("max", na=False)
-                    ]
+                    fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
+                    fetched_df = fetched_df[fetched_df["variable_key"].astype(str).str.contains("max", na=False)]
                     # Append to in-memory forecasts_df for this join + persist
                     # back to disk so future runs hit the cache.
                     cols = [
@@ -905,19 +874,13 @@ def add_per_model_probabilities(
                         "fetched_at",
                         "join_date",
                     ]
-                    fetched_df = fetched_df[
-                        [c for c in cols if c in fetched_df.columns]
-                    ]
+                    fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
                     if forecasts_df.empty:
                         forecasts_df = fetched_df
                     else:
-                        forecasts_df = pd.concat(
-                            [forecasts_df, fetched_df], ignore_index=True
-                        )
+                        forecasts_df = pd.concat([forecasts_df, fetched_df], ignore_index=True)
                     try:
-                        ds.write_forecasts(
-                            forecasts_df.drop(columns=["join_date"], errors="ignore")
-                        )
+                        ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
                     except Exception as exc:
                         logger.warning("Failed to persist fetched forecasts: %s", exc)
                     logger.info(
@@ -927,8 +890,7 @@ def add_per_model_probabilities(
                     )
             except ImportError:
                 logger.warning(
-                    "data_pipeline.weather_ensemble not importable — "
-                    "cannot dynamically fetch missing forecasts"
+                    "data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts"
                 )
 
     # ----------------------------------------------------------------
@@ -942,18 +904,14 @@ def add_per_model_probabilities(
         # happen to coincide (gfs_seamless, cma_grapes_global, ukmo_seamless,
         # meteofrance_seamless) would be matched.
         forecasts_df = forecasts_df.copy()
-        forecasts_df["model_internal"] = forecasts_df["model"].map(
-            lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m)
-        )
+        forecasts_df["model_internal"] = forecasts_df["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
         temp_pivot = forecasts_df.pivot_table(
             index=["city", "join_date"],
             columns="model_internal",
             values="value",
             aggfunc="mean",
         ).reset_index()
-        merged = brier_df.merge(
-            temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc")
-        )
+        merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc"))
         sigma = 2.0
         for model in DEFAULT_MODELS:
             if model not in merged.columns:
@@ -975,8 +933,7 @@ def add_per_model_probabilities(
                 return p_high
 
             merged[col] = [
-                _to_prob(row.get(model), row.get("market_type"), row.get("threshold"))
-                for _, row in merged.iterrows()
+                _to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()
             ]
         brier_df = merged
         prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
@@ -987,11 +944,7 @@ def add_per_model_probabilities(
                 # If the cached table already covered every needed pair, we
                 # joined from disk; otherwise the dynamic backfill supplied
                 # at least some rows.
-                join_origin = (
-                    "cached_table"
-                    if cached_pairs and cached_pairs >= needed_pairs
-                    else "historical_api"
-                )
+                join_origin = "cached_table" if cached_pairs and cached_pairs >= needed_pairs else "historical_api"
             logger.info(
                 "Forecast join %s (origin=%s, %d non-null prob values across %d rows)",
                 "succeeded" if forecasts_joined else "failed (no overlapping rows)",
@@ -1106,12 +1059,8 @@ def run_karpathy_weekly(
                 "split_n": 1,
                 "test_indices": brier_df.index.tolist(),
                 "train_indices": [],
-                "test_start": (
-                    brier_df["target_date"].min() if "target_date" in brier_df else None
-                ),
-                "test_end": (
-                    brier_df["target_date"].max() if "target_date" in brier_df else None
-                ),
+                "test_start": (brier_df["target_date"].min() if "target_date" in brier_df else None),
+                "test_end": (brier_df["target_date"].max() if "target_date" in brier_df else None),
             }
         ]
 
@@ -1120,10 +1069,7 @@ def run_karpathy_weekly(
     incumbent_stats: dict[str, float] | None = None
     if incumbent:
         # Re-evaluate incumbent on the current splits for a fair comparison
-        per_split = [
-            evaluate_hypothesis_oos(brier_df, s["test_indices"], incumbent)
-            for s in splits
-        ]
+        per_split = [evaluate_hypothesis_oos(brier_df, s["test_indices"], incumbent) for s in splits]
         incumbent_stats = _mean_stats(per_split)
         logger.info(
             "Loaded incumbent: sharpe=%.3f roi=%.2f%% brier=%.4f",
@@ -1169,9 +1115,7 @@ def run_karpathy_weekly(
         logger.info("Hypothesis: %s (source=%s)", hyp.description, hyp.source)
 
         # Evaluate on each split's test window
-        per_split = [
-            evaluate_hypothesis_oos(brier_df, s["test_indices"], hyp) for s in splits
-        ]
+        per_split = [evaluate_hypothesis_oos(brier_df, s["test_indices"], hyp) for s in splits]
         mean_stats = _mean_stats(per_split)
         logger.info(
             "  OOS mean: sharpe=%.3f roi=%.2f%% brier=%.4f trades=%d",
@@ -1255,12 +1199,8 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Karpathy weekly hypothesis loop")
-    parser.add_argument(
-        "--rounds", type=int, default=6, help="Number of hypotheses to test"
-    )
-    parser.add_argument(
-        "--llm", action="store_true", help="Use LLM for hypothesis generation"
-    )
+    parser.add_argument("--rounds", type=int, default=6, help="Number of hypotheses to test")
+    parser.add_argument("--llm", action="store_true", help="Use LLM for hypothesis generation")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

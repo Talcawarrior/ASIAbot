@@ -11,9 +11,7 @@ import threading
 
 logger = logging.getLogger("ASI_COGNITION")
 
-COGNITION_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "asi_cognition.json")
-)
+COGNITION_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "asi_cognition.json"))
 
 _lock = threading.Lock()
 
@@ -93,6 +91,10 @@ class CognitionBase:
                     CognitionNode(
                         run_round=0,
                         hypothesis="ECMWF & GFS Domination Prior - Weight global models higher than local models.",
+                        # NOTE: brier_score=0.18 is a heuristic prior, NOT from real data.
+                        # This represents the expected Brier score based on domain knowledge
+                        # that global NWP models (ECMWF, GFS) historically outperform local models.
+                        # Will be updated with real data after first backtest round.
                         brier_score=0.18,
                         roi=12.5,
                         win_rate=0.58,
@@ -143,9 +145,7 @@ class CognitionBase:
         try:
             os.makedirs(os.path.dirname(COGNITION_PATH), exist_ok=True)
             with open(COGNITION_PATH, "w", encoding="utf-8") as f:
-                json.dump(
-                    [node.to_dict() for node in self.nodes], f, indent=2, sort_keys=True
-                )
+                json.dump([node.to_dict() for node in self.nodes], f, indent=2, sort_keys=True)
             logger.info("Cognition Base successfully persisted to %s", COGNITION_PATH)
         except Exception as e:
             logger.error("Could not save cognition base to disk: %s", e)
