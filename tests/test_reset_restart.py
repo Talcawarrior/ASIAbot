@@ -8,9 +8,7 @@ import pytest
 # TestClient depends on httpx (or the new httpx2 fork), which isn't in
 # our minimal CI runner's install. Skip cleanly when it's missing
 # instead of failing collection.
-httpx = pytest.importorskip(
-    "httpx", reason="httpx not installed (needed for FastAPI TestClient)"
-)
+httpx = pytest.importorskip("httpx", reason="httpx not installed (needed for FastAPI TestClient)")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from main import app  # noqa: E402
@@ -23,9 +21,7 @@ def client():
 
 def test_reset_clears_state_without_auto_restart(client):
     """POST /api/reset clears bets/portfolio but does NOT auto-start."""
-    with patch(
-        "main.start_bot", new=AsyncMock(return_value={"status": "started"})
-    ) as mock_start:
+    with patch("api.start_bot", new=AsyncMock(return_value={"status": "started"})) as mock_start:
         r = client.post("/api/reset")
         assert r.status_code == 200
         body = r.json()

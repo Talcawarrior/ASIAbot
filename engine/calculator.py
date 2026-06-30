@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 import aiohttp
 
 from config.settings import Config, bot_config, config
-from database.db import get_session
+from database.db import get_session_or
 from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
 from utils.price_sanity import is_valid_binary_price
 from utils.probability import compute_effective_min_edge
@@ -65,24 +65,20 @@ class Calculator:
     # NOTE: Kelly fraction is NOT duplicated here.
     # Use utils.kelly.kelly_fraction() instead of a local copy.
     # This method wrapper exists only to apply the strategy's kelly_fraction.
-    def kelly_criterion(
-        self, prob: float, price: float, fraction: float = 0.15
-    ) -> float:
+    def kelly_criterion(self, prob: float, price: float, fraction: float = 0.15) -> float:
         """Wrapper around utils.kelly.kelly_fraction + fraction multiplier."""
         f_star = _kelly_fraction(prob, price)
         return f_star * fraction
 
-    def analyze_market(self, market_id: str) -> Analysis | None:
-        """Bir marketi analiz et."""
-        with get_session() as session:
+    def analyze_market(self, market_id: str, session=None) -> Analysis | None:
+        """Bir marketi analiz et. Optional session for batched cycles."""
+        with get_session_or(session) as session:
             market = session.query(WeatherMarket).filter_by(id=market_id).first()
             if not market:
                 logger.warning(f"Market bulunamadı: {market_id}")
                 return None
 
-            if not all(
-                [market.city, market.threshold, market.target_date, market.metric]
-            ):
+            if not all([market.city, market.threshold, market.target_date, market.metric]):
                 logger.warning(f"Market eksik bilgi: {market_id}")
                 return None
 
@@ -95,9 +91,7 @@ class Calculator:
 
             # Skip already-resolved markets (lookahead bias guard)
             if market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
-                logger.debug(
-                    f"Market {market_id}: target_date {market.target_date} already passed, skipping"
-                )
+                logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
                 return None
 
             # Skip markets with no real liquidity (price too low for paper realism)
@@ -106,13 +100,11 @@ class Calculator:
             # asymmetric-payoff bleed where a single low-price loss wipes
             # out dozens of small wins).
             market_price = market.yes_price or 0.5
-            min_price = getattr(
-                bot_config.strategy, "min_entry_price", None
-            ) or getattr(bot_config, "MIN_ENTRY_PRICE", 0.01)
+            min_price = getattr(bot_config.strategy, "min_entry_price", None) or getattr(
+                bot_config, "MIN_ENTRY_PRICE", 0.01
+            )
             if market_price < min_price:
-                logger.debug(
-                    f"Market {market_id}: price {market_price:.4f} < min_entry_price {min_price}, skipping"
-                )
+                logger.debug(f"Market {market_id}: price {market_price:.4f} < min_entry_price {min_price}, skipping")
                 return None
 
             # Karpathy-search-discovered inefficiency gate. Only bet when
@@ -157,38 +149,23 @@ class Calculator:
             if forecast_values and len(forecast_values) > 1:
                 if total_weight > 0:
                     # Weighted average
-                    avg = (
-                        sum(
-                            latest_by_source[s] * source_weights.get(s, 0.0)
-                            for s in latest_by_source
-                        )
-                        / total_weight
-                    )
+                    avg = sum(latest_by_source[s] * source_weights.get(s, 0.0) for s in latest_by_source) / total_weight
                     # Weighted std
                     std_val = math.sqrt(
-                        sum(
-                            source_weights.get(s, 0.0)
-                            * (latest_by_source[s] - avg) ** 2
-                            for s in latest_by_source
-                        )
+                        sum(source_weights.get(s, 0.0) * (latest_by_source[s] - avg) ** 2 for s in latest_by_source)
                         / total_weight
                     )
                 else:
                     # Fallback to simple average if no weights
                     avg = sum(forecast_values) / len(forecast_values)
-                    std_val = math.sqrt(
-                        sum((x - avg) ** 2 for x in forecast_values)
-                        / (len(forecast_values) - 1)
-                    )
+                    std_val = math.sqrt(sum((x - avg) ** 2 for x in forecast_values) / (len(forecast_values) - 1))
             else:
                 avg = forecast_values[0] if forecast_values else 0.5
                 std_val = None
 
             # days_ahead: use calendar days (>=0) and treat "today" as 1 day
             # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
-            days_ahead = (
-                market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)
-            ).days
+            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
             # Olasılık hesapla — weighted mean/std ile (market_type-aware)
@@ -196,10 +173,7 @@ class Calculator:
             range_low = None
             range_high = None
             if (market.market_type or "").upper() == "RANGE":
-                if (
-                    market.threshold_low is not None
-                    and market.threshold_high is not None
-                ):
+                if market.threshold_low is not None and market.threshold_high is not None:
                     range_low = float(market.threshold_low)
                     range_high = float(market.threshold_high)
             total_std = float(std_val) if std_val is not None else 2.0
@@ -214,11 +188,7 @@ class Calculator:
             )
 
             # Per-model probabilities for SIA weight optimization
-            model_temps = {
-                src: float(val)
-                for src, val in latest_by_source.items()
-                if val is not None
-            }
+            model_temps = {src: float(val) for src, val in latest_by_source.items() if val is not None}
             total_std = float(std_val) if std_val is not None else 2.0
             model_probs = {}
             for mn, mt in model_temps.items():
@@ -242,9 +212,7 @@ class Calculator:
 
             if raw_edge > 0:
                 # YES tarafı
-                kelly_frac = self.kelly_criterion(
-                    estimated_prob, market_implied, bot_config.strategy.kelly_fraction
-                )
+                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
                 recommended_side = "YES"
             else:
                 # NO tarafı
@@ -253,9 +221,7 @@ class Calculator:
                 no_edge = no_prob - no_implied
 
                 if no_edge > 0:
-                    kelly_frac = self.kelly_criterion(
-                        no_prob, no_implied, bot_config.strategy.kelly_fraction
-                    )
+                    kelly_frac = self.kelly_criterion(no_prob, no_implied, bot_config.strategy.kelly_fraction)
                     recommended_side = "NO"
                     raw_edge = no_edge
                 else:
@@ -268,9 +234,7 @@ class Calculator:
             # edge, not the raw theoretical edge that assumes perfect
             # fills at market price.
             entry_price_for_cost = (
-                market_implied
-                if recommended_side == "YES"
-                else (market.no_price or (1 - market_implied))
+                market_implied if recommended_side == "YES" else (market.no_price or (1 - market_implied))
             )
 
             # Extract condition_id from market.raw_data for orderbook slippage
@@ -278,10 +242,7 @@ class Calculator:
             try:
                 raw = json.loads(market.raw_data) if market.raw_data else {}
                 for tok in raw.get("tokens", []):
-                    if (
-                        tok.get("outcome", "").upper()
-                        == (recommended_side or "").upper()
-                    ):
+                    if tok.get("outcome", "").upper() == (recommended_side or "").upper():
                         condition_id = tok.get("condition_id") or tok.get("token_id")
                         break
             except (json.JSONDecodeError, TypeError, AttributeError):
@@ -289,32 +250,20 @@ class Calculator:
 
             # Preliminary bet amount for gas cost calculation (using raw edge)
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            bankroll = (
-                portfolio.total_value if portfolio and portfolio.total_value else 1000.0
-            )
-            prelim_kelly = min(
-                kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT)
-            )
+            bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
+            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
 
             net_edge = (
-                adjust_edge_for_costs(
-                    raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly
-                )
+                adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly)
                 if recommended_side
                 else 0.0
             )
-            slippage_est = estimate_slippage(
-                entry_price_for_cost, condition_id=condition_id
-            )
+            slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
-            raw_kelly_amount = min(
-                kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT)
-            )
+            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
             # Reduce Kelly size by estimated slippage cost
-            recommended_amount = adjust_kelly_for_slippage(
-                raw_kelly_amount, entry_price_for_cost
-            )
+            recommended_amount = adjust_kelly_for_slippage(raw_kelly_amount, entry_price_for_cost)
 
             # Bet açılmalı mı?
             # NOTE: Polymarket'te public-search'ten gelen marketlerin
@@ -325,9 +274,8 @@ class Calculator:
             # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
             # değerini 0 yaparak bunu bypass edebilir.
             liquidity_ok = (
-                (market.liquidity or 0) >= bot_config.strategy.min_liquidity
-                or bot_config.strategy.min_liquidity <= 0
-            )
+                market.liquidity or 0
+            ) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
             effective_min_edge = self._compute_effective_min_edge(market, std_val)
 
             # ── Karpathy-search inefficiency gate ─────────────────────────
@@ -366,9 +314,7 @@ class Calculator:
                     f"Net edge düşük: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
                 )
             if not inefficiency_ok:
-                reason_parts.append(
-                    f"İnefficiency düşük: edge {net_edge:.2%} < {inefficiency_min:.2%}"
-                )
+                reason_parts.append(f"İnefficiency düşük: edge {net_edge:.2%} < {inefficiency_min:.2%}")
             if len(forecast_values) < bot_config.strategy.min_sources:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
@@ -377,13 +323,16 @@ class Calculator:
                 reason_parts.append(f"Düşük likidite: ${market.liquidity}")
 
             if not reason_parts:
-                reason = f"BET AÇ! Edge={net_edge:.2%} (raw={raw_edge:.2%}), Side={recommended_side}, slip_model={slippage_est.model_used}"
+                reason = (
+                    f"BET AC! Edge={net_edge:.2%} "
+                    f"(raw={raw_edge:.2%}), "
+                    f"Side={recommended_side}, "
+                    f"slip={slippage_est.model_used}"
+                )
             else:
                 reason = "PASS: " + ", ".join(reason_parts)
 
-            avg_val = (
-                sum(forecast_values) / len(forecast_values) if forecast_values else None
-            )
+            avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
 
             analysis = Analysis(
                 market_id=market_id,
@@ -494,13 +443,9 @@ class WeatherEngine:
 
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        url, params=params, timeout=aiohttp.ClientTimeout(total=30)
-                    ) as resp:
+                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
-                            logger.warning(
-                                "Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s..."
-                            )
+                            logger.warning("Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s...")
                             await asyncio.sleep(30)
                             return None
                         if resp.status != 200:
@@ -552,15 +497,10 @@ class WeatherEngine:
                     # Only accept the closest match if it is within 1 day,
                     # otherwise the lookup is genuinely stale and we should
                     # return None to avoid silently returning wrong-day data.
-                    if (
-                        best_idx is not None
-                        and best_delta is not None
-                        and best_delta <= 1
-                    ):
+                    if best_idx is not None and best_delta is not None and best_delta <= 1:
                         target_idx = best_idx
                         logger.info(
-                            "Timezone fallback: target=%s not in API response; "
-                            "using closest bucket %s (delta=%d day)",
+                            "Timezone fallback: target=%s not in API response; using closest bucket %s (delta=%d day)",
                             target_str,
                             times[target_idx],
                             best_delta,
@@ -597,15 +537,9 @@ class WeatherEngine:
             total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps)
             if total_weight == 0:
                 return None
-            weighted_mean = (
-                sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items())
-                / total_weight
-            )
+            weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
             weighted_var = (
-                sum(
-                    self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2
-                    for m, t in model_temps.items()
-                )
+                sum(self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps.items())
                 / total_weight
             )
             weighted_std = max(weighted_var**0.5, 0.5)
@@ -626,12 +560,8 @@ class WeatherEngine:
                                 source=mn,
                                 predicted_value=float(tmp),
                                 model_weight=self.model_weights.get(mn, 0.0),
-                                fetched_at=datetime.now(timezone.utc).replace(
-                                    tzinfo=None
-                                ),
-                                raw_data=str(
-                                    {"model": mn, "temp": tmp, "ensemble": True}
-                                ),
+                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
                             )
                         )
                 try:
@@ -684,11 +614,7 @@ class WeatherEngine:
             if tw <= 0:
                 vs = [v for v, _ in lat.values()]
                 m = sum(vs) / len(vs)
-                s = (
-                    max((sum((v - m) ** 2 for v in vs) / len(vs)) ** 0.5, 0.5)
-                    if len(vs) > 1
-                    else 1.0
-                )
+                s = max((sum((v - m) ** 2 for v in vs) / len(vs)) ** 0.5, 0.5) if len(vs) > 1 else 1.0
                 return {"weighted_mean": m, "weighted_std": s}
             wm = sum(v * w for v, w in lat.values()) / tw
             wv = sum(w * (v - wm) ** 2 for v, w in lat.values()) / tw
@@ -698,9 +624,7 @@ class WeatherEngine:
         finally:
             db.close()
 
-    def calculate_probability_above(
-        self, strike_temp: float, consensus=None, market_id=""
-    ):
+    def calculate_probability_above(self, strike_temp: float, consensus=None, market_id=""):
         """P(YES) for a HIGH market — delegates to shared estimate_probability."""
         if not consensus:
             consensus = self._db_consensus(market_id)
@@ -714,9 +638,7 @@ class WeatherEngine:
             market_type="HIGH",
         )
 
-    def calculate_probability_below(
-        self, strike_temp: float, consensus=None, market_id=""
-    ):
+    def calculate_probability_below(self, strike_temp: float, consensus=None, market_id=""):
         """P(YES) for a LOW market — delegates to shared estimate_probability."""
         if not consensus:
             consensus = self._db_consensus(market_id)
@@ -737,9 +659,7 @@ class WeatherEngine:
         longitude: float,
         target_date: datetime | None = None,
     ) -> dict | None:
-        return await self.get_multi_model_forecast(
-            city_code, latitude, longitude, target_date
-        )
+        return await self.get_multi_model_forecast(city_code, latitude, longitude, target_date)
 
     def update_model_weights(self, new_weights: dict):
         self.model_weights = new_weights

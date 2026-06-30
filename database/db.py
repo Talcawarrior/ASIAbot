@@ -104,6 +104,21 @@ def get_session():
         session.close()
 
 
+@contextmanager
+def get_session_or(existing=None):
+    """Yield *existing* session if provided, otherwise create a fresh one.
+
+    This allows callers to share a single session across a batch of
+    operations (e.g. one bot cycle) while keeping backward compatibility
+    for callers that don't pass a session.
+    """
+    if existing is not None:
+        yield existing
+    else:
+        with get_session() as session:
+            yield session
+
+
 def get_db_session():
     """Fallback compatibility method for legacy code."""
     _ensure_db_init()

@@ -471,35 +471,106 @@ function mapOpenPositions(signals: Signal[]): OpenPosition[] {
   });
 }
 
-function mapActivityFeed(signals: Signal[], history: HistoryEntry[]): ActivityItem[] {
-  const items: ActivityItem[] = [];
+function mapActivityFeed(signals: Signal[], history: HistoryEntry[], status?: Record<string, unknown> | null, health?: Record<string, unknown> | null, weights?: Record<string, { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number; last_updated?: string | null }> | null): ActivityItem[] {
+  const items: Array<{ item: ActivityItem; sortDate: number }> = [];
   let idCounter = 0;
 
-  // Recent signals (open bets)
-  for (const s of signals.slice(0, 5)) {
+  const fmtActivityTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) + " " +
+      d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  // System events: last scan time
+  const statsObj = status && typeof status === "object" ? (status as Record<string, unknown>).stats : null;
+  if (statsObj && typeof statsObj === "object") {
+    const lastScan = (statsObj as Record<string, unknown>).last_scan;
+    if (lastScan && typeof lastScan === "string") {
+      idCounter++;
+      items.push({
+        item: {
+          id: `sys_scan_${idCounter}`,
+          time: fmtActivityTime(lastScan),
+          color: "purple",
+          message: "🔄 Tarama tamamlandı — tüm piyasalar analiz edildi",
+        },
+        sortDate: new Date(lastScan).getTime(),
+      });
+    }
+  }
+
+  // System events: total analyses from health
+  const actObj = health && typeof health === "object" ? (health as Record<string, unknown>).activity_24h : null;
+  if (actObj && typeof actObj === "object") {
+    const totalAnalyses = (actObj as Record<string, unknown>).total_analyses;
+    const betsOpened = (actObj as Record<string, unknown>).bets_opened;
+    if (typeof totalAnalyses === "number" && totalAnalyses > 0) {
+      idCounter++;
+      items.push({
+        item: {
+          id: `sys_analysis_${idCounter}`,
+          time: "son 24 saat",
+          color: "purple",
+          message: `🧠 ISA-Karpathy: ${totalAnalyses} analiz, ${betsOpened} bahis açıldı`,
+        },
+        sortDate: Date.now() - 1000, // slightly older than real-time
+      });
+    }
+  }
+
+  // System events: ASI weight update
+  if (weights && typeof weights === "object") {
+    let latestUpdate: string | null = null;
+    let modelName: string | null = null;
+    for (const [name, w] of Object.entries(weights)) {
+      if (w && typeof w === "object" && w.last_updated) {
+        if (!latestUpdate || w.last_updated > latestUpdate) {
+          latestUpdate = w.last_updated;
+          modelName = name;
+        }
+      }
+    }
+    if (latestUpdate) {
+      idCounter++;
+      items.push({
+        item: {
+          id: `sys_asi_${idCounter}`,
+          time: fmtActivityTime(latestUpdate),
+          color: "purple",
+          message: `⚡ ASI-Evolve: ${modelName ?? "model"} ağırlıkları güncellendi`,
+        },
+        sortDate: new Date(latestUpdate).getTime(),
+      });
+    }
+  }
+
+  // Recent signals (open bets) — show up to 10
+  for (const s of signals.slice(0, 10)) {
     idCounter++;
-    const time = s.placed_at
-      ? new Date(s.placed_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
-      : "??:??";
+    const time = s.placed_at ? fmtActivityTime(s.placed_at) : "?";
     const edge = s.entry_edge ?? s.live_edge ?? s.edge ?? 0;
     const edgePct = (Math.round(edge * 1000) / 10).toFixed(1);
+    const sortDate = s.placed_at ? new Date(s.placed_at).getTime() : 0;
     items.push({
-      id: `s${idCounter}`,
-      time,
-      color: "blue",
-      message: `${s.city} için ${s.outcome} bet: $${s.stake_amount?.toFixed(2) ?? "?"} @ ${s.entry_price.toFixed(2)} (net edge: ${edgePct}%)`,
+      item: {
+        id: `s${idCounter}`,
+        time,
+        color: "blue",
+        message: `${s.city} için ${s.outcome} bet: $${s.stake_amount?.toFixed(2) ?? "?"} @ ${s.entry_price.toFixed(2)} (net edge: ${edgePct}%)`,
+      },
+      sortDate,
     });
   }
 
-  // Recent history (settled bets)
-  for (const h of history.slice(0, 5)) {
+  // Recent history (settled bets) — show up to 10
+  for (const h of history.slice(0, 10)) {
     idCounter++;
-    const time = h.settled_at
-      ? new Date(h.settled_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
-      : "??:??";
+    const time = h.settled_at ? fmtActivityTime(h.settled_at)
+      : h.closed_at ? fmtActivityTime(h.closed_at)
+      : h.placed_at ? fmtActivityTime(h.placed_at)
+      : "?";
     const color = h.result === "WIN" ? "teal" : "red";
     const pnlStr = h.realized_pnl >= 0 ? `+$${h.realized_pnl.toFixed(2)}` : `-$${Math.abs(h.realized_pnl).toFixed(2)}`;
-    // Exit type label with icon
     const exitLabels: Record<string, string> = {
       TP: "💰 Take Profit",
       SL: "🛑 Stop Loss",
@@ -512,17 +583,24 @@ function mapActivityFeed(signals: Signal[], history: HistoryEntry[]): ActivityIt
     const msg = exitLabel
       ? `${h.city}: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"} ${pnlStr} — ${exitLabel}`
       : `${h.city} marketi çözüldü: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"}, ${pnlStr}`;
+    const sortDate = h.settled_at ? new Date(h.settled_at).getTime()
+      : h.closed_at ? new Date(h.closed_at).getTime()
+      : h.placed_at ? new Date(h.placed_at).getTime()
+      : 0;
     items.push({
-      id: `h${idCounter}`,
-      time,
-      color,
-      message: msg,
+      item: {
+        id: `h${idCounter}`,
+        time,
+        color,
+        message: msg,
+      },
+      sortDate,
     });
   }
 
-  // Sort by time descending
-  items.sort((a, b) => b.time.localeCompare(a.time));
-  return items.slice(0, 15);
+  // Sort by actual timestamp descending
+  items.sort((a, b) => b.sortDate - a.sortDate);
+  return items.slice(0, 25).map(({ item }) => item);
 }
 
 function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
@@ -730,7 +808,7 @@ export function useApiData() {
     drawdown: 0,
   })) ?? mapPortfolioData(status, history);
   const openPositions = mapOpenPositions(signals);
-  const activityFeed = mapActivityFeed(signals, history);
+  const activityFeed = mapActivityFeed(signals, history, status, health, weights);
   const edgeDistribution = mapEdgeDistribution(health);
   const tradeHistory = mapTradeHistory(history);
   const modelScores = mapModelScores(weights);

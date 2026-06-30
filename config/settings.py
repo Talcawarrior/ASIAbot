@@ -71,6 +71,9 @@ class StrategyConfig:
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
     max_bet_amount: float = 3.0  # Maximum $3 per bet (binde 3 of $1,000)
+    max_bet_pct: float = 0.003  # Max bet as % of portfolio (single source of truth)
+    min_bet_size: float = 1.0  # Minimum bet size in USD
+    total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
     # markets don't expose a `liquidity` field reliably
     # (it's always 0). The current_price already reflects
@@ -154,10 +157,200 @@ class RiskConfig:
     # Risk management loop interval (seconds)
 
 
+# ── Large constant dicts (module-level, shared by all) ────────────────────
+_ICAO_COORDS = {
+    # Turkey (4)
+    "LTAC": (39.9891, 32.8236),
+    "LTFM": (41.2753, 28.7519),
+    "LTBJ": (38.2924, 27.1569),
+    "LTAI": (36.8987, 30.8005),
+    # USA (15)
+    "KDAL": (32.8471, -96.8517),
+    "KMIA": (25.7959, -80.2870),
+    "KORD": (41.9742, -87.9073),
+    "KLGA": (40.7769, -73.8740),
+    "KLAX": (33.9416, -118.4085),
+    "KLAS": (36.0840, -115.1537),
+    "KPHX": (33.4343, -112.0080),
+    "KIAH": (29.9844, -95.3414),
+    "KATL": (33.6407, -84.4277),
+    "KBOS": (42.3656, -71.0096),
+    "KSEA": (47.4502, -122.3088),
+    "KDEN": (39.8617, -104.6732),
+    "KDCA": (38.8521, -77.0377),
+    "KSFO": (37.6188, -122.3750),
+    "KMCO": (28.4294, -81.3089),
+    # Canada / Mexico (5)
+    "CYYZ": (43.6777, -79.6308),
+    "CYVR": (49.1947, -123.1792),
+    "CYUL": (45.4706, -73.7408),
+    "MMMX": (19.4363, -99.0721),
+    "MMGL": (20.5218, -103.3112),
+    # South America (5)
+    "SBGR": (-23.4356, -46.4731),
+    "SBGL": (-22.8089, -43.2436),
+    "SAEZ": (-34.8222, -58.5358),
+    "SCEL": (-33.3930, -70.7858),
+    "SPJC": (-12.0219, -77.1143),
+    # Europe (15)
+    "EGLL": (51.4700, -0.4543),
+    "LFPG": (49.0099, 2.5479),
+    "EDDT": (52.5597, 13.2877),
+    "UUEE": (55.9726, 37.4146),
+    "EDDF": (50.0379, 8.5622),
+    "EHAM": (52.3105, 4.7683),
+    "LEMD": (40.4983, -3.5676),
+    "LIRF": (41.8003, 12.2389),
+    "LEBL": (41.2974, 2.0833),
+    "EDDM": (48.3538, 11.7861),
+    "LSZH": (47.4581, 8.5480),
+    "LOWW": (48.1103, 16.5697),
+    "ESSA": (59.6498, 17.9294),
+    "LGAV": (37.9364, 23.9472),
+    "LPPT": (38.7750, -9.1354),
+    # Middle East (3)
+    "OMDB": (25.2532, 55.3657),
+    "LLBG": (32.0114, 34.8867),
+    "OTHH": (25.2731, 51.6081),
+    # Asia (12)
+    "RJTT": (35.5533, 139.7811),
+    "RJOO": (34.7882, 135.4381),
+    "ZSPD": (31.1434, 121.8052),
+    "ZBAA": (40.0799, 116.6031),
+    "RKSS": (37.4602, 126.4407),
+    "VHHH": (22.3080, 113.9185),
+    "RCTP": (25.0764, 121.2338),
+    "WSSS": (1.3592, 103.9894),
+    "VTBS": (13.6926, 100.7501),
+    "WIII": (-6.1256, 106.6559),
+    "VABB": (19.0887, 72.8679),
+    "VIDP": (28.5562, 77.1000),
+    # Oceania (3)
+    "YSSY": (-33.9399, 151.1753),
+    "YMML": (-37.6690, 144.8410),
+    "NZAA": (-37.0082, 174.7918),
+    # Africa (2)
+    "HECA": (30.1219, 31.4056),
+    "FACT": (-33.9694, 18.5972),
+}
+
+_CITY_ICAO_MAP = {
+    "ankara": "LTAC",
+    "istanbul": "LTFM",
+    "izmir": "LTBJ",
+    "antalya": "LTAI",
+    "dallas": "KDAL",
+    "miami": "KMIA",
+    "chicago": "KORD",
+    "new york": "KLGA",
+    "newyork": "KLGA",
+    "los angeles": "KLAX",
+    "las vegas": "KLAS",
+    "phoenix": "KPHX",
+    "houston": "KIAH",
+    "atlanta": "KATL",
+    "boston": "KBOS",
+    "seattle": "KSEA",
+    "denver": "KDEN",
+    "washington": "KDCA",
+    "san francisco": "KSFO",
+    "orlando": "KMCO",
+    "toronto": "CYYZ",
+    "vancouver": "CYVR",
+    "montreal": "CYUL",
+    "mexico city": "MMMX",
+    "guadalajara": "MMGL",
+    "sao paulo": "SBGR",
+    "rio de janeiro": "SBGL",
+    "buenos aires": "SAEZ",
+    "santiago": "SCEL",
+    "lima": "SPJC",
+    "london": "EGLL",
+    "paris": "LFPG",
+    "berlin": "EDDT",
+    "moscow": "UUEE",
+    "frankfurt": "EDDF",
+    "amsterdam": "EHAM",
+    "madrid": "LEMD",
+    "rome": "LIRF",
+    "barcelona": "LEBL",
+    "munich": "EDDM",
+    "zurich": "LSZH",
+    "vienna": "LOWW",
+    "stockholm": "ESSA",
+    "athens": "LGAV",
+    "lisbon": "LPPT",
+    "dubai": "OMDB",
+    "tel aviv": "LLBG",
+    "doha": "OTHH",
+    "tokyo": "RJTT",
+    "osaka": "RJOO",
+    "shanghai": "ZSPD",
+    "beijing": "ZBAA",
+    "seoul": "RKSS",
+    "hong kong": "VHHH",
+    "taipei": "RCTP",
+    "singapore": "WSSS",
+    "bangkok": "VTBS",
+    "jakarta": "WIII",
+    "mumbai": "VABB",
+    "delhi": "VIDP",
+    "sydney": "YSSY",
+    "melbourne": "YMML",
+    "auckland": "NZAA",
+    "cairo": "HECA",
+    "cape town": "FACT",
+}
+
+
 @dataclass
 class BotConfig:
-    """Combined configurations."""
+    """Combined configurations — single source of truth for ALL config."""
 
+    # ── Portfolio ──────────────────────────────────────────────────
+    initial_portfolio: float = 1000.0
+    max_exposure_pct: float = 0.25
+    city_cap: int = 4
+    weather_fee_rate: float = 0.05
+
+    # ── Intervals ──────────────────────────────────────────────────
+    scan_interval: int = 300
+    settlement_interval: int = 120
+    sia_interval: int = 86400
+    # Midnight scan: after 00:00, scan every N seconds for the first
+    # MIDNIGHT_SCAN_WINDOW minutes to catch 2-day-ahead markets early
+    # (earlier = cheaper prices on Polymarket).
+    midnight_scan_interval: int = 60  # seconds between scans after midnight
+    midnight_scan_window: int = 60  # minutes after midnight to use fast scan
+
+    # ── API URLs ───────────────────────────────────────────────────
+    polymarket_gamma_api: str = "https://gamma-api.polymarket.com"
+    polymarket_clob_api: str = "https://clob.polymarket.com"
+    open_meteo_api: str = "https://api.open-meteo.com/v1"
+
+    # ── Database ───────────────────────────────────────────────────
+    db_path: str = ""  # set from .env in __post_init__
+    db_echo: bool = False
+
+    # ── Logging ────────────────────────────────────────────────────
+    log_level: str = "INFO"
+    log_file: str = ""  # set from .env in __post_init__
+    log_format: str = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
+
+    # ── Runtime ────────────────────────────────────────────────────
+    dry_run: bool = True
+    temp_unit: str = "celsius"
+    host: str = "127.0.0.1"
+    port: int = 8091
+
+    # ── Model weights ──────────────────────────────────────────────
+    model_weights: dict = None  # type: ignore[assignment]
+
+    # ── Constants ──────────────────────────────────────────────────
+    icao_coords: dict = None  # type: ignore[assignment]
+    city_icao_map: dict = None  # type: ignore[assignment]
+
+    # ── Nested configs ─────────────────────────────────────────────
     polymarket: PolymarketConfig = None  # type: ignore[assignment]
     meteo: MeteoConfig = None  # type: ignore[assignment]
     strategy: StrategyConfig = None  # type: ignore[assignment]
@@ -169,283 +362,164 @@ class BotConfig:
         self.strategy = self.strategy or StrategyConfig()
         self.risk = self.risk or RiskConfig()
 
+        # ── Override from .env (single source: .env > dataclass defaults) ──
+        self.initial_portfolio = float(os.getenv("INITIAL_PORTFOLIO", str(self.initial_portfolio)))
+        self.max_exposure_pct = float(os.getenv("MAX_EXPOSURE_PCT", str(self.max_exposure_pct)))
+        self.city_cap = int(os.getenv("CITY_CAP", str(self.city_cap)))
+        self.weather_fee_rate = float(os.getenv("WEATHER_FEE_RATE", str(self.weather_fee_rate)))
+        self.scan_interval = int(os.getenv("SCAN_INTERVAL", str(self.scan_interval)))
+        self.settlement_interval = int(os.getenv("SETTLEMENT_INTERVAL", str(self.settlement_interval)))
+        self.sia_interval = int(os.getenv("SIA_INTERVAL", str(self.sia_interval)))
+        self.midnight_scan_interval = int(os.getenv("MIDNIGHT_SCAN_INTERVAL", str(self.midnight_scan_interval)))
+        self.midnight_scan_window = int(os.getenv("MIDNIGHT_SCAN_WINDOW", str(self.midnight_scan_window)))
+        self.host = os.getenv("HOST", self.host)
+        self.port = int(os.getenv("PORT", str(self.port)))
+        self.dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
+        self.log_level = os.getenv("LOG_LEVEL", self.log_level)
+        self.db_echo = os.getenv("DB_ECHO", "false").lower() == "true"
 
-# Main configuration class (kept for backward compatibility with older components & tests)
-class Config:
-    """Central configuration for the ASIAbot Weather Prediction Bot."""
+        # Resolve paths
+        self.db_path = _resolve_path(os.getenv("DB_PATH") or "", "data/bot.db")
+        self.log_file = _resolve_path(os.getenv("LOG_FILE") or "", "logs/bot.log")
 
-    INITIAL_PORTFOLIO = float(os.getenv("INITIAL_PORTFOLIO", "1000.0"))
-    MAX_EXPOSURE_PCT = float(os.getenv("MAX_EXPOSURE_PCT", "0.25"))
-    MAX_BET_PCT = float(os.getenv("MAX_BET_PCT", "0.003"))
-    MIN_BET_SIZE = float(os.getenv("MIN_BET_SIZE", "1.0"))
-    # Minimum market price to place a bet. Bids at 0.001 have no real
-    # liquidity on Polymarket; paper PnL at those levels is fantasy.
-    MIN_ENTRY_PRICE = float(os.getenv("MIN_ENTRY_PRICE", "0.01"))
-    # Fixed dollar amount per bet, set via FLAT_BET_USD env var.
-    # 0.0 (default) means 'use the calculator's Kelly-based recommendation'.
-    # > 0.0 means 'every bet is exactly this many USD, ignore Kelly sizing'.
-    # Risk caps (MAX_BET_PCT, TOTAL_EXPOSURE_PCT, CITY_CAP) still apply on top.
-    FLAT_BET_USD = float(os.getenv("FLAT_BET_USD", "0.0"))  # 0 = use Kelly sizing
-    KELLY_FRACTION = float(os.getenv("KELLY_FRACTION", "0.15"))
-    DAILY_LOSS_LIMIT = float(os.getenv("DAILY_LOSS_LIMIT", "0.05"))
-    CITY_CAP = int(os.getenv("CITY_CAP", "4"))
-    # Polymarket fee rate for Weather category (0.05 = 5 %).
-    # Other categories: Crypto=0.07, Sports=0.03, Politics/Finance/Tech/Mentions=0.04,
-    # Economics/Culture/Other=0.05, Geopolitics=0 (free).
-    WEATHER_FEE_RATE = float(os.getenv("WEATHER_FEE_RATE", "0.05"))
-    SCAN_INTERVAL = int(os.getenv("SCAN_INTERVAL", "300"))
-    SETTLEMENT_INTERVAL = int(os.getenv("SETTLEMENT_INTERVAL", "120"))
-    SIA_INTERVAL = int(os.getenv("SIA_INTERVAL", "86400"))
-    POLYMARKET_GAMMA_API = "https://gamma-api.polymarket.com"
-    POLYMARKET_CLOB_API = "https://clob.polymarket.com"
-    OPEN_METEO_API = "https://api.open-meteo.com/v1"
+        # ── Constants (large dicts) ───────────────────────────────
+        if self.model_weights is None:
+            self.model_weights = {
+                "gfs_seamless": 0.30,
+                "ecmwf_ifs025": 0.25,
+                "gem_global": 0.15,
+                "icon_global": 0.10,
+                "jma_seamless": 0.08,
+                "cma_grapes_global": 0.05,
+                "ukmo_seamless": 0.04,
+                "meteofrance_seamless": 0.03,
+            }
+        if self.icao_coords is None:
+            self.icao_coords = _ICAO_COORDS
+        if self.city_icao_map is None:
+            self.city_icao_map = _CITY_ICAO_MAP
 
-    MODEL_WEIGHTS = {
-        "gfs_seamless": 0.30,
-        "ecmwf_ifs025": 0.25,
-        "gem_global": 0.15,
-        "icon_global": 0.10,
-        "jma_seamless": 0.08,
-        "cma_grapes_global": 0.05,
-        "ukmo_seamless": 0.04,
-        "meteofrance_seamless": 0.03,
-    }
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    LOG_FILE = _resolve_path(os.getenv("LOG_FILE") or "", "logs/bot.log")  # type: ignore[arg-type]
-    LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
-    DB_PATH = _resolve_path(os.getenv("DB_PATH") or "", "data/bot.db")  # type: ignore[arg-type]
-    DB_ECHO = os.getenv("DB_ECHO", "false").lower() == "true"
-    TEMP_UNIT = "celsius"
-    DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+        # ── Strategy: override from .env ───────────────────────────
+        s = self.strategy
+        s.max_bet_pct = float(os.getenv("MAX_BET_PCT", str(s.max_bet_pct)))
+        s.min_bet_size = float(os.getenv("MIN_BET_SIZE", str(s.min_bet_size)))
+        s.kelly_fraction = float(os.getenv("KELLY_FRACTION", str(s.kelly_fraction)))
+        s.daily_loss_limit = float(os.getenv("DAILY_LOSS_LIMIT", str(s.daily_loss_limit)))
+        s.min_entry_price = float(os.getenv("MIN_ENTRY_PRICE", str(s.min_entry_price)))
+        s.flat_bet_usd = float(os.getenv("FLAT_BET_USD", str(s.flat_bet_usd)))
 
-    HOST = os.getenv(
-        "HOST", "127.0.0.1"
-    )  # Safe default; set 0.0.0.0 only behind a reverse proxy
-    PORT = int(os.getenv("PORT", "8091"))
 
-    ICAO_COORDS = {
-        # Turkey (4)
-        "LTAC": (39.9891, 32.8236),  # Ankara Esenboğa
-        "LTFM": (41.2753, 28.7519),  # Istanbul Airport
-        "LTBJ": (38.2924, 27.1569),  # Izmir Adnan Menderes
-        "LTAI": (36.8987, 30.8005),  # Antalya
-        # USA (15)
-        "KDAL": (32.8471, -96.8517),  # Dallas Love Field
-        "KMIA": (25.7959, -80.2870),  # Miami
-        "KORD": (41.9742, -87.9073),  # Chicago O'Hare
-        "KLGA": (40.7769, -73.8740),  # New York LaGuardia
-        "KLAX": (33.9416, -118.4085),  # Los Angeles
-        "KLAS": (36.0840, -115.1537),  # Las Vegas McCarran
-        "KPHX": (33.4343, -112.0080),  # Phoenix Sky Harbor
-        "KIAH": (29.9844, -95.3414),  # Houston George Bush
-        "KATL": (33.6407, -84.4277),  # Atlanta Hartsfield
-        "KBOS": (42.3656, -71.0096),  # Boston Logan
-        "KSEA": (47.4502, -122.3088),  # Seattle-Tacoma
-        "KDEN": (39.8617, -104.6732),  # Denver
-        "KDCA": (38.8521, -77.0377),  # Washington Reagan
-        "KSFO": (37.6188, -122.3750),  # San Francisco
-        "KMCO": (28.4294, -81.3089),  # Orlando
-        # Canada / Mexico (5)
-        "CYYZ": (43.6777, -79.6308),  # Toronto Pearson
-        "CYVR": (49.1947, -123.1792),  # Vancouver
-        "CYUL": (45.4706, -73.7408),  # Montreal Trudeau
-        "MMMX": (19.4363, -99.0721),  # Mexico City
-        "MMGL": (20.5218, -103.3112),  # Guadalajara
-        # South America (5)
-        "SBGR": (-23.4356, -46.4731),  # São Paulo Guarulhos
-        "SBGL": (-22.8089, -43.2436),  # Rio de Janeiro Galeão
-        "SAEZ": (-34.8222, -58.5358),  # Buenos Aires Ezeiza
-        "SCEL": (-33.3930, -70.7858),  # Santiago
-        "SPJC": (-12.0219, -77.1143),  # Lima Jorge Chávez
-        # Europe (15)
-        "EGLL": (51.4700, -0.4543),  # London Heathrow
-        "LFPG": (49.0099, 2.5479),  # Paris Charles de Gaulle
-        "EDDT": (52.5597, 13.2877),  # Berlin Brandenburg
-        "UUEE": (55.9726, 37.4146),  # Moscow Sheremetyevo
-        "EDDF": (50.0379, 8.5622),  # Frankfurt
-        "EHAM": (52.3105, 4.7683),  # Amsterdam Schiphol
-        "LEMD": (40.4983, -3.5676),  # Madrid Barajas
-        "LIRF": (41.8003, 12.2389),  # Rome Fiumicino
-        "LEBL": (41.2974, 2.0833),  # Barcelona
-        "EDDM": (48.3538, 11.7861),  # Munich
-        "LSZH": (47.4581, 8.5480),  # Zurich
-        "LOWW": (48.1103, 16.5697),  # Vienna
-        "ESSA": (59.6498, 17.9294),  # Stockholm Arlanda
-        "LGAV": (37.9364, 23.9472),  # Athens Eleftherios
-        "LPPT": (38.7750, -9.1354),  # Lisbon
-        # Middle East (3)
-        "OMDB": (25.2532, 55.3657),  # Dubai
-        "LLBG": (32.0114, 34.8867),  # Tel Aviv Ben Gurion
-        "OTHH": (25.2731, 51.6081),  # Doha Hamad
-        # Asia (12)
-        "RJTT": (35.5533, 139.7811),  # Tokyo Haneda
-        "RJOO": (34.7882, 135.4381),  # Osaka Itami
-        "ZSPD": (31.1434, 121.8052),  # Shanghai Pudong
-        "ZBAA": (40.0799, 116.6031),  # Beijing Capital
-        "RKSS": (37.4602, 126.4407),  # Seoul Gimpo
-        "VHHH": (22.3080, 113.9185),  # Hong Kong
-        "RCTP": (25.0764, 121.2338),  # Taipei Taoyuan
-        "WSSS": (1.3592, 103.9894),  # Singapore Changi
-        "VTBS": (13.6926, 100.7501),  # Bangkok Suvarnabhumi
-        "WIII": (-6.1256, 106.6559),  # Jakarta Soekarno-Hatta
-        "VABB": (19.0887, 72.8679),  # Mumbai Chhatrapati
-        "VIDP": (28.5562, 77.1000),  # Delhi Indira Gandhi
-        # Oceania (3)
-        "YSSY": (-33.9399, 151.1753),  # Sydney Kingsford Smith
-        "YMML": (-37.6690, 144.8410),  # Melbourne Tullamarine
-        "NZAA": (-37.0082, 174.7918),  # Auckland
-        # Africa (2)
-        "HECA": (30.1219, 31.4056),  # Cairo
-        "FACT": (-33.9694, 18.5972),  # Cape Town
+# ── Config backward-compatibility proxy ────────────────────────────────────
+# All reads/writes go through bot_config (single source of truth).
+# This eliminates the dual Config / bot_config drift problem.
+
+
+class _ConfigProxy:
+    """Backward-compatible proxy. Delegates all attribute access to bot_config.
+
+    Usage: ``Config.MAX_BET_PCT`` reads ``bot_config.strategy.max_bet_pct``.
+    Assignment: ``Config.MAX_BET_PCT = 0.01`` writes back to ``bot_config``.
+    """
+
+    _MAP: dict[str, tuple[str, str]] = {
+        # root-level BotConfig fields
+        "INITIAL_PORTFOLIO": ("root", "initial_portfolio"),
+        "MAX_EXPOSURE_PCT": ("root", "max_exposure_pct"),
+        "CITY_CAP": ("root", "city_cap"),
+        "WEATHER_FEE_RATE": ("root", "weather_fee_rate"),
+        "SCAN_INTERVAL": ("root", "scan_interval"),
+        "SETTLEMENT_INTERVAL": ("root", "settlement_interval"),
+        "SIA_INTERVAL": ("root", "sia_interval"),
+        "MIDNIGHT_SCAN_INTERVAL": ("root", "midnight_scan_interval"),
+        "MIDNIGHT_SCAN_WINDOW": ("root", "midnight_scan_window"),
+        "POLYMARKET_GAMMA_API": ("root", "polymarket_gamma_api"),
+        "POLYMARKET_CLOB_API": ("root", "polymarket_clob_api"),
+        "OPEN_METEO_API": ("root", "open_meteo_api"),
+        "OPEN_METEO_BASE": ("root", "open_meteo_api"),
+        "MODEL_WEIGHTS": ("root", "model_weights"),
+        "LOG_LEVEL": ("root", "log_level"),
+        "LOG_FILE": ("root", "log_file"),
+        "LOG_FORMAT": ("root", "log_format"),
+        "DB_PATH": ("root", "db_path"),
+        "DB_ECHO": ("root", "db_echo"),
+        "TEMP_UNIT": ("root", "temp_unit"),
+        "DRY_RUN": ("root", "dry_run"),
+        "HOST": ("root", "host"),
+        "PORT": ("root", "port"),
+        "ICAO_COORDS": ("root", "icao_coords"),
+        "CITY_ICAO_MAP": ("root", "city_icao_map"),
+        # strategy-level fields
+        "MAX_BET_PCT": ("strategy", "max_bet_pct"),
+        "MIN_BET_SIZE": ("strategy", "min_bet_size"),
+        "KELLY_FRACTION": ("strategy", "kelly_fraction"),
+        "MIN_ENTRY_PRICE": ("strategy", "min_entry_price"),
+        "FLAT_BET_USD": ("strategy", "flat_bet_usd"),
+        "DAILY_LOSS_LIMIT": ("strategy", "daily_loss_limit"),
+        "FEE_DRAG": ("strategy", "fee_drag"),
+        "TOTAL_EXPOSURE_PCT": ("strategy", "total_exposure_pct"),
     }
 
-    CITY_ICAO_MAP = {
-        # Turkey (4)
-        "ankara": "LTAC",
-        "istanbul": "LTFM",
-        "izmir": "LTBJ",
-        "antalya": "LTAI",
-        # North America - USA (15)
-        "dallas": "KDAL",
-        "miami": "KMIA",
-        "chicago": "KORD",
-        "new york": "KLGA",
-        "newyork": "KLGA",
-        "los angeles": "KLAX",
-        "las vegas": "KLAS",
-        "phoenix": "KPHX",
-        "houston": "KIAH",
-        "atlanta": "KATL",
-        "boston": "KBOS",
-        "seattle": "KSEA",
-        "denver": "KDEN",
-        "washington": "KDCA",
-        "san francisco": "KSFO",
-        "orlando": "KMCO",
-        # North America - CA / MX (5)
-        "toronto": "CYYZ",
-        "vancouver": "CYVR",
-        "montreal": "CYUL",
-        "mexico city": "MMMX",
-        "guadalajara": "MMGL",
-        # South America (5)
-        "sao paulo": "SBGR",
-        "rio de janeiro": "SBGL",
-        "buenos aires": "SAEZ",
-        "santiago": "SCEL",
-        "lima": "SPJC",
-        # Europe (15)
-        "london": "EGLL",
-        "paris": "LFPG",
-        "berlin": "EDDT",
-        "moscow": "UUEE",
-        "frankfurt": "EDDF",
-        "amsterdam": "EHAM",
-        "madrid": "LEMD",
-        "rome": "LIRF",
-        "barcelona": "LEBL",
-        "munich": "EDDM",
-        "zurich": "LSZH",
-        "vienna": "LOWW",
-        "stockholm": "ESSA",
-        "athens": "LGAV",
-        "lisbon": "LPPT",
-        # Middle East (3)
-        "dubai": "OMDB",
-        "tel aviv": "LLBG",
-        "doha": "OTHH",
-        # Asia (12)
-        "tokyo": "RJTT",
-        "osaka": "RJOO",
-        "shanghai": "ZSPD",
-        "beijing": "ZBAA",
-        "seoul": "RKSS",
-        "hong kong": "VHHH",
-        "taipei": "RCTP",
-        "singapore": "WSSS",
-        "bangkok": "VTBS",
-        "jakarta": "WIII",
-        "mumbai": "VABB",
-        "delhi": "VIDP",
-        # Oceania (3)
-        "sydney": "YSSY",
-        "melbourne": "YMML",
-        "auckland": "NZAA",
-        # Africa (2)
-        "cairo": "HECA",
-        "cape town": "FACT",
-    }
-    OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
-    FEE_DRAG = float(os.getenv("FEE_DRAG", "0.02"))
-    # NOTE: minimum-edge threshold is NOT defined on Config on purpose.
-    # The single source of truth is `bot_config.strategy.min_edge` (default 0.05 = 5%).
-    # `engine.calculator.py` reads from there at lines 179 & 187; the previous
-    # `Config.MIN_EDGE = 0.03` constant was dead code (never read anywhere) and
-    # caused "which one is canonical?" confusion in code review.
-    TOTAL_EXPOSURE_PCT = 0.25
+    def _resolve(self, name: str):
+        """Return ``(target_obj, attr_name)`` for a Config attribute."""
+        if name in self._MAP:
+            section, attr = self._MAP[name]
+            target = bot_config.strategy if section == "strategy" else bot_config
+            return target, attr
+        return None, name
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+        target, attr = self._resolve(name)
+        if target is not None and hasattr(target, attr):
+            return getattr(target, attr)
+        raise AttributeError(f"'Config' has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        target, attr = self._resolve(name)
+        if target is not None:
+            setattr(target, attr, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    # ── Convenience methods ────────────────────────────────────────────
 
     @property
-    def daily_loss_limit_amount(self):
+    def daily_loss_limit_amount(self) -> float:
         """Return absolute daily loss limit amount."""
-        return self.INITIAL_PORTFOLIO * self.DAILY_LOSS_LIMIT
+        return bot_config.initial_portfolio * bot_config.strategy.daily_loss_limit
 
     @classmethod
     def get_model_weight(cls, model_name: str) -> float:
-        """Return weight for a specific model."""
-        return cls.MODEL_WEIGHTS.get(model_name, 0.0)
+        return bot_config.model_weights.get(model_name, 0.0)
 
     @classmethod
     def get_normalized_weights(cls) -> dict:
-        """Return normalized model weight dictionary."""
-        return cls.MODEL_WEIGHTS
+        return bot_config.model_weights
 
     @classmethod
     def get_max_exposure_amount(cls, portfolio_value: float) -> float:
-        """Return maximum allowed total exposure."""
-        return portfolio_value * cls.MAX_EXPOSURE_PCT
+        return portfolio_value * bot_config.max_exposure_pct
 
     @classmethod
     def get_daily_loss_limit(cls, portfolio_value: float) -> float:
-        """Return daily loss limit amount."""
-        return portfolio_value * cls.DAILY_LOSS_LIMIT
+        return portfolio_value * bot_config.strategy.daily_loss_limit
 
 
-# Singleton instances
-config = Config()
+# ── Singleton instances (bot_config FIRST, then Config proxy) ──────────────
 bot_config = BotConfig()
-
-
-def assert_config_consistency():
-    """Verify that Config legacy class and StrategyConfig dataclass are in sync.
-
-    Raises RuntimeError with details if any field drifts apart.
-    """
-    _errors = []
-
-    # KELLY_FRACTION vs strategy.kelly_fraction
-    if abs(Config.KELLY_FRACTION - bot_config.strategy.kelly_fraction) > 1e-9:
-        _errors.append(
-            f"Config.KELLY_FRACTION ({Config.KELLY_FRACTION}) != "
-            f"bot_config.strategy.kelly_fraction ({bot_config.strategy.kelly_fraction})"
-        )
-
-    # FEE_DRAG vs strategy.fee_drag
-    if abs(Config.FEE_DRAG - bot_config.strategy.fee_drag) > 1e-9:
-        _errors.append(
-            f"Config.FEE_DRAG ({Config.FEE_DRAG}) != bot_config.strategy.fee_drag ({bot_config.strategy.fee_drag})"
-        )
-
-    if _errors:
-        raise RuntimeError("Config/Strategy drift detected:\n" + "\n".join(_errors))
+Config = _ConfigProxy()
+config = Config  # alias used by older modules
 
 
 def apply_persisted_strategy_params() -> dict:
     """Overlay any persisted strategy params from data/strategy_params.json
-    onto the in-memory bot_config.
+    onto the in-memory bot_config (single source of truth).
 
-    Called at startup so the live bot picks up the latest Karpathy-search
-    winners without needing a code change. Returns the params dict that
-    was applied (empty dict if no file was found).
+    Returns the params dict that was applied (empty dict if no file found).
     """
     try:
         from utils.weights_store import load_strategy_params
@@ -459,7 +533,6 @@ def apply_persisted_strategy_params() -> dict:
     applied = {}
     s = bot_config.strategy
 
-    # Map persisted keys → StrategyConfig attributes
     if "min_edge" in persisted:
         try:
             s.min_edge = float(persisted["min_edge"])
@@ -469,21 +542,15 @@ def apply_persisted_strategy_params() -> dict:
     if "kelly_fraction" in persisted:
         try:
             s.kelly_fraction = float(persisted["kelly_fraction"])
-            # Keep Config.KELLY_FRACTION in sync so assert_config_consistency passes.
-            Config.KELLY_FRACTION = s.kelly_fraction
             applied["kelly_fraction"] = s.kelly_fraction
         except (TypeError, ValueError):
             pass
-    # NOTE: max_bet_pct is intentionally NOT handled here.
-    # It MUST come ONLY from .env / Config.MAX_BET_PCT so that
-    # calculator.py, bet_placer.py, and utils/kelly.py all use the
-    # same `portfolio_value × MAX_BET_PCT` formula via max_bet_cap().
-    # Persisting it in strategy_params.json caused the "max_bet_amount
-    # = $30.00" bug where all bets were rejected by the exposure cap.
+    # NOTE: max_bet_pct is intentionally NOT loaded from strategy_params.json.
+    # It MUST come ONLY from .env so that calculator.py, bet_placer.py, and
+    # utils/kelly.py all use the same cap via max_bet_cap().
     if "min_entry_price" in persisted:
         try:
             s.min_entry_price = float(persisted["min_entry_price"])
-            Config.MIN_ENTRY_PRICE = s.min_entry_price
             applied["min_entry_price"] = s.min_entry_price
         except (TypeError, ValueError):
             pass
@@ -494,27 +561,10 @@ def apply_persisted_strategy_params() -> dict:
         except (TypeError, ValueError):
             pass
 
-    # Re-run consistency check after applying.
-    try:
-        assert_config_consistency()
-    except RuntimeError as e:
-        # Don't crash — just log. The defaults are still safe.
-        import logging
-
-        logging.getLogger("CONFIG").warning(
-            "Post-apply consistency check failed: %s", e
-        )
-
     return applied
 
 
-assert_config_consistency()
-
-# Apply persisted Karpathy-search winners at import time so every
-# downstream module (calculator, bet_placer, dashboard) sees the
-# tuned values without needing to call apply_persisted_strategy_params
-# explicitly. Wrapped in try/except so a missing/corrupt file never
-# blocks startup.
+# Apply persisted Karpathy-search winners at import time.
 try:
     _applied_params = apply_persisted_strategy_params()
     if _applied_params:
@@ -527,6 +577,4 @@ try:
 except Exception as _e:
     import logging
 
-    logging.getLogger("CONFIG").warning(
-        "Could not apply persisted strategy params: %s", _e
-    )
+    logging.getLogger("CONFIG").warning("Could not apply persisted strategy params: %s", _e)

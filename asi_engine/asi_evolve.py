@@ -139,9 +139,7 @@ class CognitionStore:
             import faiss  # type: ignore
             import sentence_transformers  # type: ignore
 
-            self._embedder = sentence_transformers.SentenceTransformer(
-                "sentence-transformers/all-MiniLM-L6-v2"
-            )
+            self._embedder = sentence_transformers.SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
             self._faiss_index = faiss.IndexFlatIP(self.dim)
             logger.info("CognitionStore: FAISS + sentence-transformers loaded")
         except ImportError:
@@ -186,9 +184,7 @@ class CognitionStore:
         if self._faiss_index is not None:
             import numpy as np  # type: ignore
 
-            d, idx_arr = self._faiss_index.search(
-                np.array([q], dtype="float32"), min(k, len(self._ids))
-            )
+            d, idx_arr = self._faiss_index.search(np.array([q], dtype="float32"), min(k, len(self._ids)))
             results = []
             for sim, idx in zip(d[0].tolist(), idx_arr[0].tolist()):
                 if idx < 0:
@@ -208,10 +204,7 @@ class CognitionStore:
             s = sum(a * b for a, b in zip(q, v))
             sims.append((s, i))
         sims.sort(reverse=True)
-        return [
-            {"id": self._ids[i], "text": self._texts[i], "similarity": float(s)}
-            for s, i in sims[:k]
-        ]
+        return [{"id": self._ids[i], "text": self._texts[i], "similarity": float(s)} for s, i in sims[:k]]
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +258,7 @@ def ucb1_select_parent(
     return best_parent
 
 
-def get_parent_hypothesis(
-    conn: sqlite3.Connection, parent_id: int
-) -> Hypothesis | None:
+def get_parent_hypothesis(conn: sqlite3.Connection, parent_id: int) -> Hypothesis | None:
     """Load a parent hypothesis from the experiment DB."""
     cur = conn.cursor()
     cur.execute(
@@ -391,10 +382,7 @@ class AnalyzerAgent:
         """Evaluate candidate on each split's test window, mean the stats,
         persist to DB, and add to cognition store.
         """
-        per_split = [
-            evaluate_hypothesis_oos(brier_df, s["test_indices"], candidate.hypothesis)
-            for s in splits
-        ]
+        per_split = [evaluate_hypothesis_oos(brier_df, s["test_indices"], candidate.hypothesis) for s in splits]
         mean_stats = _mean_stats(per_split)
 
         # Persist to experiment DB
@@ -537,7 +525,9 @@ def _append_results_tsv(
     status: str,
 ) -> None:
     os.makedirs(os.path.dirname(RESULTS_TSV_PATH), exist_ok=True)
-    header = "round\tcandidate\ttimestamp\tdescription\tsource\tmin_edge\tkelly\tsharpe\troi_pct\tbrier\ttrades\tstatus\n"
+    header = (
+        "round\tcandidate\ttimestamp\tdescription\tsource\tmin_edge\tkelly\tsharpe\troi_pct\tbrier\ttrades\tstatus\n"
+    )
     if not os.path.exists(RESULTS_TSV_PATH):
         with open(RESULTS_TSV_PATH, "w", encoding="utf-8") as f:
             f.write(header)
@@ -658,10 +648,7 @@ def run_asi_evolve_daily(
         _save_best_metadata(best_hyp, best_stats)
 
     # 4. Generate + evaluate candidates
-    round_num = (
-        1
-        + (cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0])
-    )
+    round_num = 1 + (cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0])
     accepted_count = 0
 
     for c in range(n_candidates):
@@ -678,9 +665,7 @@ def run_asi_evolve_daily(
         else:
             # Mutation
             context = researcher.retrieve_context(parent_hyp.description)
-            new_hyp = engineer.propose(
-                parent_hyp, round_num=round_num, candidate_idx=c, context=context
-            )
+            new_hyp = engineer.propose(parent_hyp, round_num=round_num, candidate_idx=c, context=context)
             source = new_hyp.source
 
         candidate = Candidate(
@@ -772,18 +757,10 @@ if __name__ == "__main__":
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    parser = argparse.ArgumentParser(
-        description="ASI-Evolve daily candidate generation loop"
-    )
-    parser.add_argument(
-        "--candidates", type=int, default=20, help="Number of candidates per run"
-    )
-    parser.add_argument(
-        "--llm", action="store_true", help="Use LLM for hypothesis generation"
-    )
-    parser.add_argument(
-        "--crossover", type=float, default=0.2, help="Crossover probability"
-    )
+    parser = argparse.ArgumentParser(description="ASI-Evolve daily candidate generation loop")
+    parser.add_argument("--candidates", type=int, default=20, help="Number of candidates per run")
+    parser.add_argument("--llm", action="store_true", help="Use LLM for hypothesis generation")
+    parser.add_argument("--crossover", type=float, default=0.2, help="Crossover probability")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

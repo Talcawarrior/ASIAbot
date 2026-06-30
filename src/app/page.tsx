@@ -45,7 +45,6 @@ import {
   type HealthResponse,
   type Signal,
   type HistoryEntry,
-  type SlippageEntry,
 } from "@/lib/api";
 import {
   TrendingUp,
@@ -56,7 +55,6 @@ import {
   BarChart3,
   History,
   Brain,
-  ArrowRightLeft,
   Filter,
   Search,
   ArrowUpRight,
@@ -69,7 +67,6 @@ import {
   AlertTriangle,
   Info,
   XCircle,
-  RefreshCw,
   Loader2,
   HelpCircle,
   Calendar,
@@ -140,13 +137,12 @@ function ChartWrapper({ children, height, width }: { children: React.ReactNode; 
 }
 
 // ---- Tab type ----
-type TabId = "overview" | "trades" | "models" | "slippage" | "health";
+type TabId = "overview" | "trades" | "models" | "health";
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: "overview", label: "Genel Bakış", icon: <BarChart3 className="h-3.5 w-3.5" /> },
   { id: "trades", label: "İşlem Geçmişi", icon: <History className="h-3.5 w-3.5" /> },
   { id: "models", label: "Model Performansı", icon: <Brain className="h-3.5 w-3.5" /> },
-  { id: "slippage", label: "Slippage", icon: <ArrowRightLeft className="h-3.5 w-3.5" /> },
   { id: "health", label: "Sağlık", icon: <HeartPulse className="h-3.5 w-3.5" /> },
 ];
 
@@ -448,9 +444,9 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                       <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Yön</TableHead>
                       <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
                       <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Güncel</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>PnL</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Bet</TableHead>
                       <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Edge</TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Bet</TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>PnL</TableHead>
                       <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -476,9 +472,9 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.entryPrice)}</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.currentPrice)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtUsd(pos.amount)}</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
+                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtUsd(pos.amount)}</TableCell>
+                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
                         <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
                       </TableRow>
                     ))}
@@ -553,14 +549,20 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
 
   const filtered = useMemo(() => {
     let data = [...tradeHistory];
+    // Varsayılan olarak son 10 günün kapananlarını göster
+    const tenDaysAgo = new Date();
+    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+    data = data.filter((t) => {
+      if (!t.closedAtISO) return false;
+      return new Date(t.closedAtISO) >= tenDaysAgo;
+    });
     if (filterResult !== "ALL") data = data.filter((t) => t.result === filterResult);
     if (filterSide !== "ALL") data = data.filter((t) => t.side === filterSide);
     if (filterExit !== "ALL") data = data.filter((t) => t.exitType === filterExit);
     if (filterDate) {
-      // Match on closedAtISO — raw ISO date from API ("2026-06-28T14:30:00")
       data = data.filter((t) => {
         if (!t.closedAtISO) return false;
-        const iso = t.closedAtISO.slice(0, 10); // "2026-06-28"
+        const iso = t.closedAtISO.slice(0, 10);
         return iso === filterDate;
       });
     }
@@ -1296,112 +1298,6 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
 }
 
 // ==========================================
-// SLIPPAGE TAB
-// ==========================================
-function SlippageTab({ slippageData }: { slippageData: SlippageEntry[] }) {
-  const avgSlippage = slippageData.length > 0
-    ? slippageData.reduce((s, e) => s + e.slippage_pct, 0) / slippageData.length
-    : 0;
-  const maxSlippage = slippageData.length > 0
-    ? Math.max(...slippageData.map((e) => e.slippage_pct))
-    : 0;
-
-  return (
-    <div className="space-y-6">
-      {/* Summary cards */}
-      <section className="grid grid-cols-3 gap-3">
-        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
-          <CardContent className="px-4 pb-0 pt-0">
-            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam Kayıt</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{slippageData.length}</p>
-          </CardContent>
-        </Card>
-        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
-          <CardContent className="px-4 pb-0 pt-0">
-            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Slippage</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>{fmtNum(avgSlippage * 100)}%</p>
-          </CardContent>
-        </Card>
-        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
-          <CardContent className="px-4 pb-0 pt-0">
-            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Max Slippage</p>
-            <p className="text-lg font-bold tabular-nums" style={{ color: RED }}>{fmtNum(maxSlippage * 100)}%</p>
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* Table */}
-      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
-        <CardHeader className="pb-0 pt-0 px-5">
-          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>
-            Slippage Kayıtları
-            <span className="ml-2 text-[11px] font-normal" style={{ color: TEXT_MUTED }}>(son 50 analiz)</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-3">
-          {slippageData.length === 0 ? (
-            <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>
-              <ArrowRightLeft className="h-8 w-8 mx-auto mb-3 opacity-40" />
-              <p>Slippage verisi henüz mevcut değil</p>
-              <p className="text-xs mt-1">Bot analiz yaptıkça burada görünecek</p>
-            </div>
-          ) : (
-            <div className="max-h-[500px] overflow-y-auto custom-scroll">
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Yön</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Beklenen</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Slippage</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sonuç</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Zaman</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {slippageData.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{entry.city}</TableCell>
-                      <TableCell>
-                        <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{
-                          backgroundColor: entry.side === "YES" ? TEAL_LIGHT : RED_LIGHT,
-                          color: entry.side === "YES" ? TEAL : RED,
-                          border: `1px solid ${entry.side === "YES" ? TEAL : RED}33`
-                        }}>{entry.side}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.expected_price.toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{entry.entry_price.toLocaleString("tr-TR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}</TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: entry.slippage_pct > 0.01 ? RED : TEAL }}>
-                        {fmtNum(entry.slippage_pct * 100)}%
-                      </TableCell>
-                      <TableCell>
-                        <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{
-                          backgroundColor: entry.result === "WIN" ? GREEN_LIGHT : RED_LIGHT,
-                          color: entry.result === "WIN" ? "#16A34A" : RED,
-                          border: `1px solid ${entry.result === "WIN" ? "#16A34A" : RED}33`
-                        }}>
-                          {entry.result === "WIN" ? "✓ WIN" : entry.result === "LOSS" ? "✗ LOSS" : "—"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-xs tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>
-                        {entry.analyzed_at ? new Date(entry.analyzed_at).toLocaleDateString("tr-TR", {
-                          day: "numeric", month: "short", hour: "2-digit", minute: "2-digit"
-                        }) : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
-// ==========================================
 // MAIN DASHBOARD
 // ==========================================
 export default function DashboardPage() {
@@ -1493,7 +1389,6 @@ export default function DashboardPage() {
         )}
         {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} historyStats={data.historyStats} totalPnl={data.historyStats?.total_pnl ?? 0} />}
         {activeTab === "models" && <ModelsTab modelScores={data.modelScores} />}
-        {activeTab === "slippage" && <SlippageTab slippageData={data.slippageData} />}
         {activeTab === "health" && <HealthTab health={data.health} kpiData={data.kpiData} />}
       </main>
 
