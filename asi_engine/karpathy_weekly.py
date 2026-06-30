@@ -715,21 +715,234 @@ def _append_results_tsv(
 # ---------------------------------------------------------------------------
 
 
+def _load_cached_forecasts(
+    ds: UnifiedDatastore,
+    brier_df: pd.DataFrame,
+) -> tuple[pd.DataFrame, set[tuple[str, str]]]:
+    """Load cached forecasts from the unified datastore.
+
+    Reads the forecasts table, filters to temperature_2m_max variable,
+    and returns the filtered DataFrame along with the set of (city, date)
+    pairs already in cache.
+
+    Returns:
+        (forecasts_df, cached_pairs) where cached_pairs is a set of
+        (city_str, join_date_str) tuples.
+    """
+    forecasts_df = ds.read_forecasts()
+    cached_pairs: set[tuple[str, str]] = set()
+    if forecasts_df.empty or "target_date" not in forecasts_df.columns:
+        return forecasts_df, cached_pairs
+
+    forecasts_df = forecasts_df.copy()
+    forecasts_df["join_date"] = pd.to_datetime(forecasts_df["target_date"], utc=True, errors="coerce").dt.date.astype(
+        str
+    )
+    forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
+    forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
+    if not forecasts_df.empty:
+        cached_pairs = set(
+            zip(
+                forecasts_df["city"].astype(str),
+                forecasts_df["join_date"].astype(str),
+            )
+        )
+    return forecasts_df, cached_pairs
+
+
+def _backfill_missing_forecasts(
+    ds: UnifiedDatastore,
+    brier_df: pd.DataFrame,
+    forecasts_df: pd.DataFrame,
+    cached_pairs: set[tuple[str, str]],
+    needed_pairs: set[tuple[str, str]],
+) -> pd.DataFrame:
+    """Fetch missing forecasts from Open-Meteo Historical Forecast API.
+
+    Compares needed (city, date) pairs against the cached set and fetches
+    any missing ones from the free Historical Forecast API. Appends the
+    fetched data to forecasts_df and persists to disk for future runs.
+
+    Returns:
+        Updated forecasts_df with fetched rows appended.
+    """
+    missing_pairs = needed_pairs - cached_pairs
+    if not missing_pairs:
+        return forecasts_df
+
+    logger.info(
+        "Forecast join: %d (city, date) pairs needed, %d cached, %d missing — fetching from Historical Forecast API",
+        len(needed_pairs),
+        len(cached_pairs),
+        len(missing_pairs),
+    )
+    try:
+        from data_pipeline.weather_ensemble import (
+            fetch_historical_forecast_ensemble,
+        )
+
+        missing_by_city: dict[str, list[str]] = {}
+        for c, d in missing_pairs:
+            missing_by_city.setdefault(c, []).append(d)
+
+        city_coords: dict[str, tuple[float, float]] = {}
+        for _, row in brier_df.iterrows():
+            c = str(row.get("city", ""))
+            if c and c not in city_coords:
+                lat = row.get("latitude")
+                lon = row.get("longitude")
+                try:
+                    if lat is not None and lon is not None:
+                        city_coords[c] = (float(lat), float(lon))
+                except (TypeError, ValueError):
+                    pass
+
+        fetched_frames = []
+        for city, dates in missing_by_city.items():
+            coords = city_coords.get(city)
+            if not coords:
+                continue
+            lat, lon = coords
+            start_date = min(dates)
+            end_date = max(dates)
+            try:
+                df = fetch_historical_forecast_ensemble(
+                    lat,
+                    lon,
+                    start_date=start_date,
+                    end_date=end_date,
+                    city=city,
+                )
+                if not df.empty:
+                    fetched_frames.append(df)
+            except Exception as exc:
+                logger.warning(
+                    "Historical forecast fetch failed for %s %s..%s: %s",
+                    city,
+                    start_date,
+                    end_date,
+                    exc,
+                )
+
+        if fetched_frames:
+            fetched_df = pd.concat(fetched_frames, ignore_index=True)
+            fetched_df["join_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce").dt.date.astype(str)
+            fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
+            fetched_df["fetched_at"] = pd.Timestamp.utcnow()
+            fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
+            fetched_df = fetched_df[fetched_df["variable_key"].astype(str).str.contains("max", na=False)]
+            cols = [
+                "city",
+                "latitude",
+                "longitude",
+                "target_date",
+                "model",
+                "variable",
+                "value",
+                "fetched_at",
+                "join_date",
+            ]
+            fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
+            if forecasts_df.empty:
+                forecasts_df = fetched_df
+            else:
+                forecasts_df = pd.concat([forecasts_df, fetched_df], ignore_index=True)
+            try:
+                ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
+            except Exception as exc:
+                logger.warning("Failed to persist fetched forecasts: %s", exc)
+            logger.info(
+                "Fetched %d rows from Historical Forecast API across %d cities",
+                len(fetched_df),
+                len(missing_by_city),
+            )
+    except ImportError:
+        logger.warning("data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts")
+    return forecasts_df
+
+
+def _pivot_and_convert_to_probs(
+    brier_df: pd.DataFrame,
+    forecasts_df: pd.DataFrame,
+    cached_pairs: set[tuple[str, str]],
+    needed_pairs: set[tuple[str, str]],
+) -> tuple[pd.DataFrame, bool, str]:
+    """Pivot forecasts wide and convert temperatures → YES probabilities.
+
+    Joins the per-model forecasts with the brier dataset and applies a
+    normal CDF (sigma=2.0) to convert each model's temperature forecast
+    into a YES probability against the market threshold.
+
+    Returns:
+        (brier_df, forecasts_joined, join_origin)
+    """
+    forecasts_joined = False
+    join_origin = "none"
+
+    if forecasts_df.empty:
+        return brier_df, forecasts_joined, join_origin
+
+    forecasts_df = forecasts_df.copy()
+    forecasts_df["model_internal"] = forecasts_df["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
+    temp_pivot = forecasts_df.pivot_table(
+        index=["city", "join_date"],
+        columns="model_internal",
+        values="value",
+        aggfunc="mean",
+    ).reset_index()
+    merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc"))
+
+    sigma = 2.0
+    for model in DEFAULT_MODELS:
+        if model not in merged.columns:
+            continue
+        col = f"prob_{model}"
+
+        def _to_prob(forecast, mt, thresh, sigma=sigma):
+            if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
+                return float("nan")
+            try:
+                forecast = float(forecast)
+                thresh = float(thresh)
+            except (TypeError, ValueError):
+                return float("nan")
+            z = (forecast - thresh) / sigma
+            p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+            if str(mt).upper() == "LOW":
+                return 1.0 - p_high
+            return p_high
+
+        merged[col] = [
+            _to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()
+        ]
+
+    brier_df = merged
+    prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
+    if prob_cols_after:
+        non_null_counts = brier_df[prob_cols_after].notna().sum().sum()
+        forecasts_joined = non_null_counts > 0
+        if forecasts_joined:
+            join_origin = "cached_table" if cached_pairs and cached_pairs >= needed_pairs else "historical_api"
+        logger.info(
+            "Forecast join %s (origin=%s, %d non-null prob values across %d rows)",
+            "succeeded" if forecasts_joined else "failed (no overlapping rows)",
+            join_origin,
+            non_null_counts,
+            len(brier_df),
+        )
+
+    return brier_df, forecasts_joined, join_origin
+
+
 def add_per_model_probabilities(
     brier_df: pd.DataFrame,
     ds: UnifiedDatastore | None = None,
-    seed: int = 42,
     *,
     fetch_missing: bool = True,
 ) -> pd.DataFrame:
-    """Add prob_{model} columns to a Brier dataset.
+    """Add prob_{model} columns to a Brier dataset using real forecast data only.
 
-    Tries the real forecast join first; falls back to a synthetic
-    per-model probability derived from (actual_temp, threshold, market_type)
-    + a per-model gaussian bias. The fallback is NOT real alpha — it
-    exists so the 3-layer loop can mechanically differentiate hypotheses.
-
-    Real forecast join path:
+    Uses the real forecast join path:
       1. Read unified_forecasts table (populated by
          data_pipeline.unified_datastore.ingest_all() step [3/4]).
       2. If that table is empty OR no overlap with the Brier dataset's
@@ -739,256 +952,52 @@ def add_per_model_probabilities(
       3. Convert per-model temperatures → YES probabilities via a normal
          CDF with sigma=2.0 against the market threshold.
 
+    If the real forecast join fails (no overlapping rows), prob_ columns
+    are NOT added. Downstream code will naturally skip rows without
+    real forecast data.
+
     A `forecast_join_origin` column is added so downstream code can tell
     whether the per-model probabilities came from real forecasts
-    ("historical_api" / "cached_table") or from the synthetic fallback
-    ("synthetic").
+    ("historical_api" / "cached_table") or not ("none").
 
     This is extracted from run_karpathy_weekly() so Layer 2 (ASI-Evolve)
     and Layer 3 (SIA) can reuse it without re-running the join logic.
     """
     if any(c.startswith("prob_") for c in brier_df.columns):
-        # Already has per-model probs — caller can re-run safely.
         return brier_df
 
     if ds is None:
         ds = UnifiedDatastore()
 
-    forecasts_joined = False
-    join_origin = "none"
     brier_df = brier_df.copy()
     brier_df["join_date"] = pd.to_datetime(brier_df["target_date"], utc=True, errors="coerce").dt.date.astype(str)
 
-    forecasts_df = ds.read_forecasts()
-    cached_pairs: set[tuple[str, str]] = set()
-    if not forecasts_df.empty and "target_date" in forecasts_df.columns:
-        forecasts_df = forecasts_df.copy()
-        forecasts_df["join_date"] = pd.to_datetime(
-            forecasts_df["target_date"], utc=True, errors="coerce"
-        ).dt.date.astype(str)
-        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
-        forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
-        # Snapshot the cached pairs BEFORE we append the dynamically-fetched
-        # rows, so the join-origin label below correctly distinguishes
-        # "cached_table" (all pairs were already on disk) from
-        # "historical_api" (we had to fetch some).
-        if not forecasts_df.empty:
-            cached_pairs = set(
-                zip(
-                    forecasts_df["city"].astype(str),
-                    forecasts_df["join_date"].astype(str),
-                )
-            )
+    # 1. Load cached forecasts
+    forecasts_df, cached_pairs = _load_cached_forecasts(ds, brier_df)
 
-    # ----------------------------------------------------------------
-    # Dynamic backfill: if cached forecasts table doesn't cover the
-    # Brier dataset's (city, date) pairs, fetch missing ones on the fly
-    # from Open-Meteo Historical Forecast API (free, no key).
-    # ----------------------------------------------------------------
+    # 2. Compute needed pairs (used by backfill + pivot)
+    needed_pairs = set(
+        zip(
+            brier_df["city"].astype(str),
+            brier_df["join_date"].astype(str),
+        )
+    )
+
+    # 3. Backfill missing forecasts from API
     if fetch_missing and not brier_df.empty:
-        needed_pairs = set(
-            zip(
-                brier_df["city"].astype(str),
-                brier_df["join_date"].astype(str),
-            )
-        )
-        missing_pairs = needed_pairs - cached_pairs
-        if missing_pairs:
-            logger.info(
-                "Forecast join: %d (city, date) pairs needed, %d cached, "
-                "%d missing — fetching from Historical Forecast API",
-                len(needed_pairs),
-                len(cached_pairs),
-                len(missing_pairs),
-            )
-            try:
-                from data_pipeline.weather_ensemble import (
-                    fetch_historical_forecast_ensemble,
-                )
+        forecasts_df = _backfill_missing_forecasts(ds, brier_df, forecasts_df, cached_pairs, needed_pairs)
 
-                # Group missing pairs by city for efficient batched fetches
-                missing_by_city: dict[str, list[str]] = {}
-                for c, d in missing_pairs:
-                    missing_by_city.setdefault(c, []).append(d)
+    # 4. Pivot and convert to probabilities (real data only)
+    brier_df, forecasts_joined, join_origin = _pivot_and_convert_to_probs(
+        brier_df, forecasts_df, cached_pairs, needed_pairs
+    )
 
-                # We need (lat, lon) for each city — pull from brier_df
-                # (it carries latitude/longitude from the markets table).
-                city_coords: dict[str, tuple[float, float]] = {}
-                for _, row in brier_df.iterrows():
-                    c = str(row.get("city", ""))
-                    if c and c not in city_coords:
-                        lat = row.get("latitude")
-                        lon = row.get("longitude")
-                        try:
-                            if lat is not None and lon is not None:
-                                city_coords[c] = (float(lat), float(lon))
-                        except (TypeError, ValueError):
-                            pass
-
-                fetched_frames = []
-                for city, dates in missing_by_city.items():
-                    coords = city_coords.get(city)
-                    if not coords:
-                        continue
-                    lat, lon = coords
-                    start_date = min(dates)
-                    end_date = max(dates)
-                    try:
-                        df = fetch_historical_forecast_ensemble(
-                            lat,
-                            lon,
-                            start_date=start_date,
-                            end_date=end_date,
-                            city=city,
-                        )
-                        if not df.empty:
-                            fetched_frames.append(df)
-                    except Exception as exc:
-                        logger.warning(
-                            "Historical forecast fetch failed for %s %s..%s: %s",
-                            city,
-                            start_date,
-                            end_date,
-                            exc,
-                        )
-
-                if fetched_frames:
-                    fetched_df = pd.concat(fetched_frames, ignore_index=True)
-                    fetched_df["join_date"] = pd.to_datetime(
-                        fetched_df["date"], utc=True, errors="coerce"
-                    ).dt.date.astype(str)
-                    fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
-                    fetched_df["fetched_at"] = pd.Timestamp.utcnow()
-                    fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
-                    fetched_df = fetched_df[fetched_df["variable_key"].astype(str).str.contains("max", na=False)]
-                    # Append to in-memory forecasts_df for this join + persist
-                    # back to disk so future runs hit the cache.
-                    cols = [
-                        "city",
-                        "latitude",
-                        "longitude",
-                        "target_date",
-                        "model",
-                        "variable",
-                        "value",
-                        "fetched_at",
-                        "join_date",
-                    ]
-                    fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
-                    if forecasts_df.empty:
-                        forecasts_df = fetched_df
-                    else:
-                        forecasts_df = pd.concat([forecasts_df, fetched_df], ignore_index=True)
-                    try:
-                        ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
-                    except Exception as exc:
-                        logger.warning("Failed to persist fetched forecasts: %s", exc)
-                    logger.info(
-                        "Fetched %d rows from Historical Forecast API across %d cities",
-                        len(fetched_df),
-                        len(missing_by_city),
-                    )
-            except ImportError:
-                logger.warning(
-                    "data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts"
-                )
-
-    # ----------------------------------------------------------------
-    # Pivot forecasts wide and convert each model's temperature into a
-    # YES probability via a normal CDF against the market threshold.
-    # ----------------------------------------------------------------
-    if not forecasts_df.empty:
-        # Normalize model names from API names → DEFAULT_MODELS internal
-        # names so the join below recognizes all 8 ensemble models.
-        # Without this, only the 4 models whose API and internal names
-        # happen to coincide (gfs_seamless, cma_grapes_global, ukmo_seamless,
-        # meteofrance_seamless) would be matched.
-        forecasts_df = forecasts_df.copy()
-        forecasts_df["model_internal"] = forecasts_df["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
-        temp_pivot = forecasts_df.pivot_table(
-            index=["city", "join_date"],
-            columns="model_internal",
-            values="value",
-            aggfunc="mean",
-        ).reset_index()
-        merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc"))
-        sigma = 2.0
-        for model in DEFAULT_MODELS:
-            if model not in merged.columns:
-                continue
-            col = f"prob_{model}"
-
-            def _to_prob(forecast, mt, thresh, sigma=sigma):
-                if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
-                    return float("nan")
-                try:
-                    forecast = float(forecast)
-                    thresh = float(thresh)
-                except (TypeError, ValueError):
-                    return float("nan")
-                z = (forecast - thresh) / sigma
-                p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-                if str(mt).upper() == "LOW":
-                    return 1.0 - p_high
-                return p_high
-
-            merged[col] = [
-                _to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()
-            ]
-        brier_df = merged
-        prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
-        if prob_cols_after:
-            non_null_counts = brier_df[prob_cols_after].notna().sum().sum()
-            forecasts_joined = non_null_counts > 0
-            if forecasts_joined:
-                # If the cached table already covered every needed pair, we
-                # joined from disk; otherwise the dynamic backfill supplied
-                # at least some rows.
-                join_origin = "cached_table" if cached_pairs and cached_pairs >= needed_pairs else "historical_api"
-            logger.info(
-                "Forecast join %s (origin=%s, %d non-null prob values across %d rows)",
-                "succeeded" if forecasts_joined else "failed (no overlapping rows)",
-                join_origin,
-                non_null_counts,
-                len(brier_df),
-            )
-
-    # ----------------------------------------------------------------
-    # Synthetic fallback — only when the real join produced no overlap.
-    # Marks the rows with forecast_join_origin="synthetic" so downstream
-    # code can refuse to report Sharpe/ROI numbers from synthetic data.
-    # ----------------------------------------------------------------
+    # 5. If real join failed — log and return without prob_ columns
     if not forecasts_joined:
-        prob_cols_stale = [c for c in brier_df.columns if c.startswith("prob_")]
-        if prob_cols_stale:
-            brier_df = brier_df.drop(columns=prob_cols_stale)
-
         logger.warning(
-            "Using SYNTHETIC per-model probabilities — real forecast "
-            "join produced no overlapping (city, date) rows. The 3-layer "
-            "loop will run but Sharpe/ROI numbers are NOT real alpha."
+            "Real forecast join produced no overlapping (city, date) rows. "
+            "No prob_ columns added. Downstream code will skip these rows."
         )
-        rng = random.Random(seed)
-        for model in DEFAULT_MODELS:
-            bias = rng.gauss(0, 0.08)
-            col = f"prob_{model}"
-
-            def _synth_prob(row, bias=bias):
-                actual = row.get("temperature_2m_max")
-                thresh = row.get("threshold")
-                mt = str(row.get("market_type", "")).upper()
-                if pd.isna(actual) or pd.isna(thresh) or thresh is None:
-                    return 0.5
-                z = (float(actual) - float(thresh)) / 2.0
-                p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-                if mt == "LOW":
-                    p = 1.0 - p_high
-                else:
-                    p = p_high
-                return max(0.01, min(0.99, p + bias))
-
-            brier_df[col] = [_synth_prob(row) for _, row in brier_df.iterrows()]
-        join_origin = "synthetic"
 
     brier_df["forecast_join_origin"] = join_origin
     return brier_df
@@ -1045,7 +1054,7 @@ def run_karpathy_weekly(
 
     # Ensure per-model prob columns exist (tries real forecast join first,
     # falls back to synthetic per-model probabilities).
-    brier_df = add_per_model_probabilities(brier_df, ds=ds, seed=seed)
+    brier_df = add_per_model_probabilities(brier_df, ds=ds)
 
     # 2. Walk-forward splits
     splits = ds.build_walk_forward_splits()

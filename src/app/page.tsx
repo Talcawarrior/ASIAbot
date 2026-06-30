@@ -49,6 +49,7 @@ import {
 import {
   TrendingUp,
   Moon,
+  Sun,
   Wallet,
   Activity,
   Target,
@@ -79,16 +80,16 @@ const RED = "#FF6B6B";
 const RED_LIGHT = "rgba(255, 107, 107, 0.15)";
 const GREEN = "#22C55E";
 const GREEN_LIGHT = "rgba(34, 197, 94, 0.15)";
-const TEXT_PRIMARY = "#374151";
-const TEXT_MUTED = "#9CA3AF";
-const BORDER = "#E5E7EB";
+const TEXT_PRIMARY = "var(--dash-text-primary)";
+const TEXT_MUTED = "var(--dash-text-muted)";
+const BORDER = "var(--dash-border)";
 
 const MODEL_COLORS = ["#20B2AA", "#3B82F6", "#8B5CF6", "#F59E0B", "#EF4444", "#EC4899", "#06B6D4", "#6B7280"];
 
 const dotColorMap: Record<ActivityItem["color"], string> = {
   blue: "#3B82F6",
   purple: "#8B5CF6",
-  gray: "#9CA3AF",
+  gray: "var(--dash-text-muted)",
   orange: "#F59E0B",
   teal: "#20B2AA",
   red: "#FF6B6B",
@@ -116,7 +117,7 @@ function fmtInt(v: number) {
 
 // ---- Loading skeleton ----
 function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded-md bg-gray-200 ${className}`} />;
+  return <div className={`animate-pulse rounded-md bg-gray-200 dark:bg-gray-700 ${className}`} />;
 }
 function MetricSkeleton() {
   return <Card className="py-4 gap-2 shadow-sm"><CardContent className="px-4 pb-0 pt-0 space-y-2"><Skeleton className="h-3 w-16" /><Skeleton className="h-5 w-24" /></CardContent></Card>;
@@ -152,8 +153,8 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 function PortfolioTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
-      <p className="font-medium text-gray-500 mb-1">{label}</p>
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+      <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
       <p className="font-mono font-semibold" style={{ color: TEAL }}>
         ${payload[0].value.toLocaleString("tr-TR", { minimumFractionDigits: 0 })}
       </p>
@@ -164,8 +165,8 @@ function PortfolioTooltip({ active, payload, label }: { active?: boolean; payloa
 function EdgeTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
-      <p className="font-medium text-gray-500 mb-1">Edge: {label}</p>
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+      <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">Edge: {label}</p>
       <p className="font-mono font-semibold" style={{ color: GREEN }}>{payload[0].value} trade</p>
     </div>
   );
@@ -184,14 +185,14 @@ function MetricTooltip({ children, title, description, formula, example }: {
     <div className="relative inline-flex" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
       {children}
       {show && (
-        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-lg text-xs z-50">
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 shadow-lg text-xs z-50">
           <div className="flex items-center gap-1.5 mb-1.5">
             <HelpCircle className="h-3.5 w-3.5" style={{ color: TEAL }} />
-            <p className="font-semibold text-gray-900">{title}</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">{title}</p>
           </div>
-          <p className="text-gray-600 mb-2 text-[11px] leading-relaxed">{description}</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-2 text-[11px] leading-relaxed">{description}</p>
           {formula && (
-            <div className="mb-2 p-2 rounded bg-gray-50 font-mono text-[10px] text-gray-700">
+            <div className="mb-2 p-2 rounded bg-gray-50 dark:bg-gray-700 font-mono text-[10px] text-gray-700 dark:text-gray-300">
               <span className="font-medium">Formül:</span> {formula}
             </div>
           )}
@@ -630,13 +631,13 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
         <CardContent className="px-4 pt-0">
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative flex-1 min-w-[180px] max-w-xs">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
               <input
                 type="text"
                 placeholder="Şehir veya strateji ara..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-teal-300"
+                className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-teal-300"
                 style={{ borderColor: BORDER, color: TEXT_PRIMARY }}
               />
             </div>
@@ -731,7 +732,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                 />
                 <button
                   onClick={() => dateInputRef.current?.showPicker?.()}
-                  className="text-[11px] px-2 py-1 border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-teal-300 tabular-nums text-left"
+                  className="text-[11px] px-2 py-1 border rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-teal-300 tabular-nums text-left"
                   style={{ borderColor: BORDER, color: filterDate ? TEXT_PRIMARY : TEXT_MUTED, minWidth: 110 }}
                 >
                   {filterDate ? (() => {
@@ -976,12 +977,12 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
     if (!active || !payload?.length) return null;
     const trades = payload[0].payload?.trades ?? 0;
     return (
-      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs">
-        <p className="font-medium text-gray-500 mb-1">{label}</p>
+      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+        <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
         <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
           {fmtUsd(payload[0].value)}
         </p>
-        <p className="text-gray-400">{fmtInt(trades)} işlem</p>
+        <p className="text-gray-400 dark:text-gray-500">{fmtInt(trades)} işlem</p>
       </div>
     );
   }
@@ -1201,7 +1202,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                     tooltip: "Kazanan/Kaybeden oranı. Formül: Gross Profit / Gross Loss. <1 zararlı, 1-1.5 zayıf, >1.5 iyi, >2 mükemmel"
                   },
                 ].map((metric) => (
-                  <div key={metric.label} className="p-3 rounded-lg bg-gray-50/50" style={{ border: `1px solid ${BORDER}` }}>
+                  <div key={metric.label} className="p-3 rounded-lg bg-gray-50/50 dark:bg-gray-800/50" style={{ border: `1px solid ${BORDER}` }}>
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={metric.tooltip}>{metric.label}</p>
                     </div>
@@ -1302,12 +1303,28 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
 // ==========================================
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("darkMode") === "true";
+    }
+    return false;
+  });
   const data = useApiData();
 
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    localStorage.setItem("darkMode", String(darkMode));
+  }, [darkMode]);
+
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50/50" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div className="min-h-screen flex flex-col bg-gray-50/50 dark:bg-gray-900/50" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* ---- HEADER ---- */}
-      <header className="sticky top-0 z-50 bg-white border-b" style={{ borderColor: BORDER }}>
+      <header className="sticky top-0 z-50 bg-white dark:bg-gray-900 border-b" style={{ borderColor: BORDER }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14">
           <div className="flex items-center gap-3">
             <h1 className="text-lg font-bold tracking-tight" style={{ color: TEXT_PRIMARY }}>ASIAbot</h1>
@@ -1346,15 +1363,23 @@ export default function DashboardPage() {
                 Son güncelleme: {data.lastUpdated.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
             )}
-            <button className="p-2 rounded-md hover:bg-gray-100 transition-colors" aria-label="Dark mode">
-              <Moon className="h-4 w-4 text-gray-500" />
+            <button
+              className="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              aria-label="Dark mode"
+              onClick={() => setDarkMode((d) => !d)}
+            >
+              {darkMode ? (
+                <Sun className="h-4 w-4 text-yellow-500" />
+              ) : (
+                <Moon className="h-4 w-4 text-gray-500" />
+              )}
             </button>
           </div>
         </div>
       </header>
 
       {/* ---- TAB NAVIGATION ---- */}
-      <nav className="bg-white border-b sticky top-14 z-40" style={{ borderColor: BORDER }}>
+      <nav className="bg-white dark:bg-gray-900 border-b sticky top-14 z-40" style={{ borderColor: BORDER }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <div className="flex gap-0 overflow-x-auto">
             {TABS.map((tab) => (

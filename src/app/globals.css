@@ -76,6 +76,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* Dashboard-specific tokens */
+  --dash-text-primary: #374151;
+  --dash-text-muted: #9CA3AF;
+  --dash-border: #E5E7EB;
 }
 
 .dark {
@@ -110,6 +114,10 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  /* Dashboard-specific tokens for dark mode */
+  --dash-text-primary: #F3F4F6;
+  --dash-text-muted: #9CA3AF;
+  --dash-border: #374151;
 }
 
 @layer base {

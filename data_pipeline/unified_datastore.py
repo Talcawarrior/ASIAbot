@@ -206,9 +206,7 @@ class UnifiedDatastore:
     def write_snapshots(self, df: pd.DataFrame) -> None:
         self._write_validated("snapshots", df, UNIFIED_SNAPSHOTS_SCHEMA)
 
-    def _write_validated(
-        self, name: str, df: pd.DataFrame, schema: dict[str, str]
-    ) -> None:
+    def _write_validated(self, name: str, df: pd.DataFrame, schema: dict[str, str]) -> None:
         if df.empty:
             logger.warning("UnifiedDatastore: empty %s DataFrame, skipping write", name)
             return
@@ -223,9 +221,7 @@ class UnifiedDatastore:
                     else:
                         df[col] = df[col].astype(dtype, errors="ignore")
                 except Exception as exc:
-                    logger.debug(
-                        "Could not coerce %s.%s to %s: %s", name, col, dtype, exc
-                    )
+                    logger.debug("Could not coerce %s.%s to %s: %s", name, col, dtype, exc)
         path = self._path(name)
         df.to_parquet(path, index=False)
         logger.info("Wrote %d rows to %s", len(df), path)
@@ -300,11 +296,7 @@ class UnifiedDatastore:
 
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column], utc=True, errors="coerce")
-        df = (
-            df.dropna(subset=[date_column])
-            .sort_values(date_column)
-            .reset_index(drop=True)
-        )
+        df = df.dropna(subset=[date_column]).sort_values(date_column).reset_index(drop=True)
 
         if df.empty:
             return []
@@ -330,9 +322,7 @@ class UnifiedDatastore:
             train_start = cur_t - pd.Timedelta(days=lookback)
             train_end = cur_t  # exclusive — train does NOT include test window
 
-            train_df = df[
-                (df[date_column] >= train_start) & (df[date_column] < train_end)
-            ]
+            train_df = df[(df[date_column] >= train_start) & (df[date_column] < train_end)]
             test_df = df[(df[date_column] >= test_start) & (df[date_column] < test_end)]
 
             if len(test_df) < self.cfg.min_markets_per_window:
@@ -405,9 +395,7 @@ class UnifiedDatastore:
         markets = self.read_markets()
         actuals = self.read_actuals()
         if markets.empty or actuals.empty:
-            logger.warning(
-                "Brier dataset requires both markets and actuals to be populated"
-            )
+            logger.warning("Brier dataset requires both markets and actuals to be populated")
             return pd.DataFrame()
 
         # Join on (city, target_date)
@@ -459,62 +447,18 @@ class UnifiedDatastore:
 # ---------------------------------------------------------------------------
 
 
-def ingest_all(
-    *,
-    weather_locations: list[tuple[str, float, float]] | None = None,
-    backfill_days: int = 90,
-    markets_limit: int | None = 2000,
-    use_resolvedmarkets: bool = False,
-    resolvedmarkets_market_ids: list[str] | None = None,
-) -> dict[str, int]:
-    """Run all 4 ingest modules and write to the unified datastore.
-
-    This is the entry point for a full backtest data refresh.
-
-    Args:
-        weather_locations: list of (city, lat, lon) for weather backfill.
-            Defaults to a small set if None.
-        backfill_days: how many days of historical actuals to fetch.
-        markets_limit: cap on number of closed markets to fetch from Gamma.
-        use_resolvedmarkets: if True, also fetch orderbook snapshots for each
-            weather market (requires RESOLVEDMARKETS_API_KEY).
-        resolvedmarkets_market_ids: specific condition_ids to fetch snapshots for.
-
-    Returns a dict of row counts per table.
-    """
-    if weather_locations is None:
-        # Default: 15 cities from ASIAbot's PDF spec
-        weather_locations = [
-            ("Miami", 25.7617, -80.1918),
-            ("NewYork", 40.7128, -74.0060),
-            ("LosAngeles", 34.0522, -118.2437),
-            ("Chicago", 41.8781, -87.6298),
-            ("Houston", 29.7604, -95.3698),
-            ("London", 51.5074, -0.1278),
-            ("Paris", 48.8566, 2.3522),
-            ("Tokyo", 35.6762, 139.6503),
-            ("Seoul", 37.5665, 126.9780),
-            ("Sydney", -33.8688, 151.2093),
-            ("Dubai", 25.2048, 55.2708),
-            ("Singapore", 1.3521, 103.8198),
-            ("Berlin", 52.5200, 13.4050),
-            ("Madrid", 40.4168, -3.7038),
-            ("Rome", 41.9028, 12.4964),
-        ]
-
-    ds = UnifiedDatastore()
-
-    # 1. Markets (Polymarket closed markets)
+def _ingest_poly_markets(
+    ds: "UnifiedDatastore",
+    markets_limit: int | None,
+) -> None:
+    """Step 1: Fetch Polymarket closed markets → unified_markets table."""
     logger.info("=== [1/4] Polymarket markets ===")
     try:
         from data_pipeline.polymarket_ingest import PolymarketIngest
 
         poly_ingest = PolymarketIngest()
         markets_df = poly_ingest.fetch_closed_markets(limit=markets_limit)
-        # Note: full city/threshold parsing happens in engine/market_parser;
-        # here we just persist raw + parsed outcomes.
         if not markets_df.empty:
-            # Rename to unified schema
             unified = markets_df.rename(
                 columns={
                     "id": "market_id",
@@ -522,22 +466,23 @@ def ingest_all(
                     "closedTime": "closed_time",
                 }
             )
-            # target_date and city/threshold are derived later by market_parser
             ds.write_markets(unified)
     except Exception as exc:
         logger.error("Polymarket ingest failed: %s", exc)
 
-    # 2. Weather actuals (ground truth)
+
+def _ingest_weather_actuals(
+    ds: "UnifiedDatastore",
+    weather_locations: list[tuple[str, float, float]],
+    backfill_days: int,
+) -> None:
+    """Step 2: Fetch weather actuals from Open-Meteo Archive → unified_actuals."""
     logger.info("=== [2/4] Weather actuals (Open-Meteo Archive) ===")
     try:
-        import pandas as pd
-
         from data_pipeline.weather_ensemble import backfill_archive_many
 
         end_date = datetime.now(UTC).strftime("%Y-%m-%d")
-        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime(
-            "%Y-%m-%d"
-        )
+        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime("%Y-%m-%d")
         actuals_df = backfill_archive_many(
             weather_locations,
             start_date=start_date,
@@ -549,22 +494,21 @@ def ingest_all(
     except Exception as exc:
         logger.error("Weather actuals ingest failed: %s", exc)
 
-    # 3. Forecasts — per-model historical + live ensemble
-    # ----------------------------------------------------------------
-    # The forecast join is split into two parts:
-    #   (a) Historical backfill — uses Open-Meteo Historical Forecast API
-    #       (historical-forecast-api.open-meteo.com, free, no key) to
-    #       retrieve per-model 0-day-ahead (analysis) forecasts for every
-    #       past date in our markets table. This replaces the synthetic
-    #       per-model probability fallback in karpathy_weekly.py.
-    #   (b) Live ensemble — uses Open-Meteo Forecast API for the next
-    #       14 days (still needed for forward-looking markets).
-    # ----------------------------------------------------------------
+
+def _ingest_forecasts(
+    ds: "UnifiedDatastore",
+    weather_locations: list[tuple[str, float, float]],
+) -> None:
+    """Step 3: Fetch weather forecasts (historical backfill + live + NWS).
+
+    Sub-steps:
+      (a) Historical backfill from Open-Meteo Historical Forecast API
+      (b) Live ensemble for forward-looking markets
+      (c) NWS deterministic forecast (US cities only — 9th pseudo-model)
+    """
     logger.info("=== [3/4] Weather forecasts (historical backfill + live ensemble) ===")
     try:
         import time as _time
-
-        import pandas as pd
 
         from data_pipeline.weather_ensemble import (
             backfill_historical_forecasts_many,
@@ -573,9 +517,7 @@ def ingest_all(
 
         forecast_frames: list[pd.DataFrame] = []
 
-        # (a) Historical backfill: derive date range from the markets table
-        #     we just wrote in step 1. Covers every past target_date so the
-        #     forecast join in karpathy_weekly has real per-model values.
+        # (a) Historical backfill
         try:
             markets_df_for_range = ds.read_markets()
             date_col = None
@@ -584,9 +526,7 @@ def ingest_all(
                     date_col = cand
                     break
             if date_col and not markets_df_for_range.empty:
-                dt_series = pd.to_datetime(
-                    markets_df_for_range[date_col], utc=True, errors="coerce"
-                ).dropna()
+                dt_series = pd.to_datetime(markets_df_for_range[date_col], utc=True, errors="coerce").dropna()
                 if not dt_series.empty:
                     hist_start = dt_series.min().strftime("%Y-%m-%d")
                     hist_end = max(
@@ -605,10 +545,7 @@ def ingest_all(
                         end_date=hist_end,
                     )
                     if not hist_df.empty:
-                        # Reshape to match unified_forecasts schema
-                        hist_df["target_date"] = pd.to_datetime(
-                            hist_df["date"], utc=True, errors="coerce"
-                        )
+                        hist_df["target_date"] = pd.to_datetime(hist_df["date"], utc=True, errors="coerce")
                         hist_df["fetched_at"] = pd.Timestamp.utcnow()
                         forecast_frames.append(
                             hist_df[
@@ -633,7 +570,7 @@ def ingest_all(
             logger.warning("Historical forecast backfill skipped: %s", exc)
 
         # (b) Live ensemble — small sample for forward-looking markets
-        for city, lat, lon in weather_locations[:5]:  # cap for smoke test
+        for city, lat, lon in weather_locations[:5]:
             res = fetch_forecast_ensemble(lat, lon, city=city)
             if res:
                 fc = res.forecasts.copy()
@@ -643,10 +580,9 @@ def ingest_all(
                 fc["target_date"] = pd.Timestamp(res.target_date, tz="UTC")
                 fc["fetched_at"] = pd.Timestamp.utcnow()
                 forecast_frames.append(fc)
-            _time.sleep(0.5)  # avoid Open-Meteo 429 rate limit
+            _time.sleep(0.5)
 
-        # (c) NWS deterministic forecast (US cities only — 9th pseudo-model)
-        # Free, no key. Adds diversity to the ensemble for US locations.
+        # (c) NWS deterministic forecast (US cities only)
         try:
             from data_pipeline.weather_ensemble import fetch_nws_forecast
 
@@ -654,9 +590,7 @@ def ingest_all(
             for city, lat, lon in weather_locations:
                 nws_df = fetch_nws_forecast(lat, lon, city=city)
                 if not nws_df.empty:
-                    nws_df["target_date"] = pd.to_datetime(
-                        nws_df["date"], utc=True, errors="coerce"
-                    )
+                    nws_df["target_date"] = pd.to_datetime(nws_df["date"], utc=True, errors="coerce")
                     nws_df["fetched_at"] = pd.Timestamp.utcnow()
                     nws_frames.append(
                         nws_df[
@@ -672,7 +606,7 @@ def ingest_all(
                             ]
                         ]
                     )
-                _time.sleep(0.2)  # polite to NWS
+                _time.sleep(0.2)
             if nws_frames:
                 forecast_frames.append(pd.concat(nws_frames, ignore_index=True))
                 logger.info(
@@ -687,30 +621,87 @@ def ingest_all(
     except Exception as exc:
         logger.error("Forecast ingest failed: %s", exc)
 
-    # 4. Resolved Markets snapshots (optional — requires API key)
-    if use_resolvedmarkets and resolvedmarkets_market_ids:
-        logger.info("=== [4/4] Resolved Markets snapshots ===")
-        try:
-            from data_pipeline.resolvedmarkets_ingest import client_from_env
 
-            client = client_from_env()
-            snapshot_frames = []
-            for cid in resolvedmarkets_market_ids[:20]:  # cap for smoke test
-                try:
-                    df = client.fetch_all_snapshots(cid, interval="1h")
-                    if not df.empty:
-                        df["market_id"] = cid
-                        snapshot_frames.append(df)
-                except Exception as exc:
-                    logger.warning("Snapshots failed for %s: %s", cid, exc)
-            if snapshot_frames:
-                ds.write_snapshots(pd.concat(snapshot_frames, ignore_index=True))
-        except Exception as exc:
-            logger.error("Resolvedmarkets ingest failed: %s", exc)
-    else:
-        logger.info(
-            "=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ==="
-        )
+def _ingest_resolved_snapshots(
+    ds: "UnifiedDatastore",
+    market_ids: list[str] | None,
+) -> None:
+    """Step 4: Fetch Resolved Markets orderbook snapshots (optional)."""
+    if not market_ids:
+        logger.info("=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ===")
+        return
+
+    logger.info("=== [4/4] Resolved Markets snapshots ===")
+    try:
+        from data_pipeline.resolvedmarkets_ingest import client_from_env
+
+        client = client_from_env()
+        snapshot_frames = []
+        for cid in market_ids[:20]:
+            try:
+                df = client.fetch_all_snapshots(cid, interval="1h")
+                if not df.empty:
+                    df["market_id"] = cid
+                    snapshot_frames.append(df)
+            except Exception as exc:
+                logger.warning("Snapshots failed for %s: %s", cid, exc)
+        if snapshot_frames:
+            ds.write_snapshots(pd.concat(snapshot_frames, ignore_index=True))
+    except Exception as exc:
+        logger.error("Resolvedmarkets ingest failed: %s", exc)
+
+
+def ingest_all(
+    *,
+    weather_locations: list[tuple[str, float, float]] | None = None,
+    backfill_days: int = 90,
+    markets_limit: int | None = 2000,
+    use_resolvedmarkets: bool = False,
+    resolvedmarkets_market_ids: list[str] | None = None,
+) -> dict[str, int]:
+    """Run all 4 ingest modules and write to the unified datastore.
+
+    This is the entry point for a full backtest data refresh.
+
+    Args:
+        weather_locations: list of (city, lat, lon) for weather backfill.
+            Defaults to a small set if None.
+        backfill_days: how many days of historical actuals to fetch.
+        markets_limit: cap on number of closed markets to fetch from Gamma.
+        use_resolvedmarkets: if True, also fetch orderbook snapshots for each
+            weather market (requires RESOLVEDMARKETS_API_KEY).
+        resolvedmarkets_market_ids: specific condition_ids to fetch snapshots for.
+
+    Returns a dict of row counts per table.
+    """
+    if weather_locations is None:
+        weather_locations = [
+            ("Miami", 25.7617, -80.1918),
+            ("NewYork", 40.7128, -74.0060),
+            ("LosAngeles", 34.0522, -118.2437),
+            ("Chicago", 41.8781, -87.6298),
+            ("Houston", 29.7604, -95.3698),
+            ("London", 51.5074, -0.1278),
+            ("Paris", 48.8566, 2.3522),
+            ("Tokyo", 35.6762, 139.6503),
+            ("Seoul", 37.5665, 126.9780),
+            ("Sydney", -33.8688, 151.2093),
+            ("Dubai", 25.2048, 55.2708),
+            ("Singapore", 1.3521, 103.8198),
+            ("Berlin", 52.5200, 13.4050),
+            ("Madrid", 40.4168, -3.7038),
+            ("Rome", 41.9028, 12.4964),
+        ]
+
+    ds = UnifiedDatastore()
+
+    _ingest_poly_markets(ds, markets_limit)
+    _ingest_weather_actuals(ds, weather_locations, backfill_days)
+    _ingest_forecasts(ds, weather_locations)
+    _ingest_resolved_snapshots(
+        ds,
+        resolvedmarkets_market_ids if use_resolvedmarkets else None,
+    )
 
     return ds.summary()
 
@@ -721,9 +712,7 @@ def ingest_all(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
 
     print("\n=== Full ingest pipeline (smoke test) ===")
     counts = ingest_all(backfill_days=30, markets_limit=200)

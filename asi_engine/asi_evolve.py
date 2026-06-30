@@ -591,7 +591,7 @@ def run_asi_evolve_daily(
     # Add per-model prob columns (tries real forecast join, falls back to synthetic)
     from asi_engine.karpathy_weekly import add_per_model_probabilities
 
-    brier_df = add_per_model_probabilities(brier_df, ds=ds, seed=seed)
+    brier_df = add_per_model_probabilities(brier_df, ds=ds)
 
     splits = ds.build_walk_forward_splits()
     if not splits:
