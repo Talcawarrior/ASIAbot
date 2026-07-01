@@ -347,7 +347,8 @@ class BetPlacer:
             # Official formula: fee = stake × feeRate × (1-p)
             # This is charged at match time, NOT at settlement.
             # See utils/formulas.py → polymarket_fee_from_stake().
-            fee_rate = Config.WEATHER_FEE_RATE
+            # Use market's fee_rate from feeSchedule (dynamic), fallback to config.
+            fee_rate = getattr(market, "fee_rate", None) or Config.WEATHER_FEE_RATE
             entry_fee = polymarket_fee_from_stake(proposed_amount, fill_price, fee_rate)
 
             # Bet objesi oluştur

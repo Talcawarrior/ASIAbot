@@ -18,6 +18,51 @@ from utils.retry import retry
 logger = logging.getLogger("SCRAPER_POLYMARKET")
 
 
+def get_market_fee_rate(market_data: dict) -> float:
+    """Extract fee rate from feeSchedule (new) or takerBaseFee (legacy).
+
+    Polymarket docs (March 2026): "Fees should now be calculated using the
+    feeSchedule object within a market." The feeSchedule contains:
+      - rate: taker fee rate (e.g. "0.05" for weather)
+      - exponent: fee curve exponent (typically 1)
+      - taker_only: whether only takers pay
+      - rebate_rate: maker rebate percentage
+
+    Falls back to weather category default (0.05) if no feeSchedule found.
+    """
+    from config.settings import bot_config
+
+    default_rate = bot_config.weather_fee_rate  # 0.05
+
+    # New: feeSchedule object (Polymarket March 2026+)
+    fee_schedule = market_data.get("feeSchedule")
+    if fee_schedule and isinstance(fee_schedule, dict):
+        rate = fee_schedule.get("rate")
+        if rate is not None:
+            try:
+                return float(rate)
+            except (TypeError, ValueError):
+                pass
+
+    # Legacy: takerBaseFee in basis points
+    taker_base_fee = market_data.get("takerBaseFee")
+    if taker_base_fee is not None:
+        try:
+            return float(taker_base_fee) / 10000  # bps to decimal
+        except (TypeError, ValueError):
+            pass
+
+    # Legacy: flat taker_fee field
+    taker_fee = market_data.get("taker_fee")
+    if taker_fee is not None:
+        try:
+            return float(taker_fee)
+        except (TypeError, ValueError):
+            pass
+
+    return default_rate
+
+
 class PolymarketScraper:
     """Scrapes weather prediction markets from Polymarket Gamma API."""
 
@@ -301,6 +346,7 @@ class PolymarketScraper:
             "market_type": market_type,
             "latitude": coords[0] if coords else 0.0,
             "longitude": coords[1] if coords else 0.0,
+            "fee_rate": get_market_fee_rate(raw),
         }
 
     def fetch_and_save(self) -> int:
@@ -370,6 +416,7 @@ class PolymarketScraper:
                         existing.status = status
                         existing.threshold_low = parsed.get("threshold_low")
                         existing.threshold_high = parsed.get("threshold_high")
+                        existing.fee_rate = parsed.get("fee_rate", 0.05)
                     else:
                         market = WeatherMarket(
                             id=parsed["id"],
@@ -392,6 +439,7 @@ class PolymarketScraper:
                             market_type=parsed["market_type"],
                             latitude=parsed["latitude"],
                             longitude=parsed["longitude"],
+                            fee_rate=parsed.get("fee_rate", 0.05),
                         )
                         session.add(market)
                     saved += 1

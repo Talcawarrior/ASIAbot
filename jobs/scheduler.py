@@ -297,9 +297,8 @@ def run_risk_management(session=None):
                         pass  # fall back to simple calculation
 
                 # Polymarket taker fee on early exit (sell order).
-                from config.settings import bot_config as _bcfg
-
-                fee_rate = _bcfg.weather_fee_rate  # Weather category rate (default 0.05)
+                # Use market's fee_rate from feeSchedule (dynamic), fallback to config.
+                fee_rate = getattr(market, "fee_rate", None) or 0.05
                 fee = round(polymarket_fee(exit_shares, current_price, fee_rate), 2)
                 realized = round(raw_pnl - fee, 2)
                 proceeds_net = round(proceeds - fee, 2)

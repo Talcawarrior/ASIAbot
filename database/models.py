@@ -57,12 +57,8 @@ class WeatherMarket(Base):
     metric = Column(String)  # "temperature_max"
     threshold = Column(Float)  # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)  # "fahrenheit" or "celsius"
-    threshold_low = Column(
-        Float, nullable=True
-    )  # range lower bound (°C), e.g. "88-89°F" → 31.1
-    threshold_high = Column(
-        Float, nullable=True
-    )  # range upper bound (°C), e.g. "88-89°F" → 31.7
+    threshold_low = Column(Float, nullable=True)  # range lower bound (°C), e.g. "88-89°F" → 31.1
+    threshold_high = Column(Float, nullable=True)  # range upper bound (°C), e.g. "88-89°F" → 31.7
     target_date = Column(DateTime)  # 2025-07-04
     latitude = Column(Float)  # Latitude
     longitude = Column(Float)  # Longitude
@@ -85,6 +81,7 @@ class WeatherMarket(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     raw_data = Column(Text)
+    fee_rate = Column(Float, default=0.05)  # Polymarket taker fee rate from feeSchedule
 
 
 class WeatherForecast(Base):
@@ -186,9 +183,7 @@ class Bet(Base):
     order_id = Column(String)
     tx_hash = Column(String)
     error_message = Column(String)  # Hata varsa
-    entry_fee = Column(
-        Float, default=0.0
-    )  # Polymarket taker fee at entry (feeRate × stake × (1-p))
+    entry_fee = Column(Float, default=0.0)  # Polymarket taker fee at entry (feeRate × stake × (1-p))
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
