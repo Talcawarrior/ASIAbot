@@ -76,6 +76,7 @@ export interface HistoryEntry {
   city: string;
   outcome: string;
   entry_price: number;
+  exit_price: number | null;  // actual fill price from DB
   stake_amount: number;
   realized_pnl: number;
   roi: number;
@@ -647,11 +648,12 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       duration = hours > 0 ? `${hours}s ${mins}dk` : `${mins}dk`;
     }
 
-    // Compute exit price from pnl and entry
-    const stake = h.stake_amount || 10;
-    const exitPrice = h.result === "WIN"
-      ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / stake))
-      : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / stake));
+    // Use exit_price from API if available, otherwise fallback to computation
+    const exitPrice = h.exit_price != null
+      ? h.exit_price
+      : h.result === "WIN"
+        ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / (h.stake_amount || 10)))
+        : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / (h.stake_amount || 10)));
 
     // closed_at for early exits, settled_at for normal settlements
     const closeDate = h.closed_at || h.settled_at;

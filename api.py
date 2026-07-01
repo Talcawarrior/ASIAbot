@@ -816,6 +816,7 @@ def get_history():
                     "city": bet.city,
                     "outcome": bet.side or "YES",
                     "entry_price": bet.price,
+                    "exit_price": bet.current_price,  # actual fill price for early exits
                     "stake_amount": stake,
                     "realized_pnl": pnl,
                     "roi": round(roi, 2),
