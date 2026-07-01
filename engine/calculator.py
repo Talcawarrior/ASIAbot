@@ -17,6 +17,7 @@ from utils.probability import estimate_probability as _estimate_probability
 from utils.formulas import max_bet_cap
 from utils.kelly import kelly_fraction as _kelly_fraction
 from utils.weights_store import load_weights
+from asi_engine.calibration_engine import CalibrationEngine
 from utils.slippage import (
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,
@@ -416,6 +417,11 @@ class WeatherEngine:
                 {k: round(v, 4) for k, v in self.model_weights.items()},
             )
 
+        # Loaded once here (not per-forecast-call) since it reads
+        # data/asi_calibration.json from disk; CalibrationEngine.__init__
+        # caches the bias_map in memory for the lifetime of this instance.
+        self._calibration = CalibrationEngine()
+
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
@@ -550,7 +556,16 @@ class WeatherEngine:
                 if key in daily_data:
                     temps = daily_data[key]
                     if target_idx < len(temps) and temps[target_idx] is not None:
-                        model_temps[internal_name] = temps[target_idx]
+                        raw_temp = temps[target_idx]
+                        # Apply the systematic per-model bias correction
+                        # (MBE) computed by CalibrationEngine from historical
+                        # settled markets, e.g. "GFS overpredicts Dallas max
+                        # temp by 1.5C". Falls back to raw_temp unchanged if
+                        # no calibration data exists yet for this city/model.
+                        calibrated_temp = self._calibration.get_calibrated_temperature(
+                            city_code, metric, internal_name, raw_temp
+                        )
+                        model_temps[internal_name] = calibrated_temp
 
             if not model_temps:
                 return None
