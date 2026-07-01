@@ -145,20 +145,54 @@ def run_cli():
         "report": run_report,
     }
     if args.command == "bot":
-        # ── Start bot: API + Dashboard + Background loops ────────────────────
+        # ── Auto-build dashboard if source is newer than build ──────────────
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
-        _dash = os.path.join(_base, "dashboard", "out")
-        _dashboard_out = _out if os.path.isdir(_out) else _dash
-        if os.path.isdir(_dashboard_out):
+        _src = os.path.join(_base, "src")
+        _pkg = os.path.join(_base, "package.json")
+
+        def _needs_build() -> bool:
+            """Check if src/ is newer than out/ or out/ doesn't exist."""
+            if not os.path.isdir(_out):
+                return True
+            if not os.path.isfile(_pkg):
+                return False
+            out_mtime = os.path.getmtime(_out)
+            pkg_mtime = os.path.getmtime(_pkg)
+            # Check src/ modification time
+            src_mtime = 0.0
+            for root, _dirs, files in os.walk(_src):
+                for f in files:
+                    src_mtime = max(src_mtime, os.path.getmtime(os.path.join(root, f)))
+            return max(pkg_mtime, src_mtime) > out_mtime
+
+        if _needs_build() and os.path.isfile(_pkg):
+            logger.info("Dashboard source changed — auto-building...")
+            try:
+                result = subprocess.run(
+                    ["npx", "next", "build"],
+                    cwd=_base,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                )
+                if result.returncode == 0:
+                    logger.info("Dashboard auto-build SUCCESS")
+                else:
+                    logger.warning("Dashboard auto-build failed: %s", result.stderr[:500])
+            except Exception as e:
+                logger.warning("Dashboard auto-build error: %s", e)
+
+        # ── Start bot: API + Dashboard + Background loops ────────────────────
+        if os.path.isdir(_out):
             from fastapi.staticfiles import StaticFiles
 
             app.mount(
                 "/_next",
-                StaticFiles(directory=os.path.join(_dashboard_out, "_next")),
+                StaticFiles(directory=os.path.join(_out, "_next")),
                 name="next-static",
             )
-            app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
+            app.mount("/", StaticFiles(directory=_out, html=True), name="dashboard")
 
         # Start background loops on FastAPI startup (lifespan handler)
         @asynccontextmanager
@@ -197,17 +231,15 @@ def run_cli():
         # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
-        _dash = os.path.join(_base, "dashboard", "out")
-        _dashboard_out = _out if os.path.isdir(_out) else _dash
-        if os.path.isdir(_dashboard_out):
+        if os.path.isdir(_out):
             from fastapi.staticfiles import StaticFiles
 
             app.mount(
                 "/_next",
-                StaticFiles(directory=os.path.join(_dashboard_out, "_next")),
+                StaticFiles(directory=os.path.join(_out, "_next")),
                 name="next-static",
             )
-            app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
+            app.mount("/", StaticFiles(directory=_out, html=True), name="dashboard")
 
         import uvicorn  # noqa: I001
 

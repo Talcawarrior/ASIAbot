@@ -70,8 +70,8 @@ class StrategyConfig:
     # vig + a thin profit margin in paper mode.  Can be lowered once a
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
-    max_bet_amount: float = 3.0  # Maximum $3 per bet (binde 3 of $1,000)
-    max_bet_pct: float = 0.003  # Max bet as % of portfolio (single source of truth)
+    max_bet_amount: float = 6.0  # Maximum $6 per bet (0.6% of $1,000)
+    max_bet_pct: float = 0.006  # Max bet as % of portfolio (single source of truth)
     min_bet_size: float = 1.0  # Minimum bet size in USD
     total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
@@ -134,7 +134,7 @@ class StrategyConfig:
 
     # ── Flat bet override & Daily loss limit (synced from Config) ─────────
     flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
-    daily_loss_limit: float = 0.05  # 5% daily max loss
+    daily_loss_limit: float = 0.20  # 20% daily max loss
 
 
 @dataclass

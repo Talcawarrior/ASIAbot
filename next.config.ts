@@ -3,6 +3,7 @@ import path from "path";
 
 const nextConfig: NextConfig = {
   output: "export",
+  distDir: "out",  // Tek output dizini — fallback yok
   typescript: {
     ignoreBuildErrors: true,
   },
