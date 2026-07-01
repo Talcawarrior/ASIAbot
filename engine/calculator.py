@@ -16,6 +16,7 @@ from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
 from utils.formulas import max_bet_cap
 from utils.kelly import kelly_fraction as _kelly_fraction
+from utils.weights_store import load_weights
 from utils.slippage import (
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,
@@ -393,7 +394,28 @@ class WeatherEngine:
     def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
         self.config = cfg or config
-        self.model_weights = self.config.get_normalized_weights()
+        # .copy() is required: get_normalized_weights() returns a direct
+        # reference to bot_config.model_weights (the global singleton),
+        # not a copy. Mutating it in place below would corrupt shared
+        # config state across every other WeatherEngine/consumer.
+        self.model_weights = dict(self.config.get_normalized_weights())
+
+        # Overlay SIA-optimized weights persisted to data/model_weights.json.
+        # Without this, the live betting engine silently ignores every
+        # SIA weight update and stays frozen on the settings.py factory
+        # defaults forever, even though SIALoop keeps optimizing and
+        # writing to disk hourly. See SIALoop.__init__ for the same
+        # load-and-overlay pattern (engine/strategy.py).
+        persisted_weights = load_weights()
+        if persisted_weights:
+            for k, v in persisted_weights.items():
+                if k in self.model_weights:
+                    self.model_weights[k] = v
+            logger.info(
+                "WeatherEngine: SIA weights loaded from disk: %s",
+                {k: round(v, 4) for k, v in self.model_weights.items()},
+            )
+
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
