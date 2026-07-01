@@ -15,13 +15,17 @@
 - **🌤️ 8 Model Ensemble** — GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, Météo-France — SIA ağırlık optimizasyonu ile
 - **🧠 SIA Loop** — Self-Improving Agent, Brier skoruna göre model ağırlıklarını ve strateji parametrelerini otomatik günceller
 - **🔬 ASI-Evolve** — Genetik algoritma ile strateji evrimi (virtual backtest + crossover + mutation)
-- **📊 Dashboard** — Next.js 16 + shadcn/ui + Recharts ile canlı takip (http://localhost:8092)
+- **📊 Dashboard** — Next.js 16 + shadcn/ui + Recharts ile canlı takip (http://localhost:8091), dark mode desteği
 - **⚡ Slippage Modeli** — Tiered sipariş defteri simülasyonu (net edge hesaplama)
 - **🛡️ Risk Yönetimi** — Kelly fraction, stop-loss, take-profit, trailing stop, city cap, exposure limit
 - **🔍 Karpathy Search** — Grid search ile strateji parametre optimizasyonu (min_edge, kelly_fraction, vs.)
 - **🧪 LLM 3-Layer Loop** — Z.AI API ile araştırma, analiz ve karar katmanları
 - **📈 Canlı API** — FastAPI + WebSocket ile anlık durum, portföy, PnL, edge dağılımı
 - **🧹 Pre-commit Pipeline** — Ruff + Mypy ile otomatik kalite kontrol
+- **🌙 Midnight Scan** — Gece yarısı sonrası 60 sn aralıkla 2 gün ileri piyasaları tarar
+- **💰 Ladder Betting** — 3 kademeli bahis (50%/30%/20%) — yüksek edge'de kademeli giriş
+- **🔐 API Auth** — `X-API-Key` header ile koruma; dev modda serbest
+- **📦 DB Archival** — Hot (10g SQLite) → Cold (10-120g Parquet) → Purge (>120g)
 
 ---
 
@@ -62,13 +66,14 @@
 
 ### Veri Akışı
 
-1. **Fetch** — Polymarket gamma-api ile açık hava piyasalarını tara
+1. **Fetch** — Polymarket gamma-api ile açık hava piyasalarını tara (tarih bazlı sorgular: bugün+2 gün)
 2. **Weather** — Open-Meteo API'den 8 farklı modelin tahminlerini çek
 3. **Weight** — SIA ağırlıkları ile weighted ensemble hesapla
 4. **Calibrate** — Kalibrasyon düzeltmesi uygula (şehir bazlı bias)
 5. **Analyze** — Edge = model_prob - market_price; Kelly büyüklük + slippage
-6. **Place** — BetPlacer ile polymarket CLOB'a emir gönder (veya dry-run)
+6. **Place** — 3 kademeli ladder ile bahis yerleştir (50%/30%/20%)
 7. **Settle** — Settlement sonrası PnL güncelle, SIA feedback
+8. **Archive** — Hot DB → Cold Parquet → Purge (10g/120g eşikleri)
 
 ---
 
@@ -101,15 +106,11 @@ python -c "from database.db import init_db; init_db()"
 ### Dashboard Build
 
 ```bash
-# Root'tan build et
+# Root'tan build et (dashboard/out/ otomatik oluşturulur)
 npm run build
-
-# Windows (manual copy — postbuild 'cp' çalışmaz)
-Copy-Item -Path "out\*" -Destination "dashboard\out\" -Recurse -Force
-
-# Linux/Mac
-cp -r out/* dashboard/out/
 ```
+
+> **Not:** Bot `python main.py bot` ile başlatıldığında dashboard otomatik build edilir.
 
 ### Çalıştırma
 
@@ -130,8 +131,10 @@ python main.py report   # Rapor
 
 Bot ayağa kalktığında:
 - **API**: http://localhost:8091
-- **Dashboard**: http://localhost:8091 (Next.js)
+- **Dashboard**: http://localhost:8091 (Next.js static export)
 - **Swagger**: http://localhost:8091/docs
+
+> **Port Koruması:** Bot başlatılırken port 8091 meşgulse, o portu kullanan süreç otomatik olarak öldürülür.
 
 ---
 
@@ -151,7 +154,7 @@ Bot ayağa kalktığında:
 | `GET /api/markets` | Tüm hava piyasaları + tahminler |
 | `GET /api/bets` | Bahis geçmişi (status, limit, offset filtresi) |
 | `GET /api/signals` | Açık pozisyonlar + canlı edge takibi |
-| `GET /api/history` | Kapanmış bahislerin W/L/ROI geçmişi |
+| `GET /api/history` | Kapanmış bahislerin W/L/ROI geçmişi (exit_price dahil) |
 | `GET /api/asi/trades` | On-chain Polymarket trade verisi |
 
 ### ASI-Evolve
@@ -189,12 +192,24 @@ Bot ayağa kalktığında:
 | `SETTLEMENT_INTERVAL` | `120` | Settlement kontrol aralığı (saniye) |
 | `SIA_INTERVAL` | `86400` | SIA optimizasyon aralığı (saniye) |
 | `MAX_EXPOSURE_PCT` | `0.25` | Maksimum exposure oranı |
-| `MAX_BET_PCT` | `0.003` | Maksimum bet büyüklüğü (portföy %) |
+| `MAX_BET_PCT` | `0.006` | Maksimum bet büyüklüğü (portföy %) |
+| `MAX_BET_AMOUNT` | `6.0` | Maksimum tek bahis tutarı ($) |
+| `DAILY_LOSS_LIMIT` | `0.20` | Günlük zarar limiti (portföy %) |
 | `KELLY_FRACTION` | `0.15` | Fractional Kelly katsayısı |
 | `CITY_CAP` | `4` | Şehir başına maksimum pozisyon |
 | `HOST` | `127.0.0.1` | Sunucu adresi |
 | `PORT` | `8091` | API portu |
 | `FEE_DRAG` | `0.02` | Polymarket taker fee (%2) |
+| `ASIABOT_API_KEY` | — | API koruması için anahtar (yoksa dev mod) |
+
+### Risk Parametreleri
+
+| Parametre | Varsayılan | Açıklama |
+|-----------|-----------|----------|
+| `take_profit_pct` | `1.0` | Take-profit eşiği (%100 kâr) |
+| `stop_loss_pct` | `0.30` | Stop-loss eşiği (%30 zarar) |
+| `trailing_stop_pct` | `0.15` | Trailing stop eşiği (%15 gerileme) |
+| `MIN_HOLD_MINUTES` | `3` | Minimum bekleme süresi (dakika) |
 
 ### LLM Yapılandırması
 
@@ -214,6 +229,15 @@ Parametreler `data/strategy_params.json` üzerinden yönetilir — Karpathy Sear
 | `kelly_fraction` | 15% | Fractional Kelly |
 | `min_entry_price` | 0.35 | Minimum giriş fiyatı |
 | `inefficiency_min` | -0.124 | Minimum verimsizlik eşiği |
+
+### Midnight Scan
+
+Gece yarısı sonrası bot, 2 gün ileri tarihli piyasaları erken yakalamak için özel tarama moduna geçer:
+
+| Parametre | Varsayılan | Açıklama |
+|-----------|-----------|----------|
+| `midnight_scan_interval` | `60` | Tarama aralığı (saniye) |
+| `midnight_scan_window` | `60` | Tarama süresi (dakika) |
 
 ---
 
@@ -267,7 +291,7 @@ ruff format .
 mypy .
 
 # Tüm testler
-pytest
+PYTHONPATH=. pytest
 
 # Coverage
 coverage run -m pytest
@@ -286,12 +310,23 @@ ruff check . && mypy . && pytest
 tests/
 ├── test_accounting.py               # Portföy muhasebe testleri
 ├── test_active_risk_management.py    # Risk yönetimi testleri
+├── test_api_bets.py                 # API bahis endpoint testleri
+├── test_api_integration.py          # API entegrasyon testleri
+├── test_asi_evolve.py               # ASI-Evolve testleri
 ├── test_calculator.py                # Hava durumu hesaplama
 ├── test_calculator_min_edge.py       # Edge eşiği testleri
 ├── test_calculator_real.py           # Gerçek veri ile hesap
 ├── test_config_consistency.py        # Config tutarlılık
 ├── test_faz2_e2e_mock.py .. 6.py     # End-to-end mock testleri
 ├── test_karpathy_weekly.py           # Karpathy search testi
+├── test_kelly_wrapper_regression.py  # Kelly wrapper regresyon
+├── test_live_data_smoke.py           # Canlı veri smoke testi
+├── test_llm_loop_orchestrator.py     # LLM loop testleri
+├── test_meteo.py                     # Open-Meteo testleri
+├── test_meteo_cache_ttl.py           # Cache TTL testleri
+├── test_polymarket_mock.py           # Polymarket mock testleri
+├── test_polymarket_real.py           # Polymarket gerçek testleri
+├── test_researcher_agent_honesty.py  # Araştırma agent dürüstlük
 ├── test_sia_hourly.py                # SIA Loop testleri
 ├── test_slippage.py                  # Slippage modeli
 └── test_weights_store.py             # Ağırlık depolama
@@ -305,7 +340,6 @@ tests/
 ASIAbot/
 ├── asi_engine/          # ASI-Evolve: calibration, cognition, evolving
 ├── config/              # Settings, logging
-├── dashboard/           # Next.js 16 dashboard (shadcn/ui + Recharts)
 ├── data/                # Runtime veri (weights, params, backtest)
 ├── data_pipeline/       # PolyMarket veri çekme + işleme
 ├── database/            # SQLAlchemy ORM (Bet, Portfolio, Analysis..)
@@ -314,9 +348,12 @@ ASIAbot/
 ├── jobs/                # Zamanlanmış görevler (scheduler)
 ├── scrapers/            # Polymarket, Open-Meteo API clients
 ├── scripts/             # Diagnostic/utility script'ler
-├── tests/               # 304 test
-├── utils/               # Kelly, slippage, probability, accounting
+├── src/                 # Next.js dashboard (app/, lib/, components/)
+├── tests/               # 308 test
+├── utils/               # Kelly, slippage, probability, accounting, formulas
 ├── main.py              # Bot + API + CLI giriş noktası
+├── api.py               # FastAPI endpoint'leri
+├── bot_loop.py          # Bot döngüsü + midnight scan
 ├── .pre-commit-config.yaml  # Pre-commit hooks
 ├── mypy.ini             # Mypy yapılandırması
 └── pyrightconfig.json   # Pyright yapılandırması
