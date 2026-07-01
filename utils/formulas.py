@@ -22,6 +22,78 @@ Formula inventory:
 
 from __future__ import annotations
 
+import logging
+import time
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Fee schedule — live from Gamma API with in-memory cache
+# ---------------------------------------------------------------------------
+
+# Cache: { "condition_id": {"rate": float, "exponent": float, "takerOnly": bool, "rebateRate": float, "_ts": float} }
+_fee_schedule_cache: dict[str, dict[str, Any]] = {}
+_FEE_CACHE_TTL = 3600  # 1 hour
+
+
+def get_fee_schedule(condition_id: str | None = None) -> dict[str, Any]:
+    """Fetch fee schedule from Gamma API for a given market.
+
+    Returns dict with keys: rate, exponent, takerOnly, rebateRate.
+    Defaults to Weather rate (0.05, exponent=1) if API fails or condition_id is None.
+
+    Caches results for 1 hour in-memory to avoid hammering the API.
+    """
+    from config.settings import bot_config
+
+    defaults = {
+        "rate": bot_config.weather_fee_rate,
+        "exponent": 1.0,
+        "takerOnly": True,
+        "rebateRate": 0.25,
+    }
+
+    if condition_id is None:
+        return defaults
+
+    # Check cache
+    cached = _fee_schedule_cache.get(condition_id)
+    if cached and (time.time() - cached.get("_ts", 0)) < _FEE_CACHE_TTL:
+        return cached
+
+    # Fetch from API
+    try:
+        import requests as _req
+
+        resp = _req.get(
+            f"https://gamma-api.polymarket.com/markets/{condition_id}",
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            schedule = data.get("feeSchedule") or {}
+            if schedule:
+                result = {
+                    "rate": float(schedule.get("rate", defaults["rate"])),
+                    "exponent": float(schedule.get("exponent", defaults["exponent"])),
+                    "takerOnly": schedule.get("takerOnly", defaults["takerOnly"]),
+                    "rebateRate": float(schedule.get("rebateRate", defaults["rebateRate"])),
+                    "_ts": time.time(),
+                }
+                _fee_schedule_cache[condition_id] = result
+                return result
+    except Exception as e:
+        logger.debug("Fee schedule fetch failed for %s: %s", condition_id, e)
+
+    return defaults
+
+
+def clear_fee_cache() -> None:
+    """Clear the fee schedule cache (e.g. on config reload)."""
+    _fee_schedule_cache.clear()
+
+
 # ---------------------------------------------------------------------------
 # 1. Max bet per position
 # ---------------------------------------------------------------------------
@@ -44,9 +116,7 @@ def max_bet_cap(portfolio_value: float, max_bet_pct: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def conservative_portfolio_value(
-    initial_capital: float, realized_before_today: float
-) -> float:
+def conservative_portfolio_value(initial_capital: float, realized_before_today: float) -> float:
     """Portfolio basis that prevents the feedback loop.
 
     Only counts:
@@ -70,9 +140,7 @@ def conservative_portfolio_value(
 # ---------------------------------------------------------------------------
 
 
-def max_exposure_cap(
-    initial_capital: float, realized_before_today: float, total_exposure_pct: float
-) -> float:
+def max_exposure_cap(initial_capital: float, realized_before_today: float, total_exposure_pct: float) -> float:
     """Total open-position ceiling.
 
     Formula: (initial + realized_before_today) × TOTAL_EXPOSURE_PCT
@@ -82,10 +150,7 @@ def max_exposure_cap(
       - main.py     (API /api/status → portfolio.max_exposure)
       - bet_placer.py (Cap 2)
     """
-    return (
-        conservative_portfolio_value(initial_capital, realized_before_today)
-        * total_exposure_pct
-    )
+    return conservative_portfolio_value(initial_capital, realized_before_today) * total_exposure_pct
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +183,7 @@ def settlement_payout(stake: float, entry_price: float) -> float:
     return stake / entry_price if entry_price > 0 else 0.0
 
 
-def settlement_pnl(
-    stake: float, entry_price: float, entry_fee: float, won: bool
-) -> float:
+def settlement_pnl(stake: float, entry_price: float, entry_fee: float, won: bool) -> float:
     """Realised PnL when Polymarket resolves a bet.
 
     According to Polymarket's official fee model:
@@ -156,40 +219,67 @@ def settlement_pnl(
 # ---------------------------------------------------------------------------
 
 
-def polymarket_fee(shares: float, price: float, fee_rate: float) -> float:
+def polymarket_fee(
+    shares: float,
+    price: float,
+    fee_rate: float,
+    exponent: float = 1.0,
+) -> float:
     """Polymarket taker fee at trade match time.
 
-    Official formula (per docs.polymarket.com):
-      fee = C × feeRate × p × (1-p)
+    Official formula (per docs.polymarket.com/trading/fees):
+      fee = C × feeRate × p × (1-p)^exponent
 
     Where:
       C        = number of shares traded
       feeRate  = category rate (Weather = 0.05, Crypto = 0.07, etc.)
       p        = trade price (0.01–0.99)
+      exponent = category exponent (Weather=1, may change in future)
 
     Fee is collected at order match time, NOT at market settlement.
     Settlement fee is always zero (p→1 ⇒ p(1-p)→0).
 
+    Rounding: 5 decimal places, minimum 0.00001 USDC.
+
     This is the canonical implementation. All fee calculations go through this.
 
     Used by:
-      - scheduler.py (:336)  — early-exit fee
+      - scheduler.py (:301)  — early-exit fee
+      - backtest_simulator.py — backtest fee
+      - karpathy_weekly.py   — ISA-Karpathy fee
     """
-    return shares * fee_rate * price * (1.0 - price)
+    fee = shares * fee_rate * price * ((price * (1.0 - price)) ** exponent)
+    return round(fee, 5) if fee >= 0.00001 else 0.0
 
 
-def polymarket_fee_from_stake(stake: float, price: float, fee_rate: float) -> float:
+def polymarket_fee_from_stake(
+    stake: float,
+    price: float,
+    fee_rate: float,
+    exponent: float = 1.0,
+) -> float:
     """Stake-based shortcut for polymarket_fee.
 
     Since shares = stake / price, the fee formula simplifies to:
-      fee = (stake / price) × feeRate × p × (1-p) = stake × feeRate × (1-p)
+      fee = (stake / price) × feeRate × (p × (1-p))^exponent
+          = stake × feeRate × (1-p) × ((p × (1-p))^exponent) / (p × (1-p))
+          ... but for exponent=1 this reduces to:
+      fee = stake × feeRate × (1-p)
+
+    For exponent != 1, we compute shares first then delegate.
 
     Used by:
       - bet_placer.py — entry_fee at bet creation time
     """
     if price <= 0:
         return 0.0
-    return stake * fee_rate * (1.0 - price)
+    if exponent == 1.0:
+        # Fast path: simplified formula for exponent=1
+        fee = stake * fee_rate * (1.0 - price)
+    else:
+        shares = stake / price
+        fee = shares * fee_rate * price * ((price * (1.0 - price)) ** exponent)
+    return round(fee, 5) if fee >= 0.00001 else 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +316,7 @@ def portfolio_total_value(cash_balance: float, open_exposure: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def portfolio_current_value(
-    initial_capital: float, realized_pnl: float, unrealized_pnl: float
-) -> float:
+def portfolio_current_value(initial_capital: float, realized_pnl: float, unrealized_pnl: float) -> float:
     """Market value: initial + all PnL (includes unrealised paper gains).
 
     Used by:
@@ -295,9 +383,7 @@ def daily_pnl(today_realized: float, open_bets: list) -> float:
 # ---------------------------------------------------------------------------
 
 
-def exit_price_from_pnl(
-    entry_price: float, realized_pnl: float, stake: float, side: str
-) -> float:
+def exit_price_from_pnl(entry_price: float, realized_pnl: float, stake: float, side: str) -> float:
     """Reconstruct the exit price from a closed bet's PnL.
 
     For YES side:

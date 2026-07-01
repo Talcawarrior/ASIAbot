@@ -15,8 +15,10 @@ from utils.formulas import polymarket_fee
 from utils.kelly import kelly_bet_amount
 from utils.probability import estimate_probability
 
-# Weather category fee rate (Polymarket official: fee = C × feeRate × p × (1-p))
-WEATHER_FEE_RATE = 0.05
+# Weather category fee rate — loaded from config (default 0.05)
+from config.settings import bot_config as _bot_cfg
+
+WEATHER_FEE_RATE = _bot_cfg.weather_fee_rate
 
 logger = logging.getLogger("ASI_BACKTESTER")
 

@@ -220,7 +220,7 @@ def get_status():
             db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
         ) or 0.0
 
-        # 3. Counts â€” win/loss based on PnL (includes closed_early)
+        # 3. Counts — win/loss based on PnL (includes closed_early)
         _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
         win_count = sum(1 for b in _all_closed if (b.pnl or 0) > 0)
         loss_count = sum(1 for b in _all_closed if (b.pnl or 0) <= 0)
@@ -721,7 +721,7 @@ def get_history():
         from sqlalchemy import case, func
 
         # True settlement stats: won+lost+settled+closed_early
-        # closed_early bets are real exits â€” their PnL is realized cash.
+        # closed_early bets are real exits — their PnL is realized cash.
         # Excluding them from stats gives a misleadingly small picture.
         real_settled_statuses = ["settled", "won", "lost", "closed_early"]
 
@@ -960,7 +960,7 @@ def get_slippage():
         for analysis, city, _bet_side, entry_price, bet_pnl, _bet_status in rows:
             # Use Analysis fields for expected values, Bet fields for actuals
             expected_price = round(float(analysis.market_implied_prob or 0), 4)
-            side = analysis.recommended_side or "â€”"
+            side = analysis.recommended_side or "—"
             # entry_price: 0 if no bet placed (frontend expects number)
             entry_price_val = round(float(entry_price), 4) if entry_price is not None else 0.0
             # result: PENDING if no bet, WIN/LOSS if bet settled
@@ -971,7 +971,7 @@ def get_slippage():
             entries.append(
                 {
                     "id": str(analysis.id),
-                    "city": city or "â€”",
+                    "city": city or "—",
                     "side": side,
                     "expected_price": expected_price,
                     "entry_price": entry_price_val,
@@ -1005,7 +1005,7 @@ def cleanup_old_data(_key: str = Depends(verify_api_key)):
             bet.status = "cancelled"
             bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-            # Calculate the actual debited amount â€” for ladder bets only
+            # Calculate the actual debited amount — for ladder bets only
             # filled rungs were debited; for flat bets the full amount.
             from utils.accounting import credit_sale
 
@@ -1227,10 +1227,10 @@ def get_health_check():
             else:
                 losses_by_exit[code] = losses_by_exit.get(code, 0) + 1
 
-        # 5. Red Flags â€” son 48 saatlik verilere gÃ¶re
+        # 5. Red Flags — son 48 saatlik verilere göre
         red_flags = []
 
-        # Son 48 saatteki kayÄ±plarÄ± say
+        # Son 48 saatteki kayıpları say
         recent_losses = sum(
             1
             for b in settled_all
@@ -1248,8 +1248,8 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"Son 48 saatte {recent_losses} kayÄ±p "
-                        f"(toplam {recent_total} sonuÃ§lanan). "
+                        f"Son 48 saatte {recent_losses} kayıp "
+                        f"(toplam {recent_total} sonuçlanan). "
                         f"Calibration bozuk olabilir."
                     ),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
@@ -1263,19 +1263,19 @@ def get_health_check():
                     {
                         "severity": "warning",
                         "message": (
-                            f"Son 24 saatte {any_analyses} analiz yapÄ±ldÄ±"
-                            f" ama hiÃ§ bet aÃ§Ä±lmadÄ±."
-                            f" Edge threshold Ã§ok yÃ¼ksek olabilir."
+                            f"Son 24 saatte {any_analyses} analiz yapıldı"
+                            f" ama hiç bet açılmadı."
+                            f" Edge threshold çok yüksek olabilir."
                         ),
-                        "action": "min_edge'i dÃ¼ÅŸÃ¼r veya marketleri kontrol et.",
+                        "action": "min_edge'i düşür veya marketleri kontrol et.",
                     }
                 )
             else:
                 red_flags.append(
                     {
                         "severity": "info",
-                        "message": ("Son 24 saatte hiÃ§ analiz yapÄ±lmadÄ±. Market taramasÄ± Ã§alÄ±ÅŸÄ±yor mu?"),
-                        "action": "Market taramasÄ±nÄ± kontrol et.",
+                        "message": ("Son 24 saatte hiç analiz yapılmadı. Market taraması çalışıyor mu?"),
+                        "action": "Market taramasını kontrol et.",
                     }
                 )
 
@@ -1284,9 +1284,9 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"TÃ¼m net edge'ler %2.5 altÄ±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÅŸÄ±lamÄ±yor."
+                        f"Tüm net edge'ler %2.5 altında (ortalama: %{avg_net_edge:.1f}). Maliyeti karşılamıyor."
                     ),
-                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarÄ±nÄ± gÃ¶zden geÃ§ir."),
+                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarını gözden geçir."),
                 }
             )
 
@@ -1294,8 +1294,8 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuÃ§lanmÄ±ÅŸ bet). Model tahminleri gÃ¼venilmez."),
-                    "action": "Kalibrasyon verisini kontrol et, evrim Ã§alÄ±ÅŸtÄ±r.",
+                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez."),
+                    "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
                 }
             )
 
@@ -1305,10 +1305,9 @@ def get_health_check():
                 {
                     "severity": "warning",
                     "message": (
-                        f"AÅŸÄ±rÄ± bahis: 24s'de {bets_opened_24h} aÃ§Ä±lan, "
-                        f"{open_total} aÃ§Ä±k. Risk yÃ¶netimi aÅŸÄ±lÄ±yor."
+                        f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, {open_total} açık. Risk yönetimi aşılıyor."
                     ),
-                    "action": "min_edge'i yÃ¼kselt, Kelly fraction'Ä± dÃ¼ÅŸÃ¼r.",
+                    "action": "min_edge'i yükselt, Kelly fraction'ı düşür.",
                 }
             )
 
@@ -1322,7 +1321,7 @@ def get_health_check():
                 {
                     "severity": "warning",
                     "message": (f"Son 48 saatte PnL negatif: ${recent_pnl:.2f}. Zarar trendi devam ediyor."),
-                    "action": "Botu izlemeye devam et. 3 gÃ¼n sonunda karar ver.",
+                    "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
                 }
             )
 
