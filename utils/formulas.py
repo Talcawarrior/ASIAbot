@@ -248,7 +248,9 @@ def polymarket_fee(
       - backtest_simulator.py — backtest fee
       - karpathy_weekly.py   — ISA-Karpathy fee
     """
-    fee = shares * fee_rate * price * ((price * (1.0 - price)) ** exponent)
+    if price <= 0 or price >= 1:
+        return 0.0
+    fee = shares * fee_rate * price * ((1.0 - price) ** exponent)
     return round(fee, 5) if fee >= 0.00001 else 0.0
 
 
@@ -260,26 +262,17 @@ def polymarket_fee_from_stake(
 ) -> float:
     """Stake-based shortcut for polymarket_fee.
 
-    Since shares = stake / price, the fee formula simplifies to:
-      fee = (stake / price) × feeRate × (p × (1-p))^exponent
-          = stake × feeRate × (1-p) × ((p × (1-p))^exponent) / (p × (1-p))
-          ... but for exponent=1 this reduces to:
-      fee = stake × feeRate × (1-p)
-
-    For exponent != 1, we compute shares first then delegate.
+    Since shares = stake / price, we delegate to polymarket_fee() for
+    consistency. Both functions now use the same canonical formula:
+      fee = C × feeRate × p × (1-p)^exponent
 
     Used by:
       - bet_placer.py — entry_fee at bet creation time
     """
     if price <= 0:
         return 0.0
-    if exponent == 1.0:
-        # Fast path: simplified formula for exponent=1
-        fee = stake * fee_rate * (1.0 - price)
-    else:
-        shares = stake / price
-        fee = shares * fee_rate * price * ((price * (1.0 - price)) ** exponent)
-    return round(fee, 5) if fee >= 0.00001 else 0.0
+    shares = stake / price
+    return polymarket_fee(shares, price, fee_rate, exponent)
 
 
 # ---------------------------------------------------------------------------
