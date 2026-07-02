@@ -45,8 +45,16 @@ def run_fetch_weather():
 
 
 def run_analyze(session=None):
-    """Run forecast analyses for open markets. Optional session for batched cycles."""
+    """Run forecast analyses for open markets. Optional session for batched cycles.
+
+    PERFORMANCE: pre-fetches ALL forecasts in a single bulk query and passes
+    them to each analyze_market call via forecast_cache, eliminating 339+
+    individual DB queries per cycle. This is the single biggest speedup
+    (was ~29 min → target ~3 min for 339 markets).
+    """
+
     from engine.calculator import Calculator
+    from database.models import WeatherForecast
 
     calc = Calculator()
     analyzed = 0
@@ -62,9 +70,38 @@ def run_analyze(session=None):
         )
         market_ids = [m.id for m in markets]
 
+        if not market_ids:
+            return "0 market analiz edildi"
+
+        # Bulk fetch ALL forecasts for these markets in ONE query.
+        # This replaces N individual queries inside analyze_market().
+        all_forecasts = (
+            sess.query(WeatherForecast)
+            .filter(WeatherForecast.market_id.in_(market_ids))
+            .order_by(WeatherForecast.fetched_at.desc())
+            .all()
+        )
+
+        # Build forecast cache: (market_id, metric) -> {source: forecast}
+        # Keep only the latest forecast per source (already sorted by fetched_at desc).
+        forecast_cache: dict[tuple, dict] = {}
+        for f in all_forecasts:
+            key = (f.market_id, f.metric)
+            if key not in forecast_cache:
+                forecast_cache[key] = {}
+            if f.source not in forecast_cache[key]:
+                forecast_cache[key][f.source] = f
+
+        logger.info(
+            "run_analyze: %d markets, %d forecasts pre-fetched (%d unique market×metric groups)",
+            len(market_ids),
+            len(all_forecasts),
+            len(forecast_cache),
+        )
+
         for mid in market_ids:
             try:
-                result = calc.analyze_market(mid, session=sess)
+                result = calc.analyze_market(mid, session=sess, forecast_cache=forecast_cache)
                 if result is not None:
                     analyzed += 1
             except Exception as e:
@@ -74,12 +111,17 @@ def run_analyze(session=None):
     return f"{analyzed} market analiz edildi ve kaydedildi"
 
 
-def run_place_bets():
-    """Execute betting strategy and place live/paper bets."""
+def run_place_bets(session=None):
+    """Execute betting strategy and place live/paper bets.
+
+    Optional session for batched cycles — when provided, bet placement
+    shares the same DB session as analyze/update/risk so it can see
+    the current cycle's freshly-written Analysis records.
+    """
     from executor.bet_placer import BetPlacer
 
     placer = BetPlacer()
-    count = placer.place_all_pending()
+    count = placer.place_all_pending(session=session)
     return f"{count} adet yeni bet açıldı"
 
 
@@ -367,7 +409,7 @@ def run_cycle():
             results.append(f"analyze error: {e}")
 
         try:
-            results.append(run_place_bets())
+            results.append(run_place_bets(session=session))
         except Exception as e:
             logger.error("Cycle place_bets error: %s", e)
             results.append(f"place_bets error: {e}")

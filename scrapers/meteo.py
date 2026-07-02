@@ -98,9 +98,7 @@ class MeteoFetcher:
             await client.aclose()
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_open_meteo(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict | None:
+    def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
         """Open-Meteo API (Ã¼cretsiz, key gerekmez).
 
         Results are cached in-process keyed by (lat, lon, date, source) so
@@ -153,9 +151,7 @@ class MeteoFetcher:
         return None
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_weatherapi(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict | None:
+    def _fetch_weatherapi(self, lat: float, lon: float, target_date: str) -> dict | None:
         """WeatherAPI.com."""
         if not bot_config.meteo.weatherapi_key:
             return None
@@ -195,9 +191,7 @@ class MeteoFetcher:
         _cache_set(cache_key, None)
         return None
 
-    def fetch_for_markets(
-        self, market_ids: list[str], city: str, target_date: datetime, metric: str
-    ) -> int:
+    def fetch_for_markets(self, market_ids: list[str], city: str, target_date: datetime, metric: str) -> int:
         """Fetch weather data for a group of markets sharing the same city/date/metric.
 
         Coordinate resolution: city name → CITY_ICAO_MAP → ICAO_COORDS.
@@ -302,6 +296,15 @@ class MeteoFetcher:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
+            # Create a single aiohttp session for ALL cities — avoids
+            # TCP+TLS handshake overhead per city (65+ cities × ~200ms = ~13s saved).
+            import aiohttp as _aiohttp
+
+            shared_session = _aiohttp.ClientSession(
+                timeout=_aiohttp.ClientTimeout(total=30),
+                headers={"User-Agent": "ASIAbot/1.0"},
+            )
+
             try:
                 for key, markets in groups.items():
                     city, city_code, target_date, lat, lon = group_info[key]
@@ -313,7 +316,7 @@ class MeteoFetcher:
 
                     try:
                         for metric, mids in mids_by_metric.items():
-                            # 1. Try Ensemble (8-model)
+                            # 1. Try Ensemble (8-model) — reuse shared session
                             try:
                                 result = loop.run_until_complete(
                                     we.get_multi_model_forecast(
@@ -324,6 +327,7 @@ class MeteoFetcher:
                                         market_ids=mids,
                                         db_session=session,
                                         metric=metric,
+                                        aiohttp_session=shared_session,
                                     )
                                 )
 
@@ -339,22 +343,20 @@ class MeteoFetcher:
                                 )
 
                             # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
-                            count = self.fetch_for_markets(
-                                mids, city, target_date, metric
-                            )
+                            count = self.fetch_for_markets(mids, city, target_date, metric)
                             total += count
 
                     except Exception as e:
                         logger.error("Group %s bucket error: %s", key, e)
                         continue
             finally:
+                # Close shared aiohttp session
+                loop.run_until_complete(shared_session.close())
                 loop.close()
 
         return total
 
-    def _parallel_fetch_sources(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict[str, dict | None]:
+    def _parallel_fetch_sources(self, lat: float, lon: float, target_date: str) -> dict[str, dict | None]:
         """Fetch Open-Meteo + WeatherAPI concurrently via AsyncHttpClient.
 
         Returns a dict keyed by source name with the same shape as the
@@ -401,9 +403,7 @@ class MeteoFetcher:
             )
         return 0
 
-    def fetch_for_market(
-        self, market_id: str, city: str, target_date: datetime, metric: str
-    ) -> int:
+    def fetch_for_market(self, market_id: str, city: str, target_date: datetime, metric: str) -> int:
         """Backward-compat shim: fetch weather for a single market.
 
         Delegates to :meth:`fetch_for_markets` with a single-element list.

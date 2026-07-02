@@ -129,10 +129,10 @@ class PolymarketScraper:
             day_no_pad = str(d.day)
             queries.append(f"temperature {month_name} {day_no_pad}")
             queries.append(f"highest temperature {month_name} {day_no_pad}")
-        # Also add 5 city-specific queries to broaden coverage beyond
-        # the public-search top results.
+        # Add city-specific queries to cover ALL markets on Polymarket.
+        # Each query returns up to limit_per_type results from Gamma API.
         queries += [
-            # Top US markets (highest volume on Polymarket)
+            # US cities (high volume on Polymarket)
             "dallas temperature",
             "miami temperature",
             "new york temperature",
@@ -140,12 +140,63 @@ class PolymarketScraper:
             "houston temperature",
             "los angeles temperature",
             "phoenix temperature",
-            # International (frequent on Polymarket)
+            "san francisco temperature",
+            "atlanta temperature",
+            "boston temperature",
+            "seattle temperature",
+            "denver temperature",
+            "washington temperature",
+            "las vegas temperature",
+            "orlando temperature",
+            # International — Asia (very active on Polymarket)
             "london temperature",
             "paris temperature",
             "tokyo temperature",
             "seoul temperature",
             "istanbul temperature",
+            "taipei temperature",
+            "shanghai temperature",
+            "beijing temperature",
+            "hong kong temperature",
+            "singapore temperature",
+            "bangkok temperature",
+            "mumbai temperature",
+            "delhi temperature",
+            "shenzhen temperature",
+            "osaka temperature",
+            "jakarta temperature",
+            # Middle East
+            "dubai temperature",
+            "doha temperature",
+            "tel aviv temperature",
+            "cairo temperature",
+            # Europe
+            "berlin temperature",
+            "madrid temperature",
+            "rome temperature",
+            "amsterdam temperature",
+            "munich temperature",
+            "moscow temperature",
+            "vienna temperature",
+            "stockholm temperature",
+            "lisbon temperature",
+            "zurich temperature",
+            "barcelona temperature",
+            "athens temperature",
+            # South America
+            "sao paulo temperature",
+            "buenos aires temperature",
+            "mexico city temperature",
+            "santiago temperature",
+            "lima temperature",
+            "rio de janeiro temperature",
+            # Oceania & Africa
+            "sydney temperature",
+            "melbourne temperature",
+            "cape town temperature",
+            "ankara temperature",
+            "toronto temperature",
+            "vancouver temperature",
         ]
 
         gamma_host = urlparse(self.gamma_url).netloc
@@ -250,8 +301,10 @@ class PolymarketScraper:
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
-        # 1) YES/NO price — handle both /markets (tokens[]) and
-        #    /public-search (lastTradePrice / bestBid / bestAsk) formats.
+        # 1) YES/NO price — handle multiple Polymarket data formats:
+        #    - tokens[] array (full market data)
+        #    - outcomePrices array (["0.32", "0.68"])
+        #    - public-search fields (lastTradePrice / bestBid / bestAsk)
         yes_price = None
         no_price = None
         for token in raw.get("tokens", []) or []:
@@ -264,7 +317,31 @@ class PolymarketScraper:
                 yes_price = p
             elif outcome == "NO" and p is not None:
                 no_price = p
-        # Fallback: public-search fields
+        # Fallback 1: outcomePrices array (e.g. ["0.32", "0.68"])
+        # Outcomes order matches the `outcomes` field: ["Yes", "No"]
+        # NOTE: Both fields may arrive as JSON strings (not parsed lists)
+        # from the Gamma API, so we must json.loads() them first.
+        if yes_price is None:
+            outcome_prices_raw = raw.get("outcomePrices")
+            outcomes_raw = raw.get("outcomes")
+            try:
+                op_raw = outcome_prices_raw
+                outcome_prices = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+                outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
+            except (json.JSONDecodeError, TypeError):
+                outcome_prices, outcomes = None, None
+            if outcome_prices and outcomes and len(outcome_prices) == len(outcomes):
+                for i, outcome_name in enumerate(outcomes):
+                    name_upper = (outcome_name or "").upper()
+                    try:
+                        p = float(outcome_prices[i])
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                    if name_upper == "YES" and yes_price is None:
+                        yes_price = p
+                    elif name_upper == "NO" and no_price is None:
+                        no_price = p
+        # Fallback 2: public-search fields
         if yes_price is None:
             for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):
                 v = raw.get(key)
@@ -359,6 +436,18 @@ class PolymarketScraper:
         weather_markets = [m for m in raw_markets if self._is_weather_market(m)]
         logger.info(f"{len(weather_markets)} hava durumu marketi bulundu")
 
+        # Filter out closed/resolved markets — no point analyzing or betting
+        # on markets that Polymarket has already settled.
+        open_markets = []
+        for m in weather_markets:
+            if m.get("closed") is True:
+                continue
+            open_markets.append(m)
+        skipped_closed = len(weather_markets) - len(open_markets)
+        if skipped_closed:
+            logger.info(f"{skipped_closed} kapalı/cozulmuş market atlandı")
+        weather_markets = open_markets
+
         saved = 0
         with get_session() as session:
             for raw in weather_markets:
@@ -394,6 +483,19 @@ class PolymarketScraper:
                             parsed["id"],
                             threshold_c,
                             (parsed.get("question") or "")[:80],
+                        )
+                        continue
+
+                    # Skip resolved/extreme-price markets (YES=1.0 or YES=0.0)
+                    # These are already settled on Polymarket — no edge to capture.
+                    yp = parsed["yes_price"]
+                    np_ = parsed["no_price"]
+                    if yp <= 0.01 or yp >= 0.99 or np_ <= 0.01 or np_ >= 0.99:
+                        logger.debug(
+                            "Skipping market %s: extreme prices YES=%.3f NO=%.3f (resolved?)",
+                            parsed["id"],
+                            yp,
+                            np_,
                         )
                         continue
 

@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from sqlalchemy import func
 
 from config.settings import Config, bot_config
-from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
 from engine.decision import BetDecision
 from utils.formulas import (
@@ -77,10 +76,17 @@ class BetPlacer:
             logger.warning(f"Polymarket client kurulamadi (PAPER TRADE ACTIVE): {e}")
             self.ready = False
 
-    def place_bet(self, analysis_id: int) -> Bet | None:
-        """Analiz sonucuna göre bet aç."""
+    def place_bet(self, analysis_id: int, session=None) -> Bet | None:
+        """Analiz sonucuna göre bet aç.
+
+        Optional session for batched cycles — when provided, reuses the
+        caller's DB session so freshly-written Analysis records from the
+        current cycle are visible.
+        """
         d = BetDecision(market_id=f"analysis:{analysis_id}")
-        with get_session() as session:
+        from database.db import get_session_or
+
+        with get_session_or(session) as session:
             # Bind session to risk manager so _conservative_portfolio_value()
             # queries DB instead of returning stale INITIAL_PORTFOLIO.
             self.risk_manager.db = session
@@ -134,23 +140,23 @@ class BetPlacer:
                 d.log(logging.DEBUG)
                 return None
 
-            # Zaten bu market'e herhangi bir bahis açılmış mı?
-            # NOT: Sadece OPENstatuses kontrol etmiyoruz — closed_early,
-            # settled, won, lost durumları da dahil. Ayni market'e
-            # tekrar bahis açilmasini engelliyoruz.
-            existing = (
+            # Bu market'te su an acik bir bahis var mi?
+            # Onceki bahisler closed_early/won/lost/settled olsa bile,
+            # ayni market'te yeni firsat varsa tekrar bahis acabiliriz.
+            # Sadece hala ACIK (placed/active/pending) bahis varsa atla.
+            existing_open = (
                 session.query(Bet)
                 .filter(
                     Bet.market_id == analysis.market_id,
-                    Bet.status != "rejected",
+                    Bet.status.in_(OPEN_BET_STATUSES),
                 )
                 .first()
             )
             d.check(
                 "no_existing_bet",
-                existing is None,
-                existing_id=existing.id if existing else None,
-                existing_status=existing.status if existing else None,
+                existing_open is None,
+                existing_id=existing_open.id if existing_open else None,
+                existing_status=existing_open.status if existing_open else None,
             )
             if not d.should_bet:
                 d.log(logging.INFO)
@@ -502,22 +508,30 @@ class BetPlacer:
                 return token.get("token_id")
         raise ValueError(f"Token ID bulunamadı: {side}")
 
-    def place_all_pending(self) -> int:
-        """should_bet=True olan tum analizler icin bet ac."""
+    def place_all_pending(self, session=None) -> int:
+        """should_bet=True olan tum analizler icin bet ac.
+
+        Optional session for batched cycles — when provided, reuses the
+        caller's session instead of creating a new one. This ensures
+        freshly-written Analysis records from the current cycle's
+        run_analyze() are visible to bet placement.
+        """
         placed = 0
         # Build mapping of analysis_id -> market_id + set of markets that
         # already have bets, inside a single session.
         aid_to_market: dict[int, str] = {}
         markets_with_bets: set[str] = set()
 
-        with get_session() as session:
+        from database.db import get_session_or
+
+        with get_session_or(session) as sess:
             # Only use the LATEST analysis per market (highest id).
             # This prevents old analyses with stale recommended_amount
             # (e.g. pre-config-change $29.70) from being placed.
             from sqlalchemy import func as sa_func
 
             subq = (
-                session.query(
+                sess.query(
                     Analysis.market_id,
                     sa_func.max(Analysis.id).label("max_id"),
                 )
@@ -525,19 +539,24 @@ class BetPlacer:
                 .group_by(Analysis.market_id)
                 .subquery()
             )
-            pending = session.query(Analysis).join(subq, Analysis.id == subq.c.max_id).all()
+            pending = (
+                sess.query(Analysis)
+                .join(subq, Analysis.id == subq.c.max_id)
+                .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
+                .order_by(WeatherMarket.target_date.desc())
+                .all()
+            )
 
-            # Dedup: skip market_ids that already have ANY non-rejected Bet.
-            # Previous logic deduped by analysis_id which was useless — SIA
-            # creates a new analysis (new ID) each cycle for the same market,
-            # so the old check never caught duplicates.
+            # Dedup: skip market_ids that already have an OPEN bet.
+            # Closed/won/lost/settled bets don't block re-betting on
+            # the same market — new opportunities may have emerged.
             market_ids = {a.market_id for a in pending}
             if market_ids:
                 existing_rows = (
-                    session.query(Bet.market_id)
+                    sess.query(Bet.market_id)
                     .filter(
                         Bet.market_id.in_(list(market_ids)),
-                        Bet.status != "rejected",
+                        Bet.status.in_(OPEN_BET_STATUSES),
                     )
                     .all()
                 )
@@ -555,7 +574,7 @@ class BetPlacer:
                 )
                 continue
             try:
-                bet = self.place_bet(aid)
+                bet = self.place_bet(aid, session=sess)
                 if bet is not None:
                     placed += 1
                     # Track this market to skip duplicate analyses in same batch

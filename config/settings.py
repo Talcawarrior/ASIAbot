@@ -208,11 +208,15 @@ _ICAO_COORDS = {
     "ESSA": (59.6498, 17.9294),
     "LGAV": (37.9364, 23.9472),
     "LPPT": (38.7750, -9.1354),
-    # Middle East (3)
+    "LIMC": (45.6306, 8.7281),
+    "EFHK": (60.3172, 24.9633),
+    "EPWA": (52.1657, 20.9671),
+    # Middle East (4)
     "OMDB": (25.2532, 55.3657),
     "LLBG": (32.0114, 34.8867),
     "OTHH": (25.2731, 51.6081),
-    # Asia (12)
+    "OEJN": (21.6796, 39.1565),
+    # Asia (22)
     "RJTT": (35.5533, 139.7811),
     "RJOO": (34.7882, 135.4381),
     "ZSPD": (31.1434, 121.8052),
@@ -220,30 +224,45 @@ _ICAO_COORDS = {
     "RKSS": (37.4602, 126.4407),
     "VHHH": (22.3080, 113.9185),
     "RCTP": (25.0764, 121.2338),
+    "ZGSZ": (22.6393, 113.8108),
     "WSSS": (1.3592, 103.9894),
     "VTBS": (13.6926, 100.7501),
     "WIII": (-6.1256, 106.6559),
     "VABB": (19.0887, 72.8679),
     "VIDP": (28.5562, 77.1000),
-    # Oceania (3)
+    "RPLL": (14.5086, 121.0194),
+    "WMKK": (2.7456, 101.7072),
+    "OPKC": (24.9065, 67.1605),
+    "VILK": (26.7606, 80.8893),
+    "RKPK": (35.1795, 128.9382),
+    "ZUUU": (30.5785, 103.9471),
+    "ZUCK": (29.7192, 106.6417),
+    "ZGGG": (23.3924, 113.2988),
+    "ZSQD": (36.3661, 120.3744),
+    "ZHHH": (30.7838, 114.2081),
+    # Oceania (4)
     "YSSY": (-33.9399, 151.1753),
     "YMML": (-37.6690, 144.8410),
     "NZAA": (-37.0082, 174.7918),
+    "NZWN": (-41.3272, 174.8053),
     # Africa (2)
     "HECA": (30.1219, 31.4056),
     "FACT": (-33.9694, 18.5972),
 }
 
 _CITY_ICAO_MAP = {
+    # Turkey
     "ankara": "LTAC",
     "istanbul": "LTFM",
     "izmir": "LTBJ",
     "antalya": "LTAI",
+    # US
     "dallas": "KDAL",
     "miami": "KMIA",
     "chicago": "KORD",
     "new york": "KLGA",
     "newyork": "KLGA",
+    "nyc": "KLGA",
     "los angeles": "KLAX",
     "las vegas": "KLAS",
     "phoenix": "KPHX",
@@ -255,9 +274,11 @@ _CITY_ICAO_MAP = {
     "washington": "KDCA",
     "san francisco": "KSFO",
     "orlando": "KMCO",
+    # Canada
     "toronto": "CYYZ",
     "vancouver": "CYVR",
     "montreal": "CYUL",
+    # Latin America
     "mexico city": "MMMX",
     "guadalajara": "MMGL",
     "sao paulo": "SBGR",
@@ -265,6 +286,7 @@ _CITY_ICAO_MAP = {
     "buenos aires": "SAEZ",
     "santiago": "SCEL",
     "lima": "SPJC",
+    # Europe
     "london": "EGLL",
     "paris": "LFPG",
     "berlin": "EDDT",
@@ -280,9 +302,15 @@ _CITY_ICAO_MAP = {
     "stockholm": "ESSA",
     "athens": "LGAV",
     "lisbon": "LPPT",
+    "milan": "LIMC",
+    "helsinki": "EFHK",
+    "warsaw": "EPWA",
+    # Middle East
     "dubai": "OMDB",
     "tel aviv": "LLBG",
     "doha": "OTHH",
+    "jeddah": "OEJN",
+    # Asia
     "tokyo": "RJTT",
     "osaka": "RJOO",
     "shanghai": "ZSPD",
@@ -290,14 +318,28 @@ _CITY_ICAO_MAP = {
     "seoul": "RKSS",
     "hong kong": "VHHH",
     "taipei": "RCTP",
+    "shenzhen": "ZGSZ",
     "singapore": "WSSS",
     "bangkok": "VTBS",
     "jakarta": "WIII",
     "mumbai": "VABB",
     "delhi": "VIDP",
+    "manila": "RPLL",
+    "kuala lumpur": "WMKK",
+    "karachi": "OPKC",
+    "lucknow": "VILK",
+    "busan": "RKPK",
+    "chengdu": "ZUUU",
+    "chongqing": "ZUCK",
+    "guangzhou": "ZGGG",
+    "qingdao": "ZSQD",
+    "wuhan": "ZHHH",
+    # Oceania
     "sydney": "YSSY",
     "melbourne": "YMML",
     "auckland": "NZAA",
+    "wellington": "NZWN",
+    # Africa
     "cairo": "HECA",
     "cape town": "FACT",
 }

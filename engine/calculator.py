@@ -72,8 +72,14 @@ class Calculator:
         f_star = _kelly_fraction(prob, price)
         return f_star * fraction
 
-    def analyze_market(self, market_id: str, session=None) -> Analysis | None:
-        """Bir marketi analiz et. Optional session for batched cycles."""
+    def analyze_market(self, market_id: str, session=None, forecast_cache: dict | None = None) -> Analysis | None:
+        """Bir marketi analiz et. Optional session for batched cycles.
+
+        Optional forecast_cache: pre-fetched forecasts from run_analyze's
+        bulk query. Keyed by (market_id, metric) -> {source: WeatherForecast}.
+        When provided, skips the per-market forecast DB query (biggest
+        performance win for 339+ market cycles).
+        """
         with get_session_or(session) as session:
             market = session.query(WeatherMarket).filter_by(id=market_id).first()
             if not market:
@@ -121,25 +127,37 @@ class Calculator:
             inefficiency_min = getattr(bot_config.strategy, "inefficiency_min", -1.0)
 
             # En son tahminleri al — query by market.metric directly.
-            forecasts = (
-                session.query(WeatherForecast)
-                .filter(
-                    WeatherForecast.market_id == market_id,
-                    WeatherForecast.metric == market.metric,
+            # If forecast_cache is provided (bulk mode), use it instead of per-market query.
+            if forecast_cache is not None:
+                cache_key = (market_id, market.metric)
+                source_forecasts = forecast_cache.get(cache_key, {})
+                # Convert to same format as DB query results
+                latest_by_source = {}
+                source_weights = {}
+                for source_name, f in source_forecasts.items():
+                    latest_by_source[source_name] = f.predicted_value
+                    source_weights[source_name] = f.model_weight or 0.0
+                forecast_values = list(latest_by_source.values())
+            else:
+                forecasts = (
+                    session.query(WeatherForecast)
+                    .filter(
+                        WeatherForecast.market_id == market_id,
+                        WeatherForecast.metric == market.metric,
+                    )
+                    .order_by(WeatherForecast.fetched_at.desc())
+                    .all()
                 )
-                .order_by(WeatherForecast.fetched_at.desc())
-                .all()
-            )
 
-            # Her kaynaktan en son tahmini al + ağırlıkları topla
-            latest_by_source = {}
-            source_weights = {}
-            for f in forecasts:
-                if f.source not in latest_by_source:
-                    latest_by_source[f.source] = f.predicted_value
-                    source_weights[f.source] = f.model_weight or 0.0
+                # Her kaynaktan en son tahmini al + ağırlıkları topla
+                latest_by_source = {}
+                source_weights = {}
+                for f in forecasts:
+                    if f.source not in latest_by_source:
+                        latest_by_source[f.source] = f.predicted_value
+                        source_weights[f.source] = f.model_weight or 0.0
 
-            forecast_values = list(latest_by_source.values())
+                forecast_values = list(latest_by_source.values())
 
             if len(forecast_values) < bot_config.strategy.min_sources:
                 logger.info(
@@ -439,7 +457,14 @@ class WeatherEngine:
         market_ids: list[str] = None,
         db_session=None,
         metric: str = "temperature_2m_max",
+        aiohttp_session=None,
     ) -> dict | None:
+        """Fetch multi-model ensemble forecast for a city.
+
+        Optional aiohttp_session: reuse an external session to avoid
+        creating a new TCP+TLS connection per city (big performance win
+        when fetching 65+ cities sequentially).
+        """
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
@@ -470,8 +495,9 @@ class WeatherEngine:
             }
 
             try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                # Reuse external session if provided (avoids TCP+TLS overhead per city)
+                if aiohttp_session is not None:
+                    async with aiohttp_session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
                             logger.warning("Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s...")
                             await asyncio.sleep(30)
@@ -480,6 +506,17 @@ class WeatherEngine:
                             return None
                         data = await resp.json()
                         self._forecast_cache[cache_key] = data
+                else:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                            if resp.status == 429:
+                                logger.warning("Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s...")
+                                await asyncio.sleep(30)
+                                return None
+                            if resp.status != 200:
+                                return None
+                            data = await resp.json()
+                            self._forecast_cache[cache_key] = data
             except Exception as e:
                 logger.error("get_multi_model_forecast fetch error: %s", e)
                 return None
