@@ -101,10 +101,10 @@ class TestStopLoss:
         assert should_exit is True
 
     def test_stop_loss_below_threshold_no_trigger(self):
-        """%25 zararda stop-loss tetiklenmemeli."""
+        """%15 zararda stop-loss tetiklenmemeli (%20 threshold altında)."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, reason = rm.check_stop_loss(bet, 0.38)
+        should_exit, reason = rm.check_stop_loss(bet, 0.43)
         assert should_exit is False
 
     def test_stop_loss_kardayken_tetiklenmez(self):
@@ -433,11 +433,11 @@ class TestEdgeCases:
 
     def test_stop_loss_configurable_threshold(self):
         """Farklı stop_loss_pct değerleriyle test."""
-        # Varsayılan %30
+        # Yeni %20 threshold
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, _ = rm.check_stop_loss(bet, 0.36)  # %28 zarar
-        assert should_exit is False  # %30'u geçmedi
+        should_exit, _ = rm.check_stop_loss(bet, 0.43)  # %14 zarar
+        assert should_exit is False  # %20'yi geçmedi
 
     def test_take_profit_configurable_threshold(self):
         """Farklı take_profit_pct değerleriyle test."""
