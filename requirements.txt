@@ -18,9 +18,11 @@ retry-requests>=2.0.0
 py-clob-client>=0.1.0
 
 # LLM / AI
+# Z.AI (Zhipu / GLM) is called directly via `requests` (asi_engine/llm_client.py).
+# NO openai SDK dependency — Z.AI exposes an OpenAI-compatible Chat Completions
+# endpoint, but we use requests as the HTTP client. Traffic goes only to api.z.ai.
 litellm>=1.40.0
 anthropic>=0.100.0
-openai>=1.0.0
 
 # Database
 aiosqlite>=0.20.0

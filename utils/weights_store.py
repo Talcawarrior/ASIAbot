@@ -74,14 +74,25 @@ def load_strategy_params() -> dict[str, float] | None:
 
 
 def save_strategy_params(params: dict[str, float]):
-    """Save strategy parameters to disk with safety clamps."""
+    """Save strategy parameters to disk with safety clamps.
+
+    SAFETY CLAMPS (hard limits — SIA/Karpathy/LLM cannot override):
+      - min_edge: [0.05, 0.20]  — floor 5% (breakeven ~1.74% after 5% fee
+        + ~1% slippage + gas). Values below 5% are negative-EV and clamped.
+      - kelly_fraction: [0.05, 0.25] — below 5% = no meaningful sizing,
+        above 25% = too aggressive (quarter-Kelly ceiling).
+      - min_entry_price: floor 0.05 — long-shot markets bleed asymmetrically.
+      - inefficiency_min: floor -0.20 — anything more negative = noise.
+    """
     with _lock:
         try:
             # Safety clamps — prevent SIA/Evolve/LLM from pushing values
-            # into dangerous territory.  See KULLANIM_KILAVUZU §11 Bulgu 2.
+            # into dangerous territory. These are HARD limits.
             _CLAMPS: dict[str, tuple[float, float]] = {
-                "min_edge": (0.04, 0.20),  # floor 4% (doc default 5%)
-                "kelly_fraction": (0.05, 0.25),  # ceiling 25% (doc default 15%)
+                "min_edge": (0.05, 0.20),  # FIX: floor raised 0.04 -> 0.05 (breakeven after 5% fee)
+                "kelly_fraction": (0.05, 0.25),  # ceiling 25% (quarter-Kelly)
+                "min_entry_price": (0.05, 0.95),  # floor 5%, ceiling 95%
+                "inefficiency_min": (-0.20, 0.0),  # floor -20%, ceiling 0
             }
             for key, (lo, hi) in _CLAMPS.items():
                 if key in params:

@@ -562,6 +562,15 @@ def apply_persisted_strategy_params() -> dict:
     onto the in-memory bot_config (single source of truth).
 
     Returns the params dict that was applied (empty dict if no file found).
+
+    SAFETY CLAMPS:
+      - min_edge: floor at 0.05 (breakeven ~1.74% after 5% Polymarket fee +
+        ~1% slippage + gas; 5% gives safety margin). Values < 0.05 are
+        clamped, never below.
+      - kelly_fraction: clamped to [0.05, 0.25]. Below 0.05 = no meaningful
+        sizing; above 0.25 = too aggressive (quarter-Kelly is the ceiling).
+      - min_entry_price: floor at 0.05 (long-shot markets bleed asymmetrically).
+      - inefficiency_min: floor at -0.20 (anything more negative = noise).
     """
     try:
         from utils.weights_store import load_strategy_params
@@ -575,15 +584,41 @@ def apply_persisted_strategy_params() -> dict:
     applied = {}
     s = bot_config.strategy
 
+    # Safety constants — these are HARD limits that cannot be overridden
+    # by the SIA loop / Karpathy search / strategy_params.json.
+    MIN_EDGE_FLOOR = 0.05          # 5% — below this = negative-EV after fees
+    KELLY_FRACTION_MIN = 0.05      # 5% — below this = Kelly sizing is meaningless
+    KELLY_FRACTION_MAX = 0.25      # 25% — above this = too aggressive
+    MIN_ENTRY_PRICE_FLOOR = 0.05   # 5% — long-shot markets bleed
+    INEFFICIENCY_MIN_FLOOR = -0.20 # -20% — anything more negative = noise
+
     if "min_edge" in persisted:
         try:
-            s.min_edge = float(persisted["min_edge"])
+            raw = float(persisted["min_edge"])
+            # CLAMP: never allow min_edge below 0.05 (breakeven after fees)
+            clamped = max(raw, MIN_EDGE_FLOOR)
+            if clamped != raw:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "strategy_params.json min_edge=%.4f clamped to floor %.4f "
+                    "(below breakeven after 5%% fee + slippage)", raw, clamped
+                )
+            s.min_edge = clamped
             applied["min_edge"] = s.min_edge
         except (TypeError, ValueError):
             pass
     if "kelly_fraction" in persisted:
         try:
-            s.kelly_fraction = float(persisted["kelly_fraction"])
+            raw = float(persisted["kelly_fraction"])
+            # CLAMP: keep kelly_fraction in [0.05, 0.25]
+            clamped = min(max(raw, KELLY_FRACTION_MIN), KELLY_FRACTION_MAX)
+            if clamped != raw:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "strategy_params.json kelly_fraction=%.4f clamped to [%.2f, %.2f] -> %.4f",
+                    raw, KELLY_FRACTION_MIN, KELLY_FRACTION_MAX, clamped
+                )
+            s.kelly_fraction = clamped
             applied["kelly_fraction"] = s.kelly_fraction
         except (TypeError, ValueError):
             pass
@@ -592,13 +627,29 @@ def apply_persisted_strategy_params() -> dict:
     # utils/kelly.py all use the same cap via max_bet_cap().
     if "min_entry_price" in persisted:
         try:
-            s.min_entry_price = float(persisted["min_entry_price"])
+            raw = float(persisted["min_entry_price"])
+            clamped = max(raw, MIN_ENTRY_PRICE_FLOOR)
+            if clamped != raw:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "strategy_params.json min_entry_price=%.4f clamped to floor %.4f",
+                    raw, clamped
+                )
+            s.min_entry_price = clamped
             applied["min_entry_price"] = s.min_entry_price
         except (TypeError, ValueError):
             pass
     if "inefficiency_min" in persisted:
         try:
-            s.inefficiency_min = float(persisted["inefficiency_min"])
+            raw = float(persisted["inefficiency_min"])
+            clamped = max(raw, INEFFICIENCY_MIN_FLOOR)
+            if clamped != raw:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "strategy_params.json inefficiency_min=%.4f clamped to floor %.4f",
+                    raw, clamped
+                )
+            s.inefficiency_min = clamped
             applied["inefficiency_min"] = s.inefficiency_min
         except (TypeError, ValueError):
             pass

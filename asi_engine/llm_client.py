@@ -7,9 +7,11 @@ LLM credentials inside layer code.
 Design choices
 --------------
 * The only supported backend is **ZAI (Zhipu / GLM)** at
-  ``https://api.z.ai/api/paas/v4/``. ZAI exposes an OpenAI-compatible
-  Chat Completions API, so we use the ``openai`` SDK as a thin HTTP client.
-  The SDK is NOT used to talk to OpenAI itself.
+  ``https://api.z.ai/api/paas/v4/``. ZAI exposes a Chat Completions API
+  with the same JSON schema as OpenAI, but we call it directly via the
+  ``requests`` library — NO openai SDK dependency. The request/response
+  shape is OpenAI-compatible (chat.completions.create), but the wire goes
+  only to Z.AI's servers, never to OpenAI.
 * Credentials are read from ``ZAI_API_KEY`` / ``ZAI_BASE_URL`` env vars.
   No ``OPENAI_*`` env vars are read anywhere in this codebase.
 * glm-4.5-flash is a reasoning model — chain-of-thought goes into
@@ -33,6 +35,8 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+
+import requests
 
 logger = logging.getLogger("LLM_CLIENT")
 
@@ -62,36 +66,57 @@ class LLMConfig:
 
 def get_client(
     cfg: LLMConfig | None = None, *, layer: str = ""
-) -> tuple[Any, LLMConfig] | None:
-    """Build and return (openai client, config), or None if not configured.
+) -> tuple["ZaiClient", LLMConfig] | None:
+    """Build and return (ZaiClient, config), or None if not configured.
 
     Returns None when:
       * ZAI_API_KEY is not set
-      * the ``openai`` SDK is not installed
 
     The caller MUST treat None as "no LLM available — use fallback".
     """
     cfg = cfg or LLMConfig(layer=layer)
     if not cfg.is_configured:
         return None
-    try:
-        # The openai SDK is used purely as an HTTP client for ZAI's
-        # OpenAI-compatible endpoint. We do NOT send traffic to OpenAI.
-        from openai import OpenAI  # type: ignore
-    except ImportError:
-        logger.warning(
-            "openai SDK not installed — LLM hook disabled. "
-            "Install with: pip install openai"
-        )
-        return None
+    return ZaiClient(cfg), cfg
 
-    client = OpenAI(
-        api_key=cfg.api_key,
-        base_url=cfg.base_url,
-        max_retries=3,
-        timeout=120.0,
-    )
-    return client, cfg
+
+class ZaiClient:
+    """Minimal HTTP client for Z.AI's OpenAI-compatible Chat Completions API.
+
+    Uses ``requests`` directly — NO openai SDK dependency. The wire goes only
+    to Z.AI's servers, never to OpenAI. Authentication is via Bearer token
+    (the ZAI_API_KEY value).
+
+    The API contract is OpenAI-compatible:
+        POST {base_url}/chat/completions
+        Authorization: Bearer {api_key}
+        Content-Type: application/json
+        Body: {"model": ..., "messages": [...], "temperature": ..., "max_tokens": ...}
+        Response: {"choices": [{"message": {"content": "..."}}], ...}
+    """
+
+    def __init__(self, cfg: LLMConfig):
+        self.cfg = cfg
+        self.base_url = cfg.base_url.rstrip("/")
+        self.api_key = cfg.api_key
+        # requests.Session gives us connection pooling + retry on transient errors.
+        self._session = requests.Session()
+        self._session.headers.update({
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        })
+
+    def chat_completions_create(self, **kwargs: Any) -> dict:
+        """POST to /chat/completions and return the parsed JSON response.
+
+        Raises requests.RequestException on any HTTP/network error so the
+        caller's try/except can fall back to the deterministic path.
+        """
+        url = f"{self.base_url}/chat/completions"
+        # timeout matches the old openai SDK's 120s default.
+        resp = self._session.post(url, json=kwargs, timeout=120.0)
+        resp.raise_for_status()
+        return resp.json()
 
 
 def chat_json(
@@ -99,7 +124,10 @@ def chat_json(
     *,
     layer: str = "",
     temperature: float = 0.7,
-    max_tokens: int | None = 1024,
+    # FIX: Was 1024 — too small for glm-4.5-flash (a reasoning model that
+    # consumes chain-of-thought tokens before producing final answer).
+    # 2048 gives enough budget for reasoning + JSON output.
+    max_tokens: int | None = 2048,
     response_format: dict | None = None,
     system: str | None = None,
 ) -> str | None:
@@ -118,18 +146,18 @@ def chat_json(
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
-    kwargs: dict[str, Any] = {
+    payload: dict[str, Any] = {
         "model": cfg.model,
         "messages": messages,
         "temperature": temperature,
     }
     if max_tokens is not None:
-        kwargs["max_tokens"] = max_tokens
+        payload["max_tokens"] = max_tokens
     if response_format is not None:
-        kwargs["response_format"] = response_format
+        payload["response_format"] = response_format
 
     try:
-        resp = client.chat.completions.create(**kwargs)
+        resp = client.chat_completions_create(**payload)
     except Exception as exc:
         # Broad catch is intentional: the LLM hook is OPTIONAL and any
         # failure (network, auth, rate-limit, malformed response, timeout)
@@ -139,15 +167,20 @@ def chat_json(
         return None
 
     try:
-        content = resp.choices[0].message.content or ""
-    except (AttributeError, IndexError):
-        logger.warning("[%s] LLM returned no choices", layer or "LLM")
+        choices = resp.get("choices") or []
+        if not choices:
+            logger.warning("[%s] LLM returned no choices", layer or "LLM")
+            return None
+        message = choices[0].get("message") or {}
+        content = message.get("content") or ""
+    except (AttributeError, IndexError, KeyError, TypeError):
+        logger.warning("[%s] LLM returned malformed response: %s", layer or "LLM", resp)
         return None
 
     if not content.strip():
         # Common with reasoning models when max_tokens is too small — all
         # budget was consumed by reasoning_content and content is empty.
-        finish = getattr(resp.choices[0], "finish_reason", "?") if resp.choices else "?"
+        finish = choices[0].get("finish_reason", "?") if choices else "?"
         logger.warning(
             "[%s] LLM returned empty content (finish_reason=%s) — "
             "consider increasing max_tokens",
