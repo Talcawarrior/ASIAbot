@@ -157,6 +157,59 @@ Bot ayağa kalktığında:
 
 > **Port Koruması:** Bot başlatılırken port 8091 meşgulse, o portu kullanan süreç otomatik olarak öldürülür.
 
+### Bot'u Persistent (Sürekli) Çalıştırma
+
+`python main.py bot` komutu shell kapandığında ölür. Bot'u sürekli çalıştırmak için 3 seçenek:
+
+#### Seçenek 1: nohup (en basit, Linux/Mac)
+```bash
+nohup python main.py bot > bot.log 2>&1 &
+echo $!  # PID'yi kaydet
+# Durdurmak için: kill <PID>
+# Logları izlemek için: tail -f bot.log
+```
+
+#### Seçenek 2: tmux (interactive, önerilen)
+```bash
+tmux new -s asiabot
+python main.py bot
+# Ctrl+B, sonra D ile detach
+# Tekrar bağlan: tmux attach -t asiabot
+# Durdur: tmux kill-session -t asiabot
+```
+
+#### Seçenek 3: systemd (production, auto-restart)
+```bash
+# /etc/systemd/system/asiabot.service dosyası oluştur:
+sudo tee /etc/systemd/system/asiabot.service << 'EOF'
+[Unit]
+Description=ASIAbot - Polymarket Weather Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USERNAME
+WorkingDirectory=/path/to/ASIAbot
+EnvironmentFile=/path/to/ASIAbot/.env
+ExecStart=/path/to/python main.py bot
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/asiabot.log
+StandardError=append:/var/log/asiabot.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable asiabot
+sudo systemctl start asiabot
+
+# Durum: sudo systemctl status asiabot
+# Loglar: sudo journalctl -u asiabot -f
+# Durdur: sudo systemctl stop asiabot
+```
+
 ---
 
 ## API Referansı

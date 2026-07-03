@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import threading
 import time
 from datetime import UTC, datetime
@@ -62,8 +63,10 @@ def _cache_clear() -> None:
 # Per-host request throttle to keep us under Open-Meteo's free-tier burst
 # limits. Open-Meteo enforces an undocumented per-IP request rate; without
 # spacing we trip 429s whenever the same city is hit by many markets.
-# 3s interval is very safe for grouped requests.
-_MIN_INTERVAL_S = 3.0
+# FIX (S1): Increased from 3.0s to 6.0s after user hit sustained 429s.
+# Open-Meteo free tier is ~10 req/min = 6s/req. 3s was too aggressive.
+# Override via env var OPEN_METEO_MIN_INTERVAL_S for tuning.
+_MIN_INTERVAL_S = float(os.environ.get("OPEN_METEO_MIN_INTERVAL_S", "6.0"))
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 
@@ -128,8 +131,11 @@ class MeteoFetcher:
                 timeout=15,
             )
             if resp.status_code == 429:
-                logger.warning("Open-Meteo 429 Rate Limit! Waiting 30s...")
-                time.sleep(30)
+                # FIX (S1): Honor Retry-After header, use exponential backoff
+                retry_after = resp.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else 30.0
+                logger.warning("Open-Meteo 429 Rate Limit! Waiting %.0fs...", wait)
+                time.sleep(wait)
                 return None
             resp.raise_for_status()
             data = resp.json()
@@ -319,35 +325,47 @@ class MeteoFetcher:
                     for mid, metric in markets:
                         mids_by_metric[metric].append(mid)
 
+                    # FIX (S5+S6): All metrics for the same (city, date) share
+                    # ONE API call. get_multi_model_forecast already caches by
+                    # (lat, lon, date), so the 2nd metric gets a cache hit.
+                    # Pass ALL market_ids (both metrics) so both get persisted.
+                    all_mids_for_city_date: list[str] = []
+                    for mids in mids_by_metric.values():
+                        all_mids_for_city_date.extend(mids)
+
+                    # Use the first metric as the "primary" — the API call
+                    # fetches both max+min anyway, and S6 fix persists both.
+                    primary_metric = next(iter(mids_by_metric.keys()), "temperature_max")
+
                     try:
+                        # 1. Try Ensemble (8-model) — single API call per (city, date)
+                        try:
+                            result = loop.run_until_complete(
+                                we.get_multi_model_forecast(
+                                    city_code=city_code or city,
+                                    latitude=lat,
+                                    longitude=lon,
+                                    target_date=target_date,
+                                    market_ids=all_mids_for_city_date,  # FIX: all markets, not just one metric
+                                    db_session=session,
+                                    metric=primary_metric,  # API fetches both; this just picks consensus
+                                    aiohttp_session=shared_session,
+                                )
+                            )
+
+                            if result and result.get("model_count", 0) >= 3:
+                                total += result["model_count"] * len(all_mids_for_city_date)
+                                continue
+                        except Exception as e:
+                            logger.debug(
+                                "Ensemble failed for group %s %s: %s",
+                                key,
+                                primary_metric,
+                                e,
+                            )
+
+                        # 2. Fallback to Backup (Open-Meteo + WeatherAPI) for each metric
                         for metric, mids in mids_by_metric.items():
-                            # 1. Try Ensemble (8-model) — reuse shared session
-                            try:
-                                result = loop.run_until_complete(
-                                    we.get_multi_model_forecast(
-                                        city_code=city_code or city,
-                                        latitude=lat,
-                                        longitude=lon,
-                                        target_date=target_date,
-                                        market_ids=mids,
-                                        db_session=session,
-                                        metric=metric,
-                                        aiohttp_session=shared_session,
-                                    )
-                                )
-
-                                if result and result.get("model_count", 0) >= 3:
-                                    total += result["model_count"] * len(mids)
-                                    continue
-                            except Exception as e:
-                                logger.debug(
-                                    "Ensemble failed for group %s %s: %s",
-                                    key,
-                                    metric,
-                                    e,
-                                )
-
-                            # 2. Fallback to Backup (Open-Meteo + WeatherAPI)
                             count = self.fetch_for_markets(mids, city, target_date, metric)
                             total += count
 

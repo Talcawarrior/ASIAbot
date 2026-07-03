@@ -500,28 +500,80 @@ class WeatherEngine:
             }
 
             try:
-                # Reuse external session if provided (avoids TCP+TLS overhead per city)
-                if aiohttp_session is not None:
-                    async with aiohttp_session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                        if resp.status == 429:
-                            logger.warning("Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s...")
-                            await asyncio.sleep(30)
-                            return None
-                        if resp.status != 200:
-                            return None
-                        data = await resp.json()
-                        self._forecast_cache[cache_key] = data
-                else:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                            if resp.status == 429:
-                                logger.warning("Ensemble API: Open-Meteo 429 Rate Limit! Waiting 30s...")
-                                await asyncio.sleep(30)
-                                return None
-                            if resp.status != 200:
-                                return None
-                            data = await resp.json()
-                            self._forecast_cache[cache_key] = data
+                # FIX (S1): Exponential backoff for 429 rate limits.
+                # Previously: 429 → sleep 30s → return None (give up). This
+                # caused entire fetch_all_markets() to fail after the first 429.
+                # Now: retry up to 3 times with 30s → 60s → 120s backoff,
+                # honoring Retry-After header if present.
+                max_retries = 3
+                backoff_s = 30.0
+                data = None
+                for attempt in range(max_retries + 1):
+                    try:
+                        if aiohttp_session is not None:
+                            async with aiohttp_session.get(
+                                url, params=params,
+                                timeout=aiohttp.ClientTimeout(total=30),
+                            ) as resp:
+                                if resp.status == 429:
+                                    if attempt < max_retries:
+                                        # Honor Retry-After header if present, else use exponential backoff
+                                        retry_after = resp.headers.get("Retry-After")
+                                        wait = float(retry_after) if retry_after else backoff_s
+                                        logger.warning(
+                                            "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
+                                            attempt + 1, max_retries + 1, wait,
+                                        )
+                                        await asyncio.sleep(wait)
+                                        backoff_s *= 2  # exponential backoff
+                                        continue
+                                    logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
+                                    return None
+                                if resp.status != 200:
+                                    logger.warning("Ensemble API status %d for %s", resp.status, cache_key)
+                                    return None
+                                data = await resp.json()
+                        else:
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(
+                                    url, params=params,
+                                    timeout=aiohttp.ClientTimeout(total=30),
+                                ) as resp:
+                                    if resp.status == 429:
+                                        if attempt < max_retries:
+                                            retry_after = resp.headers.get("Retry-After")
+                                            wait = float(retry_after) if retry_after else backoff_s
+                                            logger.warning(
+                                                "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
+                                                attempt + 1, max_retries + 1, wait,
+                                            )
+                                            await asyncio.sleep(wait)
+                                            backoff_s *= 2
+                                            continue
+                                        logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
+                                        return None
+                                    if resp.status != 200:
+                                        logger.warning("Ensemble API status %d for %s", resp.status, cache_key)
+                                        return None
+                                    data = await resp.json()
+                        # Success — break out of retry loop
+                        if data is not None:
+                            break
+                    except asyncio.TimeoutError:
+                        if attempt < max_retries:
+                            logger.warning(
+                                "Ensemble API timeout (attempt %d/%d) — retrying in %.0fs",
+                                attempt + 1, max_retries + 1, backoff_s,
+                            )
+                            await asyncio.sleep(backoff_s)
+                            backoff_s *= 2
+                            continue
+                        logger.error("Ensemble API timeout after %d retries", max_retries)
+                        return None
+
+                if data is None:
+                    return None
+                self._forecast_cache[cache_key] = data
             except Exception as e:
                 logger.error("get_multi_model_forecast fetch error: %s", e)
                 return None
@@ -586,27 +638,38 @@ class WeatherEngine:
                 )
                 return None
 
+            # FIX (S6): Fetch BOTH max and min metrics in one API call.
+            # Previously, this code only extracted the *requested* metric, so a
+            # city with both temperature_max and temperature_min markets would
+            # trigger two API calls (double the rate-limit pressure). Now we
+            # extract both, save both to DB, but only return the requested one
+            # in model_temps (so the consensus calculation stays correct).
+            model_temps: dict[str, float] = {}  # requested metric only
+            # {"temperature_max": {model: temp}, "temperature_min": {...}}
+            side_metrics: dict[str, dict[str, float]] = {}
+
             for internal_name in self.model_weights.keys():
                 api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
-                # Use the metric requested to pick the right daily data key
-                # although we fetch both max and min.
-                api_metric = "temperature_2m_max"
-                if "min" in metric.lower():
-                    api_metric = "temperature_2m_min"
-
-                key = f"{api_metric}_{api_name}"
-                if key in daily_data:
+                for api_metric, metric_label in [
+                    ("temperature_2m_max", "temperature_max"),
+                    ("temperature_2m_min", "temperature_min"),
+                ]:
+                    key = f"{api_metric}_{api_name}"
+                    if key not in daily_data:
+                        continue
                     temps = daily_data[key]
-                    if target_idx < len(temps) and temps[target_idx] is not None:
-                        raw_temp = temps[target_idx]
-                        # Apply the systematic per-model bias correction
-                        # (MBE) computed by CalibrationEngine from historical
-                        # settled markets, e.g. "GFS overpredicts Dallas max
-                        # temp by 1.5C". Falls back to raw_temp unchanged if
-                        # no calibration data exists yet for this city/model.
-                        calibrated_temp = self._calibration.get_calibrated_temperature(
-                            city_code, metric, internal_name, raw_temp
-                        )
+                    if target_idx >= len(temps) or temps[target_idx] is None:
+                        continue
+                    raw_temp = temps[target_idx]
+                    # Apply the systematic per-model bias correction (MBE)
+                    # computed by CalibrationEngine from historical settled markets.
+                    calibrated_temp = self._calibration.get_calibrated_temperature(
+                        city_code, metric_label, internal_name, raw_temp
+                    )
+                    side_metrics.setdefault(metric_label, {})[internal_name] = calibrated_temp
+                    # Only populate model_temps with the REQUESTED metric so the
+                    # consensus/return value is for the right metric.
+                    if metric_label == metric:
                         model_temps[internal_name] = calibrated_temp
 
             if not model_temps:
@@ -626,28 +689,37 @@ class WeatherEngine:
             if db_session is not None and market_ids:
                 from database.models import WeatherForecast
 
+                # FIX (S6): Persist BOTH metrics to DB so the next market for
+                # the same (city, date) but different metric gets a cache hit
+                # instead of triggering another API call.
                 for mid in market_ids:
-                    for mn, tmp in model_temps.items():
-                        db_session.add(
-                            WeatherForecast(
-                                market_id=mid,
-                                city=city_code,
-                                lat=latitude,
-                                lon=longitude,
-                                target_date=target_date,
-                                metric=metric,
-                                source=mn,
-                                predicted_value=float(tmp),
-                                model_weight=self.model_weights.get(mn, 0.0),
-                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
+                    for metric_label, per_model_temps in side_metrics.items():
+                        # Skip if this metric isn't requested by any of the
+                        # passed market_ids — but we don't know per-market
+                        # metric here, so persist both. The DB row's `metric`
+                        # column ensures analyzer queries the right one.
+                        for mn, tmp in per_model_temps.items():
+                            db_session.add(
+                                WeatherForecast(
+                                    market_id=mid,
+                                    city=city_code,
+                                    lat=latitude,
+                                    lon=longitude,
+                                    target_date=target_date,
+                                    metric=metric_label,  # FIX: was `metric` (only requested), now both
+                                    source=mn,
+                                    predicted_value=float(tmp),
+                                    model_weight=self.model_weights.get(mn, 0.0),
+                                    fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                    raw_data=str({"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}),
+                                )
                             )
-                        )
                 try:
                     db_session.commit()
                     logger.info(
-                        "Ensemble persisted for %d markets, coords=(%s, %s)",
+                        "Ensemble persisted for %d markets × %d metrics, coords=(%s, %s)",
                         len(market_ids),
+                        len(side_metrics),
                         latitude,
                         longitude,
                     )

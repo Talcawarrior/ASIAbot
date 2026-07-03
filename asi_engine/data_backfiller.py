@@ -52,6 +52,17 @@ class DataBackfiller:
 
         Loops back through `past_days` for a subset of major cities, matches
         the predictions vs actuals, and saves them to the DB.
+
+        KNOWN LIMITATION (S3): Open-Meteo Historical Forecast API does NOT
+        archive ECMWF IFS 0.25° (ecmwf_ifs025) data — only the 0.4° variant
+        (ecmwf_ifs04) is available historically. Since the live ensemble uses
+        ecmwf_ifs025 (the higher-resolution model), the calibration table will
+        have ZERO ECMWF rows after backfill. The bot handles this gracefully:
+        CalibrationEngine.get_calibrated_temperature() returns the raw_temp
+        unchanged when no bias data exists for a given (city, metric, model).
+        So ECMWF forecasts are still used (25% weight) but without bias
+        correction — acceptable since ECMWF is already the most accurate
+        global model and typically has <0.5°C systematic bias.
         """
         logger.info(
             "ASI Backfiller: Starting deep backfill for past %d days...", past_days

@@ -433,6 +433,33 @@ class RiskManager:
             if exit_bool:
                 return True, reason
 
+        # 5. FIX (S4): Edge erosion — if the bet's edge has dropped below
+        # min_edge / 2, the original thesis is no longer valid. Close it
+        # before it bleeds further. This handles the case where the market
+        # price moved against us but stop-loss (which uses PnL%) hasn't
+        # triggered yet because the price move is small in absolute terms.
+        try:
+            entry_price = float(getattr(bet, "entry_price", 0) or 0)
+            if entry_price > 0 and current_price > 0:
+                side = str(getattr(bet, "side", "YES")).upper()
+                # Recompute current edge using entry fair value (model prob)
+                # vs current market price. If bet.raw_edge was stored, use it
+                # as the original fair-value estimate.
+                raw_edge_at_entry = float(getattr(bet, "raw_edge", 0) or 0)
+                if raw_edge_at_entry != 0:
+                    # Current edge = original edge - (price drift against us)
+                    if side == "YES":
+                        price_drift = current_price - entry_price
+                    else:  # NO side: price goes UP means NO got cheaper
+                        price_drift = entry_price - current_price
+                    current_edge = raw_edge_at_entry - price_drift
+                    min_edge_threshold = float(getattr(self.config, "MIN_EDGE", 0.05))
+                    # Close if edge dropped below half of min_edge (heavily degraded)
+                    if current_edge < (min_edge_threshold / 2):
+                        return True, f"Edge erosion: {current_edge:.1%} < {min_edge_threshold/2:.1%} (threshold)"
+        except Exception:
+            pass  # Don't let edge erosion check crash the whole exit logic
+
         return False, "Hold"
 
     def check_rebalance(self, new_signal, active_bets: list) -> object:
