@@ -296,14 +296,19 @@ class MeteoFetcher:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            # Create a single aiohttp session for ALL cities — avoids
-            # TCP+TLS handshake overhead per city (65+ cities × ~200ms = ~13s saved).
+            # FIX: aiohttp.ClientSession must be created INSIDE an async function
+            # (it requires a running event loop). Wrap creation in a coroutine
+            # and run it via the loop. This fixes the "no running event loop"
+            # RuntimeError when fetch_all_markets() is called from sync context.
             import aiohttp as _aiohttp
 
-            shared_session = _aiohttp.ClientSession(
-                timeout=_aiohttp.ClientTimeout(total=30),
-                headers={"User-Agent": "ASIAbot/1.0"},
-            )
+            async def _make_session() -> _aiohttp.ClientSession:
+                return _aiohttp.ClientSession(
+                    timeout=_aiohttp.ClientTimeout(total=30),
+                    headers={"User-Agent": "ASIAbot/1.0"},
+                )
+
+            shared_session = loop.run_until_complete(_make_session())
 
             try:
                 for key, markets in groups.items():
