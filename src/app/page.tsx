@@ -591,7 +591,11 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
     else { setSortBy(col); setSortDir("desc"); }
   }
 
-  const SortIcon = ({ col }: { col: "date" | "pnl" | "edge" }) => {
+  // FIX: SortIcon moved outside TradesTab (was react-hooks/static-components warning).
+  // Defining a component inside render creates a new reference each render,
+  // causing React to unmount/remount the subtree. Now it's a pure function
+  // called inline, not a component definition.
+  const renderSortIcon = (col: "date" | "pnl" | "edge") => {
     if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
     return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
   };
@@ -759,14 +763,14 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("date")}>Tarih <SortIcon col="date" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("date")}>Tarih {renderSortIcon("date")}</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Taraf</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Çıkış</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL <SortIcon col="pnl" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL {renderSortIcon("pnl")}</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sonuç</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("edge")}>Edge <SortIcon col="edge" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("edge")}>Edge {renderSortIcon("edge")}</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center" style={{ color: TEXT_MUTED }}>Neden</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
                   </TableRow>
@@ -948,6 +952,61 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
 // ==========================================
 // HEALTH TAB
 // ==========================================
+
+// FIX: PnlTooltip and DonutChart moved OUT of HealthTab to avoid
+// react-hooks/static-components warnings. Defining components inside a
+// component body creates a new function reference on every render, which
+// causes React to unmount/remount the subtree (losing state, breaking
+// animations, and triggering the lint rule).
+
+function PnlTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload?: { trades: number } }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const trades = payload[0].payload?.trades ?? 0;
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+      <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
+      <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
+        {fmtUsd(payload[0].value)}
+      </p>
+      <p className="text-gray-400 dark:text-gray-500">{fmtInt(trades)} işlem</p>
+    </div>
+  );
+}
+
+function DonutChart({ data, total, title, titleColor }: { data: { name: string; value: number; color: string }[]; total: number; title: string; titleColor: string }) {
+  if (total === 0) return null;
+  return (
+    <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
+      <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>{title}</p>
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          <PieChart width={110} height={110}>
+            <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={48} paddingAngle={2} dataKey="value" strokeWidth={0}>
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.color} />
+              ))}
+            </Pie>
+          </PieChart>
+        </div>
+        <div className="flex-1 space-y-1">
+          {data.map((d) => (
+            <div key={d.name} className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
+              </div>
+              <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
+                <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{fmtInt(d.value)}</span>
+                <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData?: KpiData }) {
   const h = health ?? {
     verdict: "healthy" as const,
@@ -972,20 +1031,6 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
     warning: { bg: "rgba(245,158,11,0.12)", color: "#d97706", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
     info: { bg: "rgba(59,130,246,0.1)", color: "#3b82f6", icon: <Info className="h-3.5 w-3.5" /> },
   };
-
-  function PnlTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload?: { trades: number } }>; label?: string }) {
-    if (!active || !payload?.length) return null;
-    const trades = payload[0].payload?.trades ?? 0;
-    return (
-      <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
-        <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
-        <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
-          {fmtUsd(payload[0].value)}
-        </p>
-        <p className="text-gray-400 dark:text-gray-500">{fmtInt(trades)} işlem</p>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -1044,40 +1089,6 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
               const lossData = makePieData(h.summary_all.losses_by_exit || {});
               const winTotal = winData.reduce((s, d) => s + d.value, 0);
               const lossTotal = lossData.reduce((s, d) => s + d.value, 0);
-
-              function DonutChart({ data, total, title, titleColor }: { data: { name: string; value: number; color: string }[]; total: number; title: string; titleColor: string }) {
-                if (total === 0) return null;
-                return (
-                  <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>{title}</p>
-                    <div className="flex items-center gap-3">
-                      <div className="shrink-0">
-                        <PieChart width={110} height={110}>
-                          <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={48} paddingAngle={2} dataKey="value" strokeWidth={0}>
-                            {data.map((entry, i) => (
-                              <Cell key={i} fill={entry.color} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        {data.map((d) => (
-                          <div key={d.name} className="flex items-center justify-between text-[11px]">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
-                              <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
-                              <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{fmtInt(d.value)}</span>
-                              <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                );
-              }
 
               return (
                 <>

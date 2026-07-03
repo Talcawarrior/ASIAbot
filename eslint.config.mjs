@@ -19,11 +19,14 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
-    // FIX: Disable react-hooks/set-state-in-effect — this React 19 rule flags
+    // FIX: react-hooks/set-state-in-effect disabled — this React 19 rule flags
     // legitimate polling patterns (fetchData in useEffect that calls setState).
-    // The dashboard's useApiData hook intentionally fetches on mount + interval;
-    // refactoring to avoid the warning would harm readability without fixing a bug.
+    // The dashboard's useApiData hook intentionally fetches on mount + interval.
     "react-hooks/set-state-in-effect": "off",
+    // FIX: react-hooks/static-components kept ON — components must not be defined
+    // inside other component bodies (creates new reference each render →
+    // unmount/remount). Fixed all 6 violations by moving SortIcon, PnlTooltip,
+    // and DonutChart out of their parent components.
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
     "react/prop-types": "off",

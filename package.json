@@ -46,12 +46,15 @@
     "react-day-picker": "^9.8.0",
     "react-dom": "^19.0.0",
     "react-hook-form": "^7.60.0",
+    "recharts": "^2.15.4",
+    "sonner": "^2.0.6",
     "tailwind-merge": "^3.3.1",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^1.1.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/node": "26.1.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
