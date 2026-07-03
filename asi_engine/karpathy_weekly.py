@@ -729,8 +729,14 @@ def _load_cached_forecasts(
     forecasts_df["join_date"] = pd.to_datetime(forecasts_df["target_date"], utc=True, errors="coerce").dt.date.astype(
         str
     )
-    forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
-    forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
+    # FIX: Use explicit column check instead of .get() with default — .get() returns
+    # Series | scalar, which confuses pyright about downstream DataFrame typing.
+    if "variable" in forecasts_df.columns:
+        forecasts_df["variable_key"] = forecasts_df["variable"].fillna("temperature_2m_max")
+    else:
+        forecasts_df["variable_key"] = "temperature_2m_max"
+    mask = forecasts_df["variable_key"].astype(str).str.contains("max", na=False)
+    forecasts_df = forecasts_df.loc[mask].copy()
     if not forecasts_df.empty:
         cached_pairs = set(
             zip(
@@ -820,8 +826,14 @@ def _backfill_missing_forecasts(
             fetched_df["join_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce").dt.date.astype(str)
             fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
             fetched_df["fetched_at"] = pd.Timestamp.utcnow()
-            fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
-            fetched_df = fetched_df[fetched_df["variable_key"].astype(str).str.contains("max", na=False)]
+            # FIX: Use explicit column check instead of .get() with default — same
+            # pattern as _load_cached_forecasts; avoids pyright Series|scalar ambiguity.
+            if "variable" in fetched_df.columns:
+                fetched_df["variable_key"] = fetched_df["variable"].fillna("temperature_2m_max")
+            else:
+                fetched_df["variable_key"] = "temperature_2m_max"
+            mask = fetched_df["variable_key"].astype(str).str.contains("max", na=False)
+            fetched_df = fetched_df.loc[mask].copy()
             cols = [
                 "city",
                 "latitude",
@@ -833,7 +845,10 @@ def _backfill_missing_forecasts(
                 "fetched_at",
                 "join_date",
             ]
-            fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
+            # FIX: Explicit DataFrame construction — list-indexing on a DataFrame
+            # always returns a DataFrame, but pyright can't infer that. Use .loc[:, :]
+            available_cols = [c for c in cols if c in fetched_df.columns]
+            fetched_df = fetched_df.loc[:, available_cols].copy()
             if forecasts_df.empty:
                 forecasts_df = fetched_df
             else:

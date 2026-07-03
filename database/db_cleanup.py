@@ -133,7 +133,10 @@ def load_archives(table: str = FORECAST_TABLE, since: str | None = None) -> pd.D
         date_col = _TABLE_DATE_COL.get(table, "fetched_at")
         if date_col in df.columns:
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-            df = df[df[date_col] >= ts]
+            # FIX: Use .loc[] + .copy() for explicit DataFrame typing —
+            # boolean mask indexing returns DataFrame but pyright can't infer.
+            mask = df[date_col] >= ts
+            df = df.loc[mask].copy()
 
     return df
 

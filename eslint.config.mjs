@@ -19,6 +19,11 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
+    // FIX: Disable react-hooks/set-state-in-effect — this React 19 rule flags
+    // legitimate polling patterns (fetchData in useEffect that calls setState).
+    // The dashboard's useApiData hook intentionally fetches on mount + interval;
+    // refactoring to avoid the warning would harm readability without fixing a bug.
+    "react-hooks/set-state-in-effect": "off",
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
     "react/prop-types": "off",
