@@ -1,0 +1,888 @@
+     1→     1→// ==========================================
+     2→     2→// ASIAbot Dashboard — Real API Client
+     3→     3→// ==========================================
+     4→     4→"use client";
+     5→     5→
+     6→     6→import { useState, useEffect, useCallback, useRef } from "react";
+     7→     7→
+     8→     8→// ---- API Response Types (matching Python main.py) ----
+     9→     9→
+    10→    10→export interface StatusResponse {
+    11→    11→  is_running: boolean;
+    12→    12→  locked: boolean;
+    13→    13→  portfolio: {
+    14→    14→    initial: number;
+    15→    15→    current: number;
+    16→    16→    daily_pnl: number;
+    17→    17→    daily_roi: number;
+    18→    18→    unrealized_pnl: number;
+    19→    19→    realized_pnl: number;
+    20→    20→    total_pnl: number;
+    21→    21→    total_roi: number;
+    22→    22→    exposure: number;
+    23→    23→    max_exposure: number;
+    24→    24→  };
+    25→    25→  stats: {
+    26→    26→    total_signals: number;
+    27→    27→    total_bets: number;
+    28→    28→    win_count: number;
+    29→    29→    loss_count: number;
+    30→    30→    total_closed: number;
+    31→    31→    last_scan: string | null;
+    32→    32→  };
+    33→    33→  limits: {
+    34→    34→    max_bet_pct: number;
+    35→    35→    max_exposure_pct: number;
+    36→    36→    daily_stop_loss_pct: number;
+    37→    37→    city_cap: number;
+    38→    38→  };
+    39→    39→  metrics: {
+    40→    40→    sharpe_ratio: number;
+    41→    41→    max_drawdown_pct: number;
+    42→    42→  };
+    43→    43→  open_positions?: Array<{
+    44→    44→    id: number;
+    45→    45→    city: string;
+    46→    46→    side: string;
+    47→    47→    shares: number;
+    48→    48→    current_price: number;
+    49→    49→    unrealized_pnl: number;
+    50→    50→    amount: number;
+    51→    51→  }>;
+    52→    52→}
+    53→    53→
+    54→    54→export interface Signal {
+    55→    55→  id: number;
+    56→    56→  market_id: string;
+    57→    57→  city: string;
+    58→    58→  outcome: "YES" | "NO";
+    59→    59→  entry_price: number;
+    60→    60→  current_price: number;
+    61→    61→  stake_amount: number;
+    62→    62→  unrealized_pnl: number;
+    63→    63→  fair_value: number | null;
+    64→    64→  edge: number | null;
+    65→    65→  entry_edge: number | null;
+    66→    66→  live_edge: number | null;
+    67→    67→  move_pct: number | null;
+    68→    68→  ladder_orders: unknown[];
+    69→    69→  placed_at: string | null;
+    70→    70→  resolution_date: string | null;
+    71→    71→  status: string;
+    72→    72→}
+    73→    73→
+    74→    74→export interface HistoryEntry {
+    75→    75→  id: number;
+    76→    76→  city: string;
+    77→    77→  outcome: string;
+    78→    78→  entry_price: number;
+    79→    79→  exit_price: number | null;  // actual fill price from DB
+    80→    80→  stake_amount: number;
+    81→    81→  realized_pnl: number;
+    82→    82→  roi: number;
+    83→    83→  edge: number | null;
+    84→    84→  result: "WIN" | "LOSS";
+    85→    85→  placed_at: string | null;
+    86→    86→  settled_at: string | null;
+    87→    87→  closed_at: string | null;  // Early exit time
+    88→    88→  exit_type: string;  // ST, TP, SL, TS, TD, OT
+    89→    89→}
+    90→    90→
+    91→    91→export interface HistoryStats {
+    92→    92→  total_won: number;
+    93→    93→  total_lost: number;
+    94→    94→  win_rate: number;
+    95→    95→  overall_roi: number;
+    96→    96→  total_stake: number;
+    97→    97→  total_pnl: number;
+    98→    98→  total_win_pnl: number;
+    99→    99→  total_loss_pnl: number;
+   100→   100→  profit_factor: number;
+   101→   101→  avg_edge: number;
+   102→   102→}
+   103→   103→
+   104→   104→export interface HealthResponse {
+   105→   105→  verdict: "healthy" | "degraded" | "critical" | "error";
+   106→   106→  verdict_text: string;
+   107→   107→  verdict_color: string;
+   108→   108→  activity_24h: {
+   109→   109→    bets_opened: number;
+   110→   110→    pass_reasons: Array<{
+   111→   111→      market_id: string;
+   112→   112→      edge_pct: number;
+   113→   113→      reason: string;
+   114→   114→      time: string;
+   115→   115→    }>;
+   116→   116→    total_analyses: number;
+   117→   117→  };
+   118→   118→  edge_distribution: {
+   119→   119→    values: Array<{
+   120→   120→      bet_id: number;
+   121→   121→      raw_edge_pct: number | null;
+   122→   122→      net_edge_pct: number | null;
+   123→   123→      slippage_pct: number | null;
+   124→   124→      market_id: string;
+   125→   125→      city: string;
+   126→   126→      stake: number;
+   127→   127→      status: string;
+   128→   128→      pnl: number;
+   129→   129→    }>;
+   130→   130→    avg_net_edge_pct: number;
+   131→   131→    min_net_edge_pct: number;
+   132→   132→    max_net_edge_pct: number;
+   133→   133→    count: number;
+   134→   134→  };
+   135→   135→  open_edge_distribution: {
+   136→   136→    values: Array<{
+   137→   137→      bet_id: number;
+   138→   138→      raw_edge_pct: number | null;
+   139→   139→      net_edge_pct: number | null;
+   140→   140→      market_id: string;
+   141→   141→      city: string;
+   142→   142→      amount: number;
+   143→   143→      status: string;
+   144→   144→    }>;
+   145→   145→    avg_net_edge_pct: number;
+   146→   146→    min_net_edge_pct: number;
+   147→   147→    max_net_edge_pct: number;
+   148→   148→    count: number;
+   149→   149→  };
+   150→   150→  summary_all: {
+   151→   151→    total_settled: number;
+   152→   152→    wins: number;
+   153→   153→    losses: number;
+   154→   154→    win_rate_pct: number;
+   155→   155→    total_pnl: number;
+   156→   156→    total_stake: number;
+   157→   157→    roi_pct: number;
+   158→   158→    avg_net_edge_pct: number;
+   159→   159→    wins_by_exit: Record<string, number>;
+   160→   160→    losses_by_exit: Record<string, number>;
+   161→   161→  };
+   162→   162→  red_flags: Array<{
+   163→   163→    severity: "critical" | "warning" | "info";
+   164→   164→    message: string;
+   165→   165→    action: string;
+   166→   166→  }>;
+   167→   167→  daily_pnl_timeline: Array<{
+   168→   168→    date: string;
+   169→   169→    pnl: number;
+   170→   170→    trades: number;
+   171→   171→  }>;
+   172→   172→}
+   173→   173→
+   174→   174→// ---- UI Component Types (matching mock-data.ts) ----
+   175→   175→
+   176→   176→export interface KpiData {
+   177→   177→  portfolioValue: number;
+   178→   178→  dailyPnl: number;
+   179→   179→  totalPnl: number;
+   180→   180→  openPositions: number;
+   181→   181→  winRate: number;
+   182→   182→  winRateLabel: string;
+   183→   183→  totalTrades: number;
+   184→   184→  wins: number;
+   185→   185→  losses: number;
+   186→   186→  avgEdge: number;
+   187→   187→  sharpeRatio: number;
+   188→   188→  maxDrawdown: number;
+   189→   189→  // Open positions summary
+   190→   190→  openPositionsValue: number;  // Açık pozisyonların toplam stake tutarı
+   191→   191→  maxOpenableUsd: number;      // Maksimum açılabilecek USD (gün itibarıyla)
+   192→   192→  // Second row metrics
+   193→   193→  totalPnlValue: number;       // Total PnL ($)
+   194→   194→  realizedPnl: number;         // Kapalı bahislerden realized PnL
+   195→   195→  unrealizedPnl: number;       // Açık pozisyonlardan unrealized PnL
+   196→   196→  totalStake: number;          // Toplam yatırılan tutar (tüm bahisler)
+   197→   197→  totalRoi: number;            // Total ROI (%)
+   198→   198→  closedBets: number;          // Kapalı Bahis
+   199→   199→  closedWins: number;
+   200→   200→  closedLosses: number;
+   201→   201→  expectancy: number;          // Ortalama kazanç/bahis ($)
+   202→   202→  avgBetSize: number;          // Ortalama Bahis Tutarı ($)
+   203→   203→  profitFactor: number;        // Profit Factor
+   204→   204→}
+   205→   205→
+   206→   206→export interface PortfolioPoint {
+   207→   207→  date: string;
+   208→   208→  value: number;
+   209→   209→  drawdown?: number;
+   210→   210→}
+   211→   211→
+   212→   212→export interface OpenPosition {
+   213→   213→  id: string;
+   214→   214→  city: string;
+   215→   215→  side: "YES" | "NO";
+   216→   216→  entryPrice: number;
+   217→   217→  currentPrice: number;
+   218→   218→  pnl: number;
+   219→   219→  edge: number;
+   220→   220→  timeLeft: string;
+   221→   221→  openedAt: string;   // formatted date string
+   222→   222→  conditionId: string;
+   223→   223→  amount: number;
+   224→   224→  metric: string | null;  // temperature_max → H, temperature_min → L
+   225→   225→  threshold: number | null;   // °C
+   226→   226→}
+   227→   227→
+   228→   228→export interface ActivityItem {
+   229→   229→  id: string;
+   230→   230→  time: string;
+   231→   231→  color: "blue" | "purple" | "gray" | "orange" | "teal" | "red";
+   232→   232→  message: string;
+   233→   233→}
+   234→   234→
+   235→   235→export interface EdgeBucket {
+   236→   236→  range: string;
+   237→   237→  count: number;
+   238→   238→}
+   239→   239→
+   240→   240→export interface TradeHistoryEntry {
+   241→   241→  id: string;
+   242→   242→  timestamp: string;
+   243→   243→  city: string;
+   244→   244→  side: "YES" | "NO";
+   245→   245→  entryPrice: number;
+   246→   246→  exitPrice: number;
+   247→   247→  pnl: number;
+   248→   248→  result: "WIN" | "LOSS";
+   249→   249→  edge: number;
+   250→   250→  duration: string;
+   251→   251→  closedAt: string;  // formatted closing date/time
+   252→   252→  closedAtISO: string | null;  // raw ISO date for filtering
+   253→   253→  strategy: string;
+   254→   254→  conditionId: string;
+   255→   255→  exitType: string;  // ST, TP, SL, TS, TD
+   256→   256→}
+   257→   257→
+   258→   258→export interface ModelScore {
+   259→   259→  name: string;
+   260→   260→  brierScore: number | null;
+   261→   261→  accuracy: number | null;
+   262→   262→  weight: number;
+   263→   263→  trend: "up" | "down" | "stable";
+   264→   264→  sampleCount: number;
+   265→   265→}
+   266→   266→
+   267→   267→export type HealthVerdict = "healthy" | "degraded" | "critical" | "error";
+   268→   268→export type FlagSeverity = "critical" | "warning" | "info";
+   269→   269→export type SlippageEntry = {
+   270→   270→  id: string;
+   271→   271→  city: string;
+   272→   272→  side: string;
+   273→   273→  expected_price: number;
+   274→   274→  entry_price: number;
+   275→   275→  slippage_pct: number;
+   276→   276→  result: string;
+   277→   277→  analyzed_at: string | null;
+   278→   278→};
+   279→   279→
+   280→   280→// ---- Fetch helpers ----
+   281→   281→
+   282→   282→const REFRESH_INTERVAL = 10000; // 10 seconds for fast endpoints
+   283→   283→const HEALTH_REFRESH_INTERVAL = 60000; // 60 seconds for slow health-check
+   284→   284→
+   285→   285→async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+   286→   286→  const res = await fetch(url, { signal });
+   287→   287→  if (!res.ok) throw new Error(`API error ${res.status}: ${res.statusText}`);
+   288→   288→  return res.json();
+   289→   289→}
+   290→   290→
+   291→   291→// ---- Data mapping functions ----
+   292→   292→
+   293→   293→function mapKpiData(
+   294→   294→  status: StatusResponse | null,
+   295→   295→  health: HealthResponse | null,
+   296→   296→  historyStats: HistoryStats | null,
+   297→   297→): KpiData {
+   298→   298→  if (!status) {
+   299→   299→    return {
+   300→   300→      portfolioValue: 10000,
+   301→   301→      dailyPnl: 0,
+   302→   302→      totalPnl: 0,
+   303→   303→      openPositions: 0,
+   304→   304→      winRate: 0,
+   305→   305→      winRateLabel: "Veri yok",
+   306→   306→      totalTrades: 0,
+   307→   307→      wins: 0,
+   308→   308→      losses: 0,
+   309→   309→      avgEdge: 0,
+   310→   310→      sharpeRatio: 0,
+   311→   311→      maxDrawdown: 0,
+   312→   312→      openPositionsValue: 0,
+   313→   313→      maxOpenableUsd: 0,
+   314→   314→        totalPnlValue: 0,
+   315→   315→        realizedPnl: 0,
+   316→   316→        unrealizedPnl: 0,
+   317→   317→        totalStake: 0,
+   318→   318→        totalRoi: 0,
+   319→   319→      closedBets: 0,
+   320→   320→      closedWins: 0,
+   321→   321→      closedLosses: 0,
+   322→   322→      expectancy: 0,
+   323→   323→      avgBetSize: 0,
+   324→   324→      profitFactor: 0,
+   325→   325→    };
+   326→   326→  }
+   327→   327→  const s = status.stats;
+   328→   328→  const p = status.portfolio;
+   329→   329→  
+   330→   330→  // Use historyStats.total_pnl (realized only) — consistent with trade history
+   331→   331→  const hs = historyStats;
+   332→   332→  const realizedPnl = hs?.total_pnl ?? 0;
+   333→   333→  const unrealizedPnl = status.open_positions?.reduce((sum: number, pos: Record<string, unknown>) => sum + ((pos.unrealized_pnl as number) || 0), 0) ?? 0;
+   334→   334→  const totalPnlValue = realizedPnl + unrealizedPnl;
+   335→   335→  const totalStake = (hs?.total_stake ?? 0) + (status.open_positions?.reduce((sum: number, pos: Record<string, unknown>) => sum + ((pos.amount as number) || 0), 0) ?? 0);
+   336→   336→  const totalRoi = hs?.overall_roi ?? 0;
+   337→   337→  const closedWins = hs?.total_won ?? 0;
+   338→   338→  const closedLosses = hs?.total_lost ?? 0;
+   339→   339→  const closedBets = closedWins + closedLosses;
+   340→   340→  const winRate = closedBets > 0 ? (closedWins / closedBets) * 100 : 0;
+   341→   341→  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
+   342→   342→  const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
+   343→   343→  const profitFactor = hs?.profit_factor ?? 0;
+   344→   344→
+   345→   345→  let winRateLabel = "Veri yok";
+   346→   346→  if (closedBets > 0) {
+   347→   347→    if (winRate >= 70) winRateLabel = "Mükemmel";
+   348→   348→    else if (winRate >= 60) winRateLabel = "İyi";
+   349→   349→    else if (winRate >= 50) winRateLabel = "Orta";
+   350→   350→    else winRateLabel = "Zayıf";
+   351→   351→  }
+   352→   352→
+   353→   353→  const avgEdge = health?.edge_distribution?.avg_net_edge_pct ?? 0;
+   354→   354→
+   355→   355→  // Calculate open positions total value (sum of stake amounts — cash locked)
+   356→   356→  const openPositionsValue = status.open_positions?.reduce(
+   357→   357→    (sum, pos) => sum + (pos.amount || 0), 0
+   358→   358→  ) ?? 0;
+   359→   359→
+   360→   360→  // Use the conservative max_exposure from the backend API
+   361→   361→  // (initial + realized_before_today) × TOTAL_EXPOSURE_PCT
+   362→   362→  // NOT current portfolio — that would inflate the cap with unrealized gains
+   363→   363→  const maxExposure = status.portfolio.max_exposure;
+   364→   364→
+   365→   365→  return {
+   366→   366→    portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
+   367→   367→    dailyPnl: p.daily_pnl,
+   368→   368→    totalPnl: hs?.total_pnl ?? 0,
+   369→   369→    openPositions: s.total_bets,
+   370→   370→    winRate: Math.round(winRate * 10) / 10,
+   371→   371→    winRateLabel,
+   372→   372→    totalTrades: closedBets,
+   373→   373→    wins: closedWins,
+   374→   374→    losses: closedLosses,
+   375→   375→    avgEdge: Math.round(avgEdge * 10) / 10,
+   376→   376→    sharpeRatio: status.metrics?.sharpe_ratio ?? 0,
+   377→   377→    maxDrawdown: status.metrics?.max_drawdown_pct ?? 0,
+   378→   378→    // Open positions summary
+   379→   379→    openPositionsValue: Math.round(openPositionsValue * 100) / 100,
+   380→   380→    maxOpenableUsd: Math.round(maxExposure * 100) / 100,
+   381→   381→    // Second row
+   382→   382→    totalPnlValue,
+   383→   383→    realizedPnl,
+   384→   384→    unrealizedPnl,
+   385→   385→    totalStake,
+   386→   386→    totalRoi,
+   387→   387→    closedBets,
+   388→   388→    closedWins,
+   389→   389→    closedLosses,
+   390→   390→    expectancy: Math.round(expectancy * 100) / 100,
+   391→   391→    avgBetSize: Math.round(avgBetSize * 100) / 100,
+   392→   392→    profitFactor,
+   393→   393→  };
+   394→   394→}
+   395→   395→
+   396→   396→function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]): PortfolioPoint[] {
+   397→   397→  // Build equity curve from settled bets
+   398→   398→  if (!status && history.length === 0) return [];
+   399→   399→
+   400→   400→  const initial = status?.portfolio?.initial ?? 10000;
+   401→   401→  const settled = history
+   402→   402→    .filter((h) => h.settled_at)
+   403→   403→    .sort((a, b) => new Date(a.settled_at!).getTime() - new Date(b.settled_at!).getTime());
+   404→   404→
+   405→   405→  if (settled.length === 0) {
+   406→   406→    // Return a single point with current value
+   407→   407→    const current = status ? initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl : initial;
+   408→   408→    return [{ date: "Bugün", value: Math.round(current) }];
+   409→   409→  }
+   410→   410→
+   411→   411→  const points: PortfolioPoint[] = [];
+   412→   412→  let running = initial;
+   413→   413→
+   414→   414→  // Group by date
+   415→   415→  const byDate = new Map<string, number>();
+   416→   416→  for (const h of settled) {
+   417→   417→    const d = new Date(h.settled_at!);
+   418→   418→    const key = `${d.getDate()} ${d.toLocaleDateString("tr-TR", { month: "short" })}`;
+   419→   419→    byDate.set(key, (byDate.get(key) ?? 0) + h.realized_pnl);
+   420→   420→  }
+   421→   421→
+   422→   422→  let peak = initial;
+   423→   423→  for (const [date, pnl] of byDate) {
+   424→   424→    running += pnl;
+   425→   425→    if (running > peak) peak = running;
+   426→   426→    const drawdown = peak > 0 ? ((peak - running) / peak) * 100 : 0;
+   427→   427→    points.push({ date, value: Math.round(running), drawdown: Math.round(drawdown * 10) / 10 });
+   428→   428→  }
+   429→   429→
+   430→   430→  // Add current value as last point
+   431→   431→  if (status) {
+   432→   432→    const current = initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl;
+   433→   433→    const today = new Date();
+   434→   434→    const todayKey = `${today.getDate()} ${today.toLocaleDateString("tr-TR", { month: "short" })}`;
+   435→   435→    if (points.length === 0 || points[points.length - 1].date !== todayKey) {
+   436→   436→      points.push({ date: todayKey, value: Math.round(current) });
+   437→   437→    } else {
+   438→   438→      points[points.length - 1].value = Math.round(current);
+   439→   439→    }
+   440→   440→  }
+   441→   441→
+   442→   442→  return points.length > 0 ? points : [{ date: "Bugün", value: initial }];
+   443→   443→}
+   444→   444→
+   445→   445→function mapOpenPositions(signals: Signal[]): OpenPosition[] {
+   446→   446→  return signals.map((s) => {
+   447→   447→    // Use entry_edge (edge at bet placement) — live_edge (fair_value - current) goes
+   448→   448→    // negative as price rises and is misleading in the table.
+   449→   449→    const edge = s.entry_edge ?? s.live_edge ?? s.edge ?? 0;
+   450→   450→    const edgePct = Math.round(edge * 1000) / 10; // Convert to percentage
+   451→   451→
+   452→   452→    // Format resolution_date as closing date
+   453→   453→    let closesAt = "—";
+   454→   454→    if (s.resolution_date) {
+   455→   455→      closesAt = new Date(s.resolution_date).toLocaleDateString("tr-TR", {
+   456→   456→        day: "numeric",
+   457→   457→        month: "short",
+   458→   458→        hour: "2-digit",
+   459→   459→        minute: "2-digit",
+   460→   460→      });
+   461→   461→    }
+   462→   462→
+   463→   463→    const openedAt = s.placed_at
+   464→   464→      ? new Date(s.placed_at).toLocaleDateString("tr-TR", {
+   465→   465→          day: "numeric",
+   466→   466→          month: "short",
+   467→   467→          hour: "2-digit",
+   468→   468→          minute: "2-digit",
+   469→   469→        })
+   470→   470→      : "—";
+   471→   471→
+   472→   472→    return {
+   473→   473→      id: String(s.id),
+   474→   474→      city: s.city,
+   475→   475→      side: s.outcome as "YES" | "NO",
+   476→   476→      entryPrice: Math.round(s.entry_price * 100) / 100,
+   477→   477→      currentPrice: Math.round(s.current_price * 100) / 100,
+   478→   478→      pnl: Math.round(s.unrealized_pnl * 100) / 100,
+   479→   479→      edge: Math.round(edgePct * 10) / 10,
+   480→   480→      timeLeft: closesAt,
+   481→   481→      openedAt,
+   482→   482→      conditionId: s.market_id ? `${s.market_id.slice(0, 6)}…${s.market_id.slice(-4)}` : "—",
+   483→   483→      amount: s.stake_amount ?? 0,
+   484→   484→      threshold: (s as Record<string, unknown>).threshold as number ?? null,
+   485→   485→      metric: (s as Record<string, unknown>).metric as string ?? null,
+   486→   486→    };
+   487→   487→  });
+   488→   488→}
+   489→   489→
+   490→   490→function mapActivityFeed(signals: Signal[], history: HistoryEntry[], status?: Record<string, unknown> | null, health?: Record<string, unknown> | null, weights?: Record<string, { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number; last_updated?: string | null }> | null): ActivityItem[] {
+   491→   491→  const items: Array<{ item: ActivityItem; sortDate: number }> = [];
+   492→   492→  let idCounter = 0;
+   493→   493→
+   494→   494→  const fmtActivityTime = (iso: string) => {
+   495→   495→    const d = new Date(iso);
+   496→   496→    return d.toLocaleDateString("tr-TR", { day: "numeric", month: "short" }) + " " +
+   497→   497→      d.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+   498→   498→  };
+   499→   499→
+   500→   500→  // System events: last scan time
+   501→   501→  const statsObj = status && typeof status === "object" ? (status as Record<string, unknown>).stats : null;
+   502→   502→  if (statsObj && typeof statsObj === "object") {
+   503→   503→    const lastScan = (statsObj as Record<string, unknown>).last_scan;
+   504→   504→    if (lastScan && typeof lastScan === "string") {
+   505→   505→      idCounter++;
+   506→   506→      items.push({
+   507→   507→        item: {
+   508→   508→          id: `sys_scan_${idCounter}`,
+   509→   509→          time: fmtActivityTime(lastScan),
+   510→   510→          color: "purple",
+   511→   511→          message: "🔄 Tarama tamamlandı — tüm piyasalar analiz edildi",
+   512→   512→        },
+   513→   513→        sortDate: new Date(lastScan).getTime(),
+   514→   514→      });
+   515→   515→    }
+   516→   516→  }
+   517→   517→
+   518→   518→  // System events: total analyses from health
+   519→   519→  const actObj = health && typeof health === "object" ? (health as Record<string, unknown>).activity_24h : null;
+   520→   520→  if (actObj && typeof actObj === "object") {
+   521→   521→    const totalAnalyses = (actObj as Record<string, unknown>).total_analyses;
+   522→   522→    const betsOpened = (actObj as Record<string, unknown>).bets_opened;
+   523→   523→    if (typeof totalAnalyses === "number" && totalAnalyses > 0) {
+   524→   524→      idCounter++;
+   525→   525→      items.push({
+   526→   526→        item: {
+   527→   527→          id: `sys_analysis_${idCounter}`,
+   528→   528→          time: "son 24 saat",
+   529→   529→          color: "purple",
+   530→   530→          message: `🧠 ISA-Karpathy: ${totalAnalyses} analiz, ${betsOpened} bahis açıldı`,
+   531→   531→        },
+   532→   532→        sortDate: Date.now() - 1000, // slightly older than real-time
+   533→   533→      });
+   534→   534→    }
+   535→   535→  }
+   536→   536→
+   537→   537→  // System events: ASI weight update
+   538→   538→  if (weights && typeof weights === "object") {
+   539→   539→    let latestUpdate: string | null = null;
+   540→   540→    let modelName: string | null = null;
+   541→   541→    for (const [name, w] of Object.entries(weights)) {
+   542→   542→      if (w && typeof w === "object" && w.last_updated) {
+   543→   543→        if (!latestUpdate || w.last_updated > latestUpdate) {
+   544→   544→          latestUpdate = w.last_updated;
+   545→   545→          modelName = name;
+   546→   546→        }
+   547→   547→      }
+   548→   548→    }
+   549→   549→    if (latestUpdate) {
+   550→   550→      idCounter++;
+   551→   551→      items.push({
+   552→   552→        item: {
+   553→   553→          id: `sys_asi_${idCounter}`,
+   554→   554→          time: fmtActivityTime(latestUpdate),
+   555→   555→          color: "purple",
+   556→   556→          message: `⚡ ASI-Evolve: ${modelName ?? "model"} ağırlıkları güncellendi`,
+   557→   557→        },
+   558→   558→        sortDate: new Date(latestUpdate).getTime(),
+   559→   559→      });
+   560→   560→    }
+   561→   561→  }
+   562→   562→
+   563→   563→  // Recent signals (open bets) — show up to 10
+   564→   564→  for (const s of signals.slice(0, 10)) {
+   565→   565→    idCounter++;
+   566→   566→    const time = s.placed_at ? fmtActivityTime(s.placed_at) : "?";
+   567→   567→    const edge = s.entry_edge ?? s.live_edge ?? s.edge ?? 0;
+   568→   568→    const edgePct = (Math.round(edge * 1000) / 10).toFixed(1);
+   569→   569→    const sortDate = s.placed_at ? new Date(s.placed_at).getTime() : 0;
+   570→   570→    items.push({
+   571→   571→      item: {
+   572→   572→        id: `s${idCounter}`,
+   573→   573→        time,
+   574→   574→        color: "blue",
+   575→   575→        message: `${s.city} için ${s.outcome} bet: $${s.stake_amount?.toFixed(2) ?? "?"} @ ${s.entry_price.toFixed(2)} (net edge: ${edgePct}%)`,
+   576→   576→      },
+   577→   577→      sortDate,
+   578→   578→    });
+   579→   579→  }
+   580→   580→
+   581→   581→  // Recent history (settled bets) — show up to 10
+   582→   582→  for (const h of history.slice(0, 10)) {
+   583→   583→    idCounter++;
+   584→   584→    const time = h.settled_at ? fmtActivityTime(h.settled_at)
+   585→   585→      : h.closed_at ? fmtActivityTime(h.closed_at)
+   586→   586→      : h.placed_at ? fmtActivityTime(h.placed_at)
+   587→   587→      : "?";
+   588→   588→    const color = h.result === "WIN" ? "teal" : "red";
+   589→   589→    const pnlStr = h.realized_pnl >= 0 ? `+$${h.realized_pnl.toFixed(2)}` : `-$${Math.abs(h.realized_pnl).toFixed(2)}`;
+   590→   590→    const exitLabels: Record<string, string> = {
+   591→   591→      TP: "💰 Take Profit",
+   592→   592→      SL: "🛑 Stop Loss",
+   593→   593→      TS: "📉 Trailing Stop",
+   594→   594→      TD: "⏰ Time Decay",
+   595→   595→      ST: "📊 Settlement",
+   596→   596→      OT: "⏰ Timeout",
+   597→   597→    };
+   598→   598→    const exitLabel = exitLabels[h.exit_type] ?? "";
+   599→   599→    const msg = exitLabel
+   600→   600→      ? `${h.city}: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"} ${pnlStr} — ${exitLabel}`
+   601→   601→      : `${h.city} marketi çözüldü: ${h.outcome} ${h.result === "WIN" ? "kazandı" : "kaybetti"}, ${pnlStr}`;
+   602→   602→    const sortDate = h.settled_at ? new Date(h.settled_at).getTime()
+   603→   603→      : h.closed_at ? new Date(h.closed_at).getTime()
+   604→   604→      : h.placed_at ? new Date(h.placed_at).getTime()
+   605→   605→      : 0;
+   606→   606→    items.push({
+   607→   607→      item: {
+   608→   608→        id: `h${idCounter}`,
+   609→   609→        time,
+   610→   610→        color,
+   611→   611→        message: msg,
+   612→   612→      },
+   613→   613→      sortDate,
+   614→   614→    });
+   615→   615→  }
+   616→   616→
+   617→   617→  // Sort by actual timestamp descending
+   618→   618→  items.sort((a, b) => b.sortDate - a.sortDate);
+   619→   619→  return items.slice(0, 25).map(({ item }) => item);
+   620→   620→}
+   621→   621→
+   622→   622→function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
+   623→   623→  const buckets: EdgeBucket[] = [
+   624→   624→    { range: "0-5%", count: 0 },
+   625→   625→    { range: "5-10%", count: 0 },
+   626→   626→    { range: "10-15%", count: 0 },
+   627→   627→    { range: "15-20%", count: 0 },
+   628→   628→    { range: "20-30%", count: 0 },
+   629→   629→    { range: "30%+", count: 0 },
+   630→   630→  ];
+   631→   631→
+   632→   632→  if (!health?.edge_distribution?.values?.length) return buckets;
+   633→   633→
+   634→   634→  // Distribute each trade's net_edge_pct into the correct bucket
+   635→   635→  for (const v of health.edge_distribution.values) {
+   636→   636→    const edge = v.net_edge_pct;
+   637→   637→    if (edge === null || edge === undefined) continue;
+   638→   638→    if (edge <= 5) buckets[0].count++;
+   639→   639→    else if (edge <= 10) buckets[1].count++;
+   640→   640→    else if (edge <= 15) buckets[2].count++;
+   641→   641→    else if (edge <= 20) buckets[3].count++;
+   642→   642→    else if (edge <= 30) buckets[4].count++;
+   643→   643→    else buckets[5].count++;
+   644→   644→  }
+   645→   645→
+   646→   646→  return buckets;
+   647→   647→}
+   648→   648→
+   649→   649→function mapOpenEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
+   650→   650→  const buckets: EdgeBucket[] = [
+   651→   651→    { range: "0-5%", count: 0 },
+   652→   652→    { range: "5-10%", count: 0 },
+   653→   653→    { range: "10-15%", count: 0 },
+   654→   654→    { range: "15-20%", count: 0 },
+   655→   655→    { range: "20-30%", count: 0 },
+   656→   656→    { range: "30%+", count: 0 },
+   657→   657→  ];
+   658→   658→
+   659→   659→  if (!health?.open_edge_distribution?.values?.length) return buckets;
+   660→   660→
+   661→   661→  for (const v of health.open_edge_distribution.values) {
+   662→   662→    const edge = v.net_edge_pct;
+   663→   663→    if (edge === null || edge === undefined) continue;
+   664→   664→    if (edge <= 5) buckets[0].count++;
+   665→   665→    else if (edge <= 10) buckets[1].count++;
+   666→   666→    else if (edge <= 15) buckets[2].count++;
+   667→   667→    else if (edge <= 20) buckets[3].count++;
+   668→   668→    else if (edge <= 30) buckets[4].count++;
+   669→   669→    else buckets[5].count++;
+   670→   670→  }
+   671→   671→
+   672→   672→  return buckets;
+   673→   673→}
+   674→   674→
+   675→   675→function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
+   676→   676→  return history.map((h) => {
+   677→   677→    const placedDate = h.placed_at ? new Date(h.placed_at) : new Date();
+   678→   678→    const timestamp = placedDate.toLocaleDateString("tr-TR", {
+   679→   679→      day: "numeric",
+   680→   680→      month: "short",
+   681→   681→    }) + " " + placedDate.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+   682→   682→
+   683→   683→    // Compute duration if possible
+   684→   684→    let duration = "—";
+   685→   685→    if (h.placed_at && h.settled_at) {
+   686→   686→      const diff = new Date(h.settled_at).getTime() - new Date(h.placed_at).getTime();
+   687→   687→      const hours = Math.floor(diff / (1000 * 60 * 60));
+   688→   688→      const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+   689→   689→      duration = hours > 0 ? `${hours}s ${mins}dk` : `${mins}dk`;
+   690→   690→    }
+   691→   691→
+   692→   692→    // Use exit_price from API if available, otherwise fallback to computation
+   693→   693→    const exitPrice = h.exit_price != null
+   694→   694→      ? h.exit_price
+   695→   695→      : h.result === "WIN"
+   696→   696→        ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / (h.stake_amount || 10)))
+   697→   697→        : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / (h.stake_amount || 10)));
+   698→   698→
+   699→   699→    // closed_at for early exits, settled_at for normal settlements
+   700→   700→    const closeDate = h.closed_at || h.settled_at;
+   701→   701→    const closedAt = closeDate
+   702→   702→      ? new Date(closeDate).toLocaleDateString("tr-TR", {
+   703→   703→          day: "numeric",
+   704→   704→          month: "short",
+   705→   705→          hour: "2-digit",
+   706→   706→          minute: "2-digit",
+   707→   707→          second: "2-digit",
+   708→   708→        })
+   709→   709→      : "—";
+   710→   710→
+   711→   711→    return {
+   712→   712→      id: String(h.id),
+   713→   713→      timestamp,
+   714→   714→      city: h.city,
+   715→   715→      side: (h.outcome as "YES" | "NO") || "YES",
+   716→   716→      entryPrice: h.entry_price,
+   717→   717→      exitPrice: Math.round(exitPrice * 100) / 100,
+   718→   718→      pnl: h.realized_pnl,
+   719→   719→      result: h.result,
+   720→   720→      edge: h.edge ?? (h.roi ? Math.round(h.roi * 10) / 10 : 0),
+   721→   721→      duration,
+   722→   722→      closedAt,
+   723→   723→      closedAtISO: h.closed_at || h.settled_at || null,
+   724→   724→      strategy: "SIA",
+   725→   725→      conditionId: "—",
+   726→   726→      exitType: h.exit_type || "ST",
+   727→   727→    };
+   728→   728→  });
+   729→   729→}
+   730→   730→
+   731→   731→function mapModelScores(weights: Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>): ModelScore[] {
+   732→   732→  const modelNames: Record<string, string> = {
+   733→   733→    gfs_seamless: "GFS Seamless",
+   734→   734→    ecmwf_ifs025: "ECMWF IFS025",
+   735→   735→    ecmwf_ifs04: "ECMWF IFS04",
+   736→   736→    ecmwf_aifs025: "ECMWF AIFS",
+   737→   737→    ecmwf_seamless: "ECMWF Seamless",
+   738→   738→    gfs025: "GFS 0.25",
+   739→   739→    ncep_gfs_seamless: "NCEP GFS",
+   740→   740→    gfs_seamless_04: "GFS 0.04",
+   741→   741→    icon_global: "ICON Global",
+   742→   742→    icon_seamless: "ICON Seamless",
+   743→   743→    cma_grapes_global: "CMA GRAPES",
+   744→   744→    gem_global: "GEM Global",
+   745→   745→    jma_seamless: "JMA Seamless",
+   746→   746→    meteofrance_seamless: "MF Seamless",
+   747→   747→    ukmo_seamless: "UKMO Seamless",
+   748→   748→  };
+   749→   749→
+   750→   750→  return Object.entries(weights)
+   751→   751→    .filter(([k]) => !k.startsWith("_"))
+   752→   752→    .sort((a, b) => {
+   753→   753→      const wA = typeof a[1] === "object" ? a[1].weight : a[1];
+   754→   754→      const wB = typeof b[1] === "object" ? b[1].weight : b[1];
+   755→   755→      return wB - wA;
+   756→   756→    })
+   757→   757→    .map(([key, val]) => {
+   758→   758→      const w = typeof val === "object" ? val.weight : val;
+   759→   759→      const perf = typeof val === "object" ? val : null;
+   760→   760→      return {
+   761→   761→        name: modelNames[key] ?? key,
+   762→   762→        brierScore: perf?.brier_score ?? null,
+   763→   763→        accuracy: perf?.accuracy ?? null,
+   764→   764→        weight: Math.round(w * 10000) / 100,
+   765→   765→        trend: "stable" as const,
+   766→   766→        sampleCount: perf?.num_predictions ?? 0,
+   767→   767→      };
+   768→   768→    });
+   769→   769→}
+   770→   770→
+   771→   771→// ---- Custom Hook ----
+   772→   772→
+   773→   773→export function useApiData() {
+   774→   774→  const [status, setStatus] = useState<StatusResponse | null>(null);
+   775→   775→  const [signals, setSignals] = useState<Signal[]>([]);
+   776→   776→  const [history, setHistory] = useState<HistoryEntry[]>([]);
+   777→   777→  const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
+   778→   778→  const [health, setHealth] = useState<HealthResponse | null>(null);
+   779→   779→  const [weights, setWeights] = useState<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>({});
+   780→   780→  const [slippageData, setSlippageData] = useState<SlippageEntry[]>([]);
+   781→   781→  const [equityCurve, setEquityCurve] = useState<{ initial: number; points: Array<{ date: string; value: number; pnl: number; count: number }> } | null>(null);
+   782→   782→  const [isLoading, setIsLoading] = useState(true);
+   783→   783→  const [error, setError] = useState<string | null>(null);
+   784→   784→  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+   785→   785→  const abortRef = useRef<AbortController | null>(null);
+   786→   786→  const healthAbortRef = useRef<AbortController | null>(null);
+   787→   787→
+   788→   788→  const fetchHealth = useCallback(async () => {
+   789→   789→    // Separate controller for slow health-check — not aborted by fast refresh
+   790→   790→    healthAbortRef.current?.abort();
+   791→   791→    const controller = new AbortController();
+   792→   792→    healthAbortRef.current = controller;
+   793→   793→    try {
+   794→   794→      const res = await fetchJson<HealthResponse>("/api/health-check", controller.signal);
+   795→   795→      if (!controller.signal.aborted) setHealth(res);
+   796→   796→    } catch {
+   797→   797→      // silently ignore abort or network errors
+   798→   798→    }
+   799→   799→  }, []);
+   800→   800→
+   801→   801→  const fetchData = useCallback(async () => {
+   802→   802→    // Cancel previous in-flight request
+   803→   803→    abortRef.current?.abort();
+   804→   804→    const controller = new AbortController();
+   805→   805→    abortRef.current = controller;
+   806→   806→
+   807→   807→    try {
+   808→   808→      const [statusRes, signalsRes, historyRes, weightsRes, slippageRes, equityRes] = await Promise.allSettled([
+   809→   809→        fetchJson<StatusResponse>("/api/status", controller.signal),
+   810→   810→        fetchJson<{ signals: Signal[]; count: number }>("/api/signals", controller.signal),
+   811→   811→        fetchJson<{ history: HistoryEntry[]; stats: HistoryStats }>("/api/history", controller.signal),
+   812→   812→        fetchJson<Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>>("/api/asi/weights", controller.signal),
+   813→   813→        fetchJson<{ slippage: SlippageEntry[] }>("/api/slippage", controller.signal),
+   814→   814→        fetchJson<{ initial: number; points: Array<{ date: string; value: number; pnl: number; count: number }> }>("/api/equity-curve", controller.signal),
+   815→   815→      ]);
+   816→   816→
+   817→   817→      if (controller.signal.aborted) return;
+   818→   818→
+   819→   819→      if (statusRes.status === "fulfilled") setStatus(statusRes.value);
+   820→   820→      if (signalsRes.status === "fulfilled") setSignals(signalsRes.value.signals ?? []);
+   821→   821→      if (historyRes.status === "fulfilled") {
+   822→   822→        setHistory(historyRes.value.history ?? []);
+   823→   823→        setHistoryStats(historyRes.value.stats ?? null);
+   824→   824→      }
+   825→   825→      if (weightsRes.status === "fulfilled") setWeights(weightsRes.value);
+   826→   826→      if (slippageRes.status === "fulfilled") setSlippageData(slippageRes.value.slippage ?? []);
+   827→   827→      if (equityRes.status === "fulfilled") setEquityCurve(equityRes.value);
+   828→   828→
+   829→   829→      setError(null);
+   830→   830→      setLastUpdated(new Date());
+   831→   831→    } catch (err) {
+   832→   832→      if (err instanceof DOMException && err.name === "AbortError") return;
+   833→   833→      setError(err instanceof Error ? err.message : "API bağlantı hatası");
+   834→   834→    } finally {
+   835→   835→      if (!controller.signal.aborted) setIsLoading(false);
+   836→   836→    }
+   837→   837→  }, []);
+   838→   838→
+   839→   839→  useEffect(() => {
+   840→   840→    fetchData();
+   841→   841→    fetchHealth(); // fetch health immediately
+   842→   842→    const interval = setInterval(fetchData, REFRESH_INTERVAL);
+   843→   843→    const healthInterval = setInterval(fetchHealth, HEALTH_REFRESH_INTERVAL);
+   844→   844→    return () => {
+   845→   845→      clearInterval(interval);
+   846→   846→      clearInterval(healthInterval);
+   847→   847→      abortRef.current?.abort();
+   848→   848→      healthAbortRef.current?.abort();
+   849→   849→    };
+   850→   850→  }, [fetchData, fetchHealth]);
+   851→   851→
+   852→   852→  // Map data to UI types
+   853→   853→  const kpiData = mapKpiData(status, health, historyStats);
+   854→   854→  // Use equity curve from backend (all dates, no 300 limit)
+   855→   855→  const portfolioData: PortfolioPoint[] = equityCurve?.points?.map((p) => ({
+   856→   856→    date: p.date,
+   857→   857→    value: Math.round(p.value),
+   858→   858→    drawdown: 0,
+   859→   859→  })) ?? mapPortfolioData(status, history);
+   860→   860→  const openPositions = mapOpenPositions(signals);
+   861→   861→  const activityFeed = mapActivityFeed(signals, history, status, health, weights);
+   862→   862→  const edgeDistribution = mapEdgeDistribution(health);
+   863→   863→  const openEdgeDistribution = mapOpenEdgeDistribution(health);
+   864→   864→  const tradeHistory = mapTradeHistory(history);
+   865→   865→  const modelScores = mapModelScores(weights);
+   866→   866→
+   867→   867→  return {
+   868→   868→    status,
+   869→   869→    signals,
+   870→   870→    history,
+   871→   871→    historyStats,
+   872→   872→    health,
+   873→   873→    weights,
+   874→   874→    kpiData,
+   875→   875→    portfolioData,
+   876→   876→    openPositions,
+   877→   877→    activityFeed,
+   878→   878→    edgeDistribution,
+   879→   879→    openEdgeDistribution,
+   880→   880→    tradeHistory,
+   881→   881→    modelScores,
+   882→   882→    slippageData,
+   883→   883→    isLoading,
+   884→   884→    error,
+   885→   885→    lastUpdated,
+   886→   886→  };
+   887→   887→}
+   888→   888→

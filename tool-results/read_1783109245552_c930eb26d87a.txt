@@ -1,0 +1,314 @@
+   160→   289→   388→   388→   388→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Güncel</TableHead>
+   161→   290→   389→   389→   389→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Edge</TableHead>
+   162→   291→   390→   390→   390→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Bet</TableHead>
+   163→   292→   391→   391→   391→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>PnL</TableHead>
+   164→   293→   392→   392→   392→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
+   165→   294→   393→   393→   393→                    </TableRow>
+   166→   295→   394→   394→   394→                  </TableHeader>
+   167→   296→   395→   395→   395→                  <TableBody>
+   168→   297→   396→   396→   396→                    {openPositions.map((pos) => (
+   169→   298→   397→   397→   397→                      <TableRow key={pos.id}>
+   170→   299→   398→   398→   398→                        <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{pos.city}</TableCell>
+   171→   300→   399→   399→   399→                        <TableCell className="text-center">
+   172→   301→   400→   400→   400→                          {pos.metric ? (
+   173→   302→   401→   401→   401→                            <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{
+   174→   303→   402→   402→   402→                              backgroundColor: pos.metric === "temperature_max" ? "#FEF3C7" : "#DBEAFE",
+   175→   304→   403→   403→   403→                              color: pos.metric === "temperature_max" ? "#D97706" : "#2563EB",
+   176→   305→   404→   404→   404→                              border: `1px solid ${pos.metric === "temperature_max" ? "#F59E0B40" : "#3B82F640"}`
+   177→   306→   405→   405→   405→                            }}>{pos.metric === "temperature_max" ? "H" : "L"}</Badge>
+   178→   307→   406→   406→   406→                          ) : <span style={{ color: TEXT_MUTED }}>—</span>}
+   179→   308→   407→   407→   407→                        </TableCell>
+   180→   309→   408→   408→   408→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>
+   181→   310→   409→   409→   409→                          {pos.threshold != null ? `${pos.threshold}°` : "—"}
+   182→   311→   410→   410→   410→                        </TableCell>
+   183→   312→   411→   411→   411→                        <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.openedAt}</TableCell>
+   184→   313→   412→   412→   412→                        <TableCell>
+   185→   314→   413→   413→   413→                          <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: pos.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: pos.side === "YES" ? TEAL : RED, border: `1px solid ${pos.side === "YES" ? TEAL : RED}33` }}>{pos.side}</Badge>
+   186→   315→   414→   414→   414→                        </TableCell>
+   187→   316→   415→   415→   415→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.entryPrice)}</TableCell>
+   188→   317→   416→   416→   416→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.currentPrice)}</TableCell>
+   189→   318→   417→   417→   417→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
+   190→   319→   418→   418→   418→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtUsd(pos.amount)}</TableCell>
+   191→   320→   419→   419→   419→                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
+   192→   321→   420→   420→   420→                        <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
+   193→   322→   421→   421→   421→                      </TableRow>
+   194→   323→   422→   422→   422→                    ))}
+   195→   324→   423→   423→   423→                  </TableBody>
+   196→   325→   424→   424→   424→                </Table>
+   197→   326→   425→   425→   425→              )}
+   198→   327→   426→   426→   426→            </div>
+   199→   328→   427→   427→   427→          </CardContent>
+   200→   329→   428→   428→   428→        </Card>
+   201→   330→   429→   429→   429→
+   202→   331→   430→   430→   430→        <Card className="lg:col-span-2 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   203→   332→   431→   431→   431→          <CardHeader className="pb-0 pt-0 px-5">
+   204→   333→   432→   432→   432→            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Aktivite Akışı</CardTitle>
+   205→   334→   433→   433→   433→          </CardHeader>
+   206→   335→   434→   434→   434→          <CardContent className="px-4">
+   207→   336→   435→   435→   435→            <div className="space-y-0 max-h-[380px] overflow-y-auto pr-1 custom-scroll">
+   208→   337→   436→   436→   436→              {activityFeed.length === 0 ? (
+   209→   338→   437→   437→   437→                <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>Henüz aktivite yok</div>
+   210→   339→   438→   438→   438→              ) : (
+   211→   340→   439→   439→   439→                activityFeed.map((item) => (
+   212→   341→   440→   440→   440→                  <div key={item.id} className="flex gap-3 py-2.5 border-b last:border-0" style={{ borderColor: `${BORDER}80` }}>
+   213→   342→   441→   441→   441→                    <div className="flex flex-col items-center gap-1 pt-1 shrink-0">
+   214→   343→   442→   442→   442→                      <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: dotColorMap[item.color] }} />
+   215→   344→   443→   443→   443→                    </div>
+   216→   345→   444→   444→   444→                    <div className="flex-1 min-w-0">
+   217→   346→   445→   445→   445→                      <p className="text-xs leading-relaxed" style={{ color: TEXT_PRIMARY }}>{item.message}</p>
+   218→   347→   446→   446→   446→                    </div>
+   219→   348→   447→   447→   447→                    <span className="text-[10px] tabular-nums shrink-0 pt-0.5" style={{ color: TEXT_MUTED }}>{item.time}</span>
+   220→   349→   448→   448→   448→                  </div>
+   221→   350→   449→   449→   449→                ))
+   222→   351→   450→   450→   450→              )}
+   223→   352→   451→   451→   451→            </div>
+   224→   353→   452→   452→   452→          </CardContent>
+   225→   354→   453→   453→   453→        </Card>
+   226→   355→   454→   454→   454→      </section>
+   227→   356→   455→   455→   455→
+   228→   357→   456→   456→   456→      {/* Portfolio Chart + Win/Loss Donut */}
+   229→   358→   457→   457→   457→      <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+   230→   359→   458→   458→   458→        <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   231→   360→   459→   459→   459→          <CardHeader className="pb-0 pt-0 px-5">
+   232→   361→   460→   460→   460→            <div className="flex items-center gap-2">
+   233→   362→   461→   461→   461→              <BarChart3 className="h-4 w-4" style={{ color: TEXT_MUTED }} />
+   234→   363→   462→   462→   462→              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Portföy Değeri (30 Gün)</CardTitle>
+   235→   364→   463→   463→   463→            </div>
+   236→   365→   464→   464→   464→          </CardHeader>
+   237→   366→   465→   465→   465→          <CardContent className="px-4">
+   238→   367→   466→   466→   466→            <ChartWrapper height={280}>
+   239→   368→   467→   467→   467→              <ResponsiveContainer width="100%" height="100%">
+   240→   369→   468→   468→   468→                <AreaChart data={portfolioData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   241→   370→   469→   469→   469→                  <defs>
+   242→   371→   470→   470→   470→                    <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+   243→   372→   471→   471→   471→                      <stop offset="5%" stopColor={TEAL} stopOpacity={0.25} />
+   244→   373→   472→   472→   472→                      <stop offset="95%" stopColor={TEAL} stopOpacity={0.02} />
+   245→   374→   473→   473→   473→                    </linearGradient>
+   246→   375→   474→   474→   474→                  </defs>
+   247→   376→   475→   475→   475→                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   248→   377→   476→   476→   476→                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   249→   378→   477→   477→   477→                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} width={45} />
+   250→   379→   478→   478→   478→                  <Tooltip content={<PortfolioTooltip />} />
+   251→   380→   479→   479→   479→                  <Area type="monotone" dataKey="value" stroke={TEAL} strokeWidth={2} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }} />
+   252→   381→   480→   480→   480→                </AreaChart>
+   253→   382→   481→   481→   481→              </ResponsiveContainer>
+   254→   383→   482→   482→   482→            </ChartWrapper>
+   255→   384→   483→   483→   483→          </CardContent>
+   256→   385→   484→   484→   484→        </Card>
+   257→   386→   485→   485→   485→
+   258→   387→   486→   486→   486→        {/* Win/Loss Donut */}
+   259→   388→   487→   487→   487→        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   260→   389→   488→   488→   488→          <CardHeader className="pb-0 pt-0 px-5">
+   261→   390→   489→   489→   489→            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Win / Loss</CardTitle>
+   262→   391→   490→   490→   490→          </CardHeader>
+   263→   392→   491→   491→   491→          <CardContent className="px-4 flex flex-col items-center justify-center">
+   264→   393→   492→   492→   492→            <ChartWrapper height={180} width={180}>
+   265→   394→   493→   493→   493→              <ResponsiveContainer width="100%" height="100%">
+   266→   395→   494→   494→   494→                <PieChart>
+   267→   396→   495→   495→   495→                  <Pie data={winLossData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0}>
+   268→   397→   496→   496→   496→                    {winLossData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+   269→   398→   497→   497→   497→                  </Pie>
+   270→   399→   498→   498→   498→                  <Tooltip />
+   271→   400→   499→   499→   499→                </PieChart>
+   272→   401→   500→   500→   500→              </ResponsiveContainer>
+   273→   402→   501→   501→   501→            </ChartWrapper>
+   274→   403→   502→   502→   502→            <div className="flex gap-6 mt-3 text-xs">
+   275→   404→   503→   503→   503→              <div className="flex items-center gap-1.5">
+   276→   405→   504→   504→   504→                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TEAL }} />
+   277→   406→   505→   505→   505→                <span style={{ color: TEXT_MUTED }}>Kazanan: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.wins)}</b></span>
+   278→   407→   506→   506→   506→              </div>
+   279→   408→   507→   507→   507→              <div className="flex items-center gap-1.5">
+   280→   409→   508→   508→   508→                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: RED }} />
+   281→   410→   509→   509→   509→                <span style={{ color: TEXT_MUTED }}>Kaybeden: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.losses)}</b></span>
+   282→   411→   510→   510→   510→              </div>
+   283→   412→   511→   511→   511→            </div>
+   284→   413→   512→   512→   512→          </CardContent>
+   285→   414→   513→   513→   513→        </Card>
+   286→   415→   514→   514→   514→      </section>
+   287→   416→   515→   515→   515→
+   288→   417→   516→   516→   516→      {/* Edge Distribution - Closed Bets */}
+   289→   418→   517→   517→   517→      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   290→   419→   518→   518→   518→        <CardHeader className="pb-0 pt-0 px-5">
+   291→   420→   519→   519→   519→          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Kapalı Bahisler</CardTitle>
+   292→   421→   520→   520→   520→        </CardHeader>
+   293→   422→   521→   521→   521→        <CardContent className="px-4">
+   294→   423→   522→   522→   522→          <ChartWrapper height={220}>
+   295→   424→   523→   523→   523→            <ResponsiveContainer width="100%" height="100%">
+   296→   425→   524→   524→   524→              <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   297→   426→   525→   525→   525→                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   298→   427→   526→   526→   526→                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   299→   428→   527→   527→   527→                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+   300→   429→   528→   528→   528→                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+   301→   430→   529→   529→   529→                <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
+   302→   431→   530→   530→   530→              </BarChart>
+   303→   432→   531→   531→   531→            </ResponsiveContainer>
+   304→   433→   532→   532→   532→          </ChartWrapper>
+   305→   434→   533→   533→   533→        </CardContent>
+   306→   435→   534→   534→   534→      </Card>
+   307→   436→   535→   535→   535→
+   308→   437→   536→   536→   536→      {/* Edge Distribution - Open Positions */}
+   309→   438→   537→   537→   537→      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   310→   439→   538→   538→   538→        <CardHeader className="pb-0 pt-0 px-5">
+   311→   440→   539→   539→   539→          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Açık Pozisyonlar</CardTitle>
+   312→   441→   540→   540→   540→        </CardHeader>
+   313→   442→   541→   541→   541→        <CardContent className="px-4">
+   314→   443→   542→   542→   542→          <ChartWrapper height={220}>
+   315→   444→   543→   543→   543→            <ResponsiveContainer width="100%" height="100%">
+   316→   445→   544→   544→   544→              <BarChart data={openEdgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   317→   446→   545→   545→   545→                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   318→   447→   546→   546→   546→                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   319→   448→   547→   547→   547→                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+   320→   449→   548→   548→   548→                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+   321→   450→   549→   549→   549→                <Bar dataKey="count" fill={TEAL} radius={[4, 4, 0, 0]} barSize={40} />
+   322→   451→   550→   550→   550→              </BarChart>
+   323→   452→   551→   551→   551→            </ResponsiveContainer>
+   324→   453→   552→   552→   552→          </ChartWrapper>
+   325→   454→   553→   553→   553→        </CardContent>
+   326→   455→   554→   554→   554→      </Card>
+   327→   456→   555→   555→   555→    </div>
+   328→   457→   556→   556→   556→  );
+   329→   458→   557→   557→   557→}
+   330→   459→   558→   558→   558→
+   331→   460→   559→   559→   559→// ==========================================
+   332→   461→   560→   560→   560→// TRADE HISTORY TAB
+   333→   462→   561→   561→   561→// ==========================================
+   334→   463→   562→   562→   562→function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null; totalPnl: number }) {
+   335→   464→   563→   563→   563→  const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS">("ALL");
+   336→   465→   564→   564→   564→  const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
+   337→   466→   565→   565→   565→  const [filterExit, setFilterExit] = useState<"ALL" | "ST" | "TP" | "SL" | "TS" | "TD">("ALL");
+   338→   467→   566→   566→   566→  const [filterDate, setFilterDate] = useState<string>("");
+   339→   468→   567→   567→   567→  const dateInputRef = useRef<HTMLInputElement>(null);
+   340→   469→   568→   568→   568→  const [search, setSearch] = useState("");
+   341→   470→   569→   569→   569→  const [sortBy, setSortBy] = useState<"date" | "pnl" | "edge">("date");
+   342→   471→   570→   570→   570→  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+   343→   472→   571→   571→   571→
+   344→   473→   572→   572→   572→  const filtered = useMemo(() => {
+   345→   474→   573→   573→   573→    let data = [...tradeHistory];
+   346→   475→   574→   574→   574→    // Varsayılan olarak son 10 günün kapananlarını göster
+   347→   476→   575→   575→   575→    const tenDaysAgo = new Date();
+   348→   477→   576→   576→   576→    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+   349→   478→   577→   577→   577→    data = data.filter((t) => {
+   350→   479→   578→   578→   578→      if (!t.closedAtISO) return false;
+   351→   480→   579→   579→   579→      return new Date(t.closedAtISO) >= tenDaysAgo;
+   352→   481→   580→   580→   580→    });
+   353→   482→   581→   581→   581→    if (filterResult !== "ALL") data = data.filter((t) => t.result === filterResult);
+   354→   483→   582→   582→   582→    if (filterSide !== "ALL") data = data.filter((t) => t.side === filterSide);
+   355→   484→   583→   583→   583→    if (filterExit !== "ALL") data = data.filter((t) => t.exitType === filterExit);
+   356→   485→   584→   584→   584→    if (filterDate) {
+   357→   486→   585→   585→   585→      data = data.filter((t) => {
+   358→   487→   586→   586→   586→        if (!t.closedAtISO) return false;
+   359→   488→   587→   587→   587→        const iso = t.closedAtISO.slice(0, 10);
+   360→   489→   588→   588→   588→        return iso === filterDate;
+   361→   490→   589→   589→   589→      });
+   362→   491→   590→   590→   590→    }
+   363→   492→   591→   591→   591→    if (search) data = data.filter((t) => t.city.toLowerCase().includes(search.toLowerCase()) || t.strategy.toLowerCase().includes(search.toLowerCase()));
+   364→   493→   592→   592→   592→    data.sort((a, b) => {
+   365→   494→   593→   593→   593→      let cmp = 0;
+   366→   495→   594→   594→   594→      if (sortBy === "date") cmp = 0;
+   367→   496→   595→   595→   595→      else if (sortBy === "pnl") cmp = a.pnl - b.pnl;
+   368→   497→   596→   596→   596→      else if (sortBy === "edge") cmp = a.edge - b.edge;
+   369→   498→   597→   597→   597→      return sortDir === "desc" ? -cmp : cmp;
+   370→   499→   598→   598→   598→    });
+   371→   500→   599→   599→   599→    return data;
+   372→   501→   600→   600→   600→  }, [tradeHistory, filterResult, filterSide, filterExit, filterDate, search, sortBy, sortDir]);
+   373→   502→   601→   601→   601→
+   374→   503→   602→   602→   602→  // Summary stats from API (all settled bets, not just the 50 displayed)
+   375→   504→   603→   603→   603→  const hs = historyStats;
+   376→   505→   604→   604→   604→  const totalSettledBets = (hs?.total_won ?? 0) + (hs?.total_lost ?? 0);
+   377→   506→   605→   605→   605→  const totalSettledWinRate = totalSettledBets > 0 ? ((hs?.total_won ?? 0) / totalSettledBets) * 100 : 0;
+   378→   507→   606→   606→   606→  // Filtered stats for the displayed subset
+   379→   508→   607→   607→   607→  const filteredPnl = filtered.reduce((s, t) => s + t.pnl, 0);
+   380→   509→   608→   608→   608→  const winCount = filtered.filter((t) => t.result === "WIN").length;
+   381→   510→   609→   609→   609→
+   382→   511→   610→   610→   610→  function toggleSort(col: "date" | "pnl" | "edge") {
+   383→   512→   611→   611→   611→    if (sortBy === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+   384→   513→   612→   612→   612→    else { setSortBy(col); setSortDir("desc"); }
+   385→   514→   613→   613→   613→  }
+   386→   515→   614→   614→   614→
+   387→   516→   615→   615→   615→  // FIX: SortIcon moved outside TradesTab (was react-hooks/static-components warning).
+   388→   517→   616→   616→   616→  // Defining a component inside render creates a new reference each render,
+   389→   518→   617→   617→   617→  // causing React to unmount/remount the subtree. Now it's a pure function
+   390→   519→   618→   618→   618→  // called inline, not a component definition.
+   391→   520→   619→   619→   619→  const renderSortIcon = (col: "date" | "pnl" | "edge") => {
+   392→   521→   620→   620→   620→    if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
+   393→   522→   621→   621→   621→    return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
+   394→   523→   622→   622→   622→  };
+   395→   524→   623→   623→   623→
+   396→   525→   624→   624→   624→  return (
+   397→   526→   625→   625→   625→    <div className="space-y-4">
+   398→   527→   626→   626→   626→      {/* Summary cards — show ALL settled bets from API, not just filtered */}
+   399→   528→   627→   627→   627→      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   400→   529→   628→   628→   628→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   401→   530→   629→   629→   629→          <CardContent className="px-4 pb-0 pt-0">
+   402→   531→   630→   630→   630→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam İşlem</p>
+   403→   532→   631→   631→   631→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtInt(totalSettledBets)}</p>
+   404→   533→   632→   632→   632→          </CardContent>
+   405→   534→   633→   633→   633→        </Card>
+   406→   535→   634→   634→   634→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   407→   536→   635→   635→   635→          <CardContent className="px-4 pb-0 pt-0">
+   408→   537→   636→   636→   636→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam PnL</p>
+   409→   538→   637→   637→   637→            <p className="text-lg font-bold tabular-nums" style={{ color: totalPnl >= 0 ? TEAL : RED }}>{fmtUsd(totalPnl)}</p>
+   410→   539→   638→   638→   638→          </CardContent>
+   411→   540→   639→   639→   639→        </Card>
+   412→   541→   640→   640→   640→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   413→   542→   641→   641→   641→          <CardContent className="px-4 pb-0 pt-0">
+   414→   543→   642→   642→   642→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Win Oranı</p>
+   415→   544→   643→   643→   643→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{totalSettledBets > 0 ? fmtNum(totalSettledWinRate, 1) : 0}%</p>
+   416→   545→   644→   644→   644→          </CardContent>
+   417→   546→   645→   645→   645→        </Card>
+   418→   547→   646→   646→   646→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   419→   548→   647→   647→   647→          <CardContent className="px-4 pb-0 pt-0">
+   420→   549→   648→   648→   648→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Edge</p>
+   421→   550→   649→   649→   649→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_edge != null ? fmtNum(hs.avg_edge, 1) : "—"}%</p>
+   422→   551→   650→   650→   650→          </CardContent>
+   423→   552→   651→   651→   651→        </Card>
+   424→   553→   652→   652→   652→      </section>
+   425→   554→   653→   653→   653→
+   426→   555→   654→   654→   654→      {/* Filters */}
+   427→   556→   655→   655→   655→      <Card className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+   428→   557→   656→   656→   656→        <CardContent className="px-4 pt-0">
+   429→   558→   657→   657→   657→          <div className="flex flex-wrap items-center gap-3">
+   430→   559→   658→   658→   658→            <div className="relative flex-1 min-w-[180px] max-w-xs">
+   431→   560→   659→   659→   659→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
+   432→   561→   660→   660→   660→              <input
+   433→   562→   661→   661→   661→                type="text"
+   434→   563→   662→   662→   662→                placeholder="Şehir veya strateji ara..."
+   435→   564→   663→   663→   663→                value={search}
+   436→   565→   664→   664→   664→                onChange={(e) => setSearch(e.target.value)}
+   437→   566→   665→   665→   665→                className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-teal-300"
+   438→   567→   666→   666→   666→                style={{ borderColor: BORDER, color: TEXT_PRIMARY }}
+   439→   568→   667→   667→   667→              />
+   440→   569→   668→   668→   668→            </div>
+   441→   570→   669→   669→   669→            <div className="flex items-center gap-1.5">
+   442→   571→   670→   670→   670→              <Filter className="h-3.5 w-3.5" style={{ color: TEXT_MUTED }} />
+   443→   572→   671→   671→   671→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Sonuç:</span>
+   444→   573→   672→   672→   672→              {(["ALL", "WIN", "LOSS"] as const).map((v) => (
+   445→   574→   673→   673→   673→                <button key={v} onClick={() => setFilterResult(v)}
+   446→   575→   674→   674→   674→                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+   447→   576→   675→   675→   675→                  style={{
+   448→   577→   676→   676→   676→                    borderColor: filterResult === v ? TEAL : BORDER,
+   449→   578→   677→   677→   677→                    backgroundColor: filterResult === v ? TEAL_LIGHT : "transparent",
+   450→   579→   678→   678→   678→                    color: filterResult === v ? TEAL : TEXT_MUTED,
+   451→   580→   679→   679→   679→                  }}>
+   452→   581→   680→   680→   680→                  {v === "ALL" ? "Tümü" : v === "WIN" ? "Kazanan" : "Kaybeden"}
+   453→   582→   681→   681→   681→                </button>
+   454→   583→   682→   682→   682→              ))}
+   455→   584→   683→   683→   683→            </div>
+   456→   585→   684→   684→   684→            <div className="flex items-center gap-1.5">
+   457→   586→   685→   685→   685→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Taraf:</span>
+   458→   587→   686→   686→   686→              {(["ALL", "YES", "NO"] as const).map((v) => (
+   459→   588→   687→   687→   687→                <button key={v} onClick={() => setFilterSide(v)}
+   460→   589→   688→   688→   688→                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+   461→   590→   689→   689→   689→                  style={{
+   462→   591→   690→   690→   690→                    borderColor: filterSide === v ? TEAL : BORDER,
+   463→   592→   691→   691→   691→                    backgroundColor: filterSide === v ? TEAL_LIGHT : "transparent",
+   464→   593→   692→   692→   692→                    color: filterSide === v ? TEAL : TEXT_MUTED,
+   465→   594→   693→   693→   693→                  }}>
+   466→   595→   694→   694→   694→                  {v === "ALL" ? "Tümü" : v}
+   467→   596→   695→   695→   695→                </button>
+   468→   597→   696→   696→   696→              ))}
+   469→   598→   697→   697→   697→            </div>
+   470→   599→   698→   698→   698→            <div className="flex items-center gap-1.5">
+   471→   600→   699→   699→   699→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Neden:</span>
+   472→   601→
+   473→   602→[showing lines 100-699 of 1469; use offset=700 with limit to continue reading]

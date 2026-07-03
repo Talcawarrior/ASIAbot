@@ -1,0 +1,1203 @@
+     1→     1→"""Sinyal analizi, Kelly kasa yönetimi, risk kontrolü ve SIA (Self-Improving Algorithm)."""
+     2→     2→
+     3→     3→import json
+     4→     4→import logging
+     5→     5→from datetime import datetime, timedelta, timezone
+     6→     6→
+     7→     7→from sqlalchemy import func
+     8→     8→
+     9→     9→from config.settings import bot_config, config
+    10→    10→from database.models import (
+    11→    11→    OPEN_BET_STATUSES,
+    12→    12→    Analysis,
+    13→    13→    Bet,
+    14→    14→    ModelPerformance,
+    15→    15→    Portfolio,
+    16→    16→    WeatherMarket,
+    17→    17→)
+    18→    18→from utils.formulas import conservative_portfolio_value, max_exposure_cap
+    19→    19→from utils.kelly import kelly_bet_amount
+    20→    20→from utils.weights_store import (
+    21→    21→    load_strategy_params,
+    22→    22→    load_weights,
+    23→    23→    save_strategy_params,
+    24→    24→    save_weights,
+    25→    25→)
+    26→    26→
+    27→    27→logger = logging.getLogger("STRATEGY_ENGINE")
+    28→    28→
+    29→    29→
+    30→    30→class SimpleSignal:
+    31→    31→    """Lightweight signal object for inter-module compatibility."""
+    32→    32→
+    33→    33→    market_id: str = ""
+    34→    34→    city: str = ""
+    35→    35→    city_code: str = ""
+    36→    36→    outcome: str = "YES"
+    37→    37→    entry_price: float = 0.5
+    38→    38→    fair_value: float = 0.5
+    39→    39→    edge: float = 0.0
+    40→    40→    probability: float = 0.5
+    41→    41→    bet_size: float = 0.0
+    42→    42→    ladder_orders: list = None  # type: ignore[assignment]
+    43→    43→    side: str = "YES"
+    44→    44→
+    45→    45→    def __init__(self, **kwargs):
+    46→    46→        self.ladder_orders = []
+    47→    47→        for k, v in kwargs.items():
+    48→    48→            setattr(self, k, v)
+    49→    49→
+    50→    50→
+    51→    51→class MockBet:
+    52→    52→    """Fallback bet object when DB insert fails."""
+    53→    53→
+    54→    54→    def __init__(self, **kwargs):
+    55→    55→        self.id = 999
+    56→    56→        self.city = kwargs.get("city", "")
+    57→    57→        self.outcome = kwargs.get("outcome", "YES")
+    58→    58→        self.stake_amount = kwargs.get("bet_size", 0.0)
+    59→    59→        self.entry_price = kwargs.get("entry_price", 0.5)
+    60→    60→        self.fair_value = kwargs.get("fair_value", 0.5)
+    61→    61→        self.expected_value = kwargs.get("edge", 0.0)
+    62→    62→        self.unrealized_pnl = 0.0
+    63→    63→        self.realized_pnl = 0.0
+    64→    64→        self.status = "active"
+    65→    65→        self.placed_at = datetime.now(timezone.utc)
+    66→    66→
+    67→    67→
+    68→    68→class RiskManager:
+    69→    69→    """Risk management with Kelly sizing and circuit breakers."""
+    70→    70→
+    71→    71→    def __init__(self, db_session=None, cfg=None):
+    72→    72→        self.db = db_session
+    73→    73→        self.config = cfg or config
+    74→    74→        self.portfolio_value = getattr(self.config, "INITIAL_PORTFOLIO", 1000.0)
+    75→    75→        self.daily_pnl = 0.0
+    76→    76→        # Load current portfolio value from DB so exposure cap uses
+    77→    77→        # the actual portfolio, not just INITIAL_PORTFOLIO.
+    78→    78→        self._load_portfolio_from_db()
+    79→    79→        self.open_bets_count = 0
+    80→    80→        self.city_bet_counts: dict[str, int] = {}
+    81→    81→        self._last_pnl_date: datetime | None = None
+    82→    82→        self._load_from_db()
+    83→    83→
+    84→    84→    def _load_portfolio_from_db(self):
+    85→    85→        """Load current portfolio total_value from DB."""
+    86→    86→        if not self.db:
+    87→    87→            return
+    88→    88→        try:
+    89→    89→            from database.models import Portfolio
+    90→    90→
+    91→    91→            p = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+    92→    92→            if p and p.total_value:
+    93→    93→                self.portfolio_value = float(p.total_value)
+    94→    94→        except Exception:
+    95→    95→            pass
+    96→    96→
+    97→    97→    def update_portfolio(self, value: float):
+    98→    98→        """Update portfolio value."""
+    99→    99→        self.portfolio_value = value
+   100→   100→
+   101→   101→    def update_daily_pnl(self, pnl: float):
+   102→   102→        """Update daily PnL and check circuit breaker."""
+   103→   103→        now = datetime.now(timezone.utc)
+   104→   104→        if self._last_pnl_date is None or self._last_pnl_date.date() != now.date():
+   105→   105→            if self._last_pnl_date is not None:
+   106→   106→                logger.info("Daily PnL reset for new day (was $%.2f)", self.daily_pnl)
+   107→   107→            self.daily_pnl = 0.0
+   108→   108→            self._last_pnl_date = now
+   109→   109→        self.daily_pnl += pnl
+   110→   110→        if self.daily_pnl <= -self.daily_loss_limit_amount:
+   111→   111→            logger.warning("DAILY STOP-LOSS TRIGGERED! PnL: $%.2f", self.daily_pnl)
+   112→   112→            return False
+   113→   113→        return True
+   114→   114→
+   115→   115→    def check_city_cap(self, city_code: str) -> bool:
+   116→   116→        """Check city cap limit."""
+   117→   117→        current_count = self.city_bet_counts.get(city_code, 0)
+   118→   118→        return current_count < self.config.CITY_CAP
+   119→   119→
+   120→   120→    def increment_city_bet(self, city_code: str):
+   121→   121→        """Increment city bet count."""
+   122→   122→        self.city_bet_counts[city_code] = self.city_bet_counts.get(city_code, 0) + 1
+   123→   123→
+   124→   124→    def decrement_city_bet(self, city_code: str):
+   125→   125→        """Decrement city bet count."""
+   126→   126→        if city_code in self.city_bet_counts:
+   127→   127→            self.city_bet_counts[city_code] = max(0, self.city_bet_counts[city_code] - 1)
+   128→   128→
+   129→   129→    def calculate_kelly_bet_size(self, model_prob: float, market_price: float) -> float:
+   130→   130→        """Calculate Kelly bet sizing.
+   131→   131→
+   132→   132→        Thin wrapper over utils.kelly.kelly_bet_amount so the math
+   133→   133→        lives in one place. Bankroll comes from self.portfolio_value,
+   134→   134→        which the portfolio-sync hook refreshes after every settlement
+   135→   135→        cycle (PR #9).
+   136→   136→        """
+   137→   137→        return kelly_bet_amount(
+   138→   138→            self.portfolio_value,
+   139→   139→            model_prob,
+   140→   140→            market_price,
+   141→   141→            fraction=self.config.KELLY_FRACTION,
+   142→   142→            min_bet=self.config.MIN_BET_SIZE,
+   143→   143→            max_bet_pct=self.config.MAX_BET_PCT,
+   144→   144→        )
+   145→   145→
+   146→   146→    def check_exposure_cap(self, current_exposure: float, additional_bet: float) -> bool:
+   147→   147→        """Check total exposure cap limit.
+   148→   148→
+   149→   149→        Portfolio = initial_capital + realized_pnl (unrealized katilmaz).
+   150→   150→        Limit = portfolio * 25%. Her gun PnL sermayeye eklenir.
+   151→   151→        """
+   152→   152→        conservative_value = self._conservative_portfolio_value()
+   153→   153→        max_exposure = max_exposure_cap(
+   154→   154→            self.config.INITIAL_PORTFOLIO,
+   155→   155→            conservative_value - self.config.INITIAL_PORTFOLIO,
+   156→   156→            self.config.TOTAL_EXPOSURE_PCT,
+   157→   157→        )
+   158→   158→        if (current_exposure + additional_bet) > max_exposure:
+   159→   159→            logger.warning(
+   160→   160→                "Exposure cap: $%.2f + $%.2f = $%.2f > $%.2f (25%% of $%.2f conservative)",
+   161→   161→                current_exposure,
+   162→   162→                additional_bet,
+   163→   163→                current_exposure + additional_bet,
+   164→   164→                max_exposure,
+   165→   165→                conservative_value,
+   166→   166→            )
+   167→   167→            return False
+   168→   168→        return True
+   169→   169→
+   170→   170→    def _conservative_portfolio_value(self) -> float:
+   171→   171→        """Portfolio = dünkü kapanış sermayesi (bugünkü realize edilmemiş).
+   172→   172→
+   173→   173→        Bugünden önce kapanan bahislerin PnL'i hesaba katılır.
+   174→   174→        Bugün realizado olan kârlar bugünkü exposure cap'ini şişirmez.
+   175→   175→        Yarınki başlangıç = bugünkü kapanış.
+   176→   176→
+   177→   177→        Bu sayede:
+   178→   178→        - Daily starting capital = önceki günün kapanış sermayesi
+   179→   179→        - Max exposure = %25 × dünkü kapanış
+   180→   180→        - Feedback loop önlenir (unrealized PnL dahil edilmez)
+   181→   181→
+   182→   182→        Formula from: utils/formulas.py → conservative_portfolio_value()
+   183→   183→        """
+   184→   184→        if not self.db:
+   185→   185→            return self.portfolio_value
+   186→   186→        try:
+   187→   187→            from datetime import datetime, timezone
+   188→   188→
+   189→   189→            from sqlalchemy import or_
+   190→   190→
+   191→   191→            from database.models import Bet
+   192→   192→
+   193→   193→            initial = self.config.INITIAL_PORTFOLIO
+   194→   194→            # Sadece BUGÜNDEN ÖNCE kapanan bahislerin PnL'i
+   195→   195→            now = datetime.now(timezone.utc).replace(tzinfo=None)
+   196→   196→            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+   197→   197→            realized = float(
+   198→   198→                self.db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+   199→   199→                .filter(
+   200→   200→                    Bet.status.in_(("won", "lost", "settled", "closed_early")),
+   201→   201→                    or_(
+   202→   202→                        Bet.settled_at < today_start,
+   203→   203→                        Bet.closed_at < today_start,
+   204→   204→                    ),
+   205→   205→                )
+   206→   206→                .scalar()
+   207→   207→                or 0.0
+   208→   208→            )
+   209→   209→            # Use central formula
+   210→   210→            return conservative_portfolio_value(initial, realized)
+   211→   211→        except Exception:
+   212→   212→            return self.portfolio_value
+   213→   213→
+   214→   214→    @property
+   215→   215→    def daily_loss_limit_amount(self) -> float:
+   216→   216→        """Günlük zarar limiti = dünkü kapanış sermayesi × DAILY_LOSS_LIMIT."""
+   217→   217→        return self._conservative_portfolio_value() * self.config.DAILY_LOSS_LIMIT
+   218→   218→
+   219→   219→    def is_bot_locked(self) -> bool:
+   220→   220→        """Check if bot is locked."""
+   221→   221→        return self.daily_pnl <= -self.daily_loss_limit_amount
+   222→   222→
+   223→   223→    def get_daily_pnl(self) -> float:
+   224→   224→        """Get daily PnL."""
+   225→   225→        return self.daily_pnl
+   226→   226→
+   227→   227→    def get_total_exposure(self) -> float:
+   228→   228→        """Get total exposure (sum of `amount` for all open/active/placed bets)."""
+   229→   229→        if self.db:
+   230→   230→            try:
+   231→   231→                # Include all open-style statuses so freshly-placed bets are
+   232→   232→                # counted in exposure. "placed" is what BetPlacer writes
+   233→   233→                # immediately after writing the Bet row. Use `Bet.amount`
+   234→   234→                # (the column BetPlacer actually writes) rather than the
+   235→   235→                # legacy `stake_amount` which stays at 0.
+   236→   236→                total = (
+   237→   237→                    self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+   238→   238→                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
+   239→   239→                    .scalar()
+   240→   240→                )
+   241→   241→                return float(total or 0.0)
+   242→   242→            except Exception:
+   243→   243→                pass
+   244→   244→        exposure = sum(self.city_bet_counts.values()) * 20.0
+   245→   245→        return exposure
+   246→   246→
+   247→   247→    def get_portfolio_value(self) -> float:
+   248→   248→        """Get portfolio value."""
+   249→   249→        return self.portfolio_value
+   250→   250→
+   251→   251→    def _load_from_db(self):
+   252→   252→        """Load state from DB."""
+   253→   253→        if not self.db:
+   254→   254→            return
+   255→   255→        try:
+   256→   256→            portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+   257→   257→            if portfolio:
+   258→   258→                self.portfolio_value = portfolio.current_value or portfolio.initial_value or self.portfolio_value
+   259→   259→                self.daily_pnl = portfolio.daily_pnl or 0.0
+   260→   260→
+   261→   261→            active = self.db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
+   262→   262→            self.city_bet_counts = {}
+   263→   263→            self.open_bets_count = len(active)
+   264→   264→            for bet in active:
+   265→   265→                cc = bet.city_code or "unknown"
+   266→   266→                self.city_bet_counts[cc] = self.city_bet_counts.get(cc, 0) + 1
+   267→   267→        except Exception as e:
+   268→   268→            logger.warning("Risk load from DB warning: %s", e)
+   269→   269→
+   270→   270→    # ──────────────────────────────────────────────
+   271→   271→    # Active Risk Management — Position-Level Methods
+   272→   272→    # ──────────────────────────────────────────────
+   273→   273→    # These methods evaluate individual positions for early exit (stop-loss,
+   274→   274→    # take-profit, time decay, trailing stop) and portfolio rebalancing.
+   275→   275→    #
+   276→   276→    # risk_config comes from bot_config.risk (RiskConfig dataclass in settings.py)
+   277→   277→
+   278→   278→    def _get_risk_config(self):
+   279→   279→        """Return risk config with fallback defaults."""
+   280→   280→        try:
+   281→   281→            from config.settings import bot_config
+   282→   282→
+   283→   283→            return bot_config.risk
+   284→   284→        except Exception:
+   285→   285→            from config.settings import RiskConfig
+   286→   286→
+   287→   287→            return RiskConfig()
+   288→   288→
+   289→   289→    def check_stop_loss(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
+   290→   290→        """Stop-loss: pozisyon %stop_loss_pct'den fazla zarardaysa kapat.
+   291→   291→
+   292→   292→        PnL hesaplaması: (current_price - entry_price) / entry_price
+   293→   293→        Returns: (should_exit: bool, reason: str)
+   294→   294→        """
+   295→   295→        cfg = self._get_risk_config()
+   296→   296→        raw = bet.entry_price if bet.entry_price is not None else bet.price
+   297→   297→        entry = float(raw) if raw is not None else 0.0
+   298→   298→        if entry <= 0:
+   299→   299→            return False, ""
+   300→   300→        loss_pct = (current_price - entry) / entry
+   301→   301→        if loss_pct <= -cfg.stop_loss_pct:
+   302→   302→            return True, f"stop_loss: {loss_pct:.1%}"
+   303→   303→        return False, ""
+   304→   304→
+   305→   305→    def check_take_profit(self, bet, current_price: float, market=None) -> tuple:  # pylint: disable=unused-argument
+   306→   306→        """Take-profit: pozisyon %take_profit_pct'den fazla kardaysa realize et."""
+   307→   307→        cfg = self._get_risk_config()
+   308→   308→        raw = bet.entry_price if bet.entry_price is not None else bet.price
+   309→   309→        entry = float(raw) if raw is not None else 0.0
+   310→   310→        if entry <= 0:
+   311→   311→            return False, ""
+   312→   312→        profit_pct = (current_price - entry) / entry
+   313→   313→        if profit_pct >= cfg.take_profit_pct:
+   314→   314→            return True, f"take_profit: {profit_pct:.1%}"
+   315→   315→        return False, ""
+   316→   316→
+   317→   317→    def check_time_decay(self, bet, current_price: float, market) -> tuple:
+   318→   318→        """Time decay: settlement'a <time_decay_hours kala ve zarardaysa kapat."""
+   319→   319→        cfg = self._get_risk_config()
+   320→   320→        if not market or not hasattr(market, "target_date"):
+   321→   321→            return False, ""
+   322→   322→        try:
+   323→   323→            resolution = market.target_date
+   324→   324→            if not resolution:
+   325→   325→                return False, ""
+   326→   326→            # Naive datetime'leri timezone-aware yap
+   327→   327→            if resolution.tzinfo is None:
+   328→   328→                resolution = resolution.replace(tzinfo=timezone.utc)
+   329→   329→            now = datetime.now(timezone.utc)
+   330→   330→            hours_left = (resolution - now).total_seconds() / 3600
+   331→   331→            if hours_left <= 0:
+   332→   332→                return False, ""  # Zaten geçmiş, settlement halleder
+   333→   333→            if hours_left <= cfg.time_decay_hours:
+   334→   334→                raw = bet.entry_price if bet.entry_price is not None else bet.price
+   335→   335→                entry = float(raw) if raw is not None else 0.0
+   336→   336→                if entry > 0:
+   337→   337→                    loss_pct = (current_price - entry) / entry
+   338→   338→                    if loss_pct <= cfg.time_decay_threshold:
+   339→   339→                        return (
+   340→   340→                            True,
+   341→   341→                            f"time_decay: {hours_left:.1f}h left, {loss_pct:.1%}",
+   342→   342→                        )
+   343→   343→        except Exception:
+   344→   344→            pass
+   345→   345→        return False, ""
+   346→   346→
+   347→   347→    def check_trailing_stop(self, bet, current_price: float) -> tuple:
+   348→   348→        """Trailing stop: en yüksek fiyattan %trailing_stop_pct düşüşte kapat.
+   349→   349→
+   350→   350→        Sadece pozisyon kâra geçmişse (peak > entry) tetiklenir.
+   351→   351→        Peak <= entry ise pozisyon hiç kâra geçmemiş, TS koruma sağlamaz.
+   352→   352→        """
+   353→   353→        cfg = self._get_risk_config()
+   354→   354→        raw = bet.entry_price if bet.entry_price is not None else bet.price
+   355→   355→        entry = float(raw) if raw is not None else 0.0
+   356→   356→        if entry <= 0:
+   357→   357→            return False, ""
+   358→   358→
+   359→   359→        # Peak price'ı result_data'dan oku veya ilk defa set et
+   360→   360→        peak = entry
+   361→   361→        if bet.result_data:
+   362→   362→            try:
+   363→   363→                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
+   364→   364→                peak = float(data.get("peak_price", entry))
+   365→   365→            except Exception:
+   366→   366→                peak = entry
+   367→   367→
+   368→   368→        # Yeni tepe noktası var mı?
+   369→   369→        if current_price > peak:
+   370→   370→            peak = current_price
+   371→   371→            # Güncellenmiş peak değerini kaydet
+   372→   372→            try:
+   373→   373→                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
+   374→   374→                if not isinstance(data, dict):
+   375→   375→                    data = {}
+   376→   376→                data["peak_price"] = peak
+   377→   377→                bet.result_data = json.dumps(data)
+   378→   378→            except Exception:
+   379→   379→                pass
+   380→   380→
+   381→   381→        # Sadece pozisyon kâra geçmişse (peak > entry) TS uygula
+   382→   382→        # Peak <= entry ise pozisyon hiç kâra geçmemiş, TS tetiklenmesin
+   383→   383→        if peak <= entry:
+   384→   384→            return False, ""
+   385→   385→
+   386→   386→        # Tepeden düşüş kontrolü
+   387→   387→        if peak > 0:
+   388→   388→            drop_pct = (peak - current_price) / peak
+   389→   389→            if drop_pct >= cfg.trailing_stop_pct:
+   390→   390→                return (
+   391→   391→                    True,
+   392→   392→                    f"trailing_stop: dropped {drop_pct:.1%} from peak {peak:.3f}",
+   393→   393→                )
+   394→   394→
+   395→   395→        return False, ""
+   396→   396→
+   397→   397→    def check_early_exit(self, bet, current_price: float, market=None) -> tuple:
+   398→   398→        """Tüm erken çıkış kontrollerini sırayla çalıştır.
+   399→   399→
+   400→   400→        Returns: (should_exit: bool, reason: str)
+   401→   401→        """
+   402→   402→        # Minimum hold: bet aynı scan döngüsünde açıldıysa kapatma.
+   403→   403→        # Bu, resolve edilmiş market'lere anında bet açılıp kapanmasını engeller.
+   404→   404→        from datetime import datetime, timezone
+   405→   405→
+   406→   406→        now = datetime.now(timezone.utc)
+   407→   407→        placed = getattr(bet, "placed_at", None)
+   408→   408→        if placed:
+   409→   409→            if placed.tzinfo is None:
+   410→   410→                placed = placed.replace(tzinfo=timezone.utc)
+   411→   411→            hold_seconds = (now - placed).total_seconds()
+   412→   412→            if hold_seconds < 180:  # 3 dakika minimum hold
+   413→   413→                return False, "Hold (minimum hold period)"
+   414→   414→
+   415→   415→        # 1. Stop-loss
+   416→   416→        exit_bool, reason = self.check_stop_loss(bet, current_price, market)
+   417→   417→        if exit_bool:
+   418→   418→            return True, reason
+   419→   419→
+   420→   420→        # 2. Take-profit
+   421→   421→        exit_bool, reason = self.check_take_profit(bet, current_price, market)
+   422→   422→        if exit_bool:
+   423→   423→            return True, reason
+   424→   424→
+   425→   425→        # 3. Trailing stop
+   426→   426→        exit_bool, reason = self.check_trailing_stop(bet, current_price)
+   427→   427→        if exit_bool:
+   428→   428→            return True, reason
+   429→   429→
+   430→   430→        # 4. Time decay (sadece market objesi varsa)
+   431→   431→        if market is not None:
+   432→   432→            exit_bool, reason = self.check_time_decay(bet, current_price, market)
+   433→   433→            if exit_bool:
+   434→   434→                return True, reason
+   435→   435→
+   436→   436→        # 5. FIX (S4): Edge erosion — if the bet's edge has dropped below
+   437→   437→        # min_edge / 2, the original thesis is no longer valid. Close it
+   438→   438→        # before it bleeds further. This handles the case where the market
+   439→   439→        # price moved against us but stop-loss (which uses PnL%) hasn't
+   440→   440→        # triggered yet because the price move is small in absolute terms.
+   441→   441→        try:
+   442→   442→            entry_price = float(getattr(bet, "entry_price", 0) or 0)
+   443→   443→            if entry_price > 0 and current_price > 0:
+   444→   444→                side = str(getattr(bet, "side", "YES")).upper()
+   445→   445→                # Recompute current edge using entry fair value (model prob)
+   446→   446→                # vs current market price. If bet.raw_edge was stored, use it
+   447→   447→                # as the original fair-value estimate.
+   448→   448→                raw_edge_at_entry = float(getattr(bet, "raw_edge", 0) or 0)
+   449→   449→                if raw_edge_at_entry != 0:
+   450→   450→                    # Current edge = original edge - (price drift against us)
+   451→   451→                    if side == "YES":
+   452→   452→                        price_drift = current_price - entry_price
+   453→   453→                    else:  # NO side: price goes UP means NO got cheaper
+   454→   454→                        price_drift = entry_price - current_price
+   455→   455→                    current_edge = raw_edge_at_entry - price_drift
+   456→   456→                    min_edge_threshold = float(getattr(self.config, "MIN_EDGE", 0.05))
+   457→   457→                    # Close if edge dropped below half of min_edge (heavily degraded)
+   458→   458→                    if current_edge < (min_edge_threshold / 2):
+   459→   459→                        return True, f"Edge erosion: {current_edge:.1%} < {min_edge_threshold / 2:.1%} (threshold)"
+   460→   460→        except Exception:
+   461→   461→            pass  # Don't let edge erosion check crash the whole exit logic
+   462→   462→
+   463→   463→        return False, "Hold"
+   464→   464→
+   465→   465→    def check_rebalance(self, new_signal, active_bets: list) -> object:
+   466→   466→        """Yeni yüksek-edge fırsatı için eski pozisyonu kapatmaya değer mi?
+   467→   467→
+   468→   468→        Returns: Kapatılacak Bet nesnesi veya None
+   469→   469→        """
+   470→   470→        cfg = self._get_risk_config()
+   471→   471→        new_edge = getattr(new_signal, "edge", 0.0) or (isinstance(new_signal, dict) and new_signal.get("edge", 0.0))
+   472→   472→
+   473→   473→        for bet in active_bets:
+   474→   474→            # Bet edge'ini fair_value - entry_price'dan hesapla
+   475→   475→            bet_edge = float(getattr(bet, "expected_value", 0) or 0)
+   476→   476→            bet_pnl = float(getattr(bet, "unrealized_pnl", 0) or 0)
+   477→   477→            bet_stake = float(getattr(bet, "stake", bet.amount or 1))
+   478→   478→            bet_return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
+   479→   479→
+   480→   480→            # Yeni edge eski edge'in min_rebalance_edge_ratio katı mı?
+   481→   481→            if bet_edge > 0 and new_edge > bet_edge * cfg.min_rebalance_edge_ratio:
+   482→   482→                # Eski pozisyon zararda mı?
+   483→   483→                if bet_return_pct <= cfg.rebalance_min_loss:
+   484→   484→                    return bet
+   485→   485→
+   486→   486→        return None
+   487→   487→
+   488→   488→    def check_model_reversal(self, bet, analysis) -> tuple:
+   489→   489→        """Model olasılığı ters yönde önemli ölçüde değiştiyse erken çık.
+   490→   490→
+   491→   491→        Returns: (should_exit: bool, reason: str)
+   492→   492→        """
+   493→   493→        if not analysis:
+   494→   494→            return False, ""
+   495→   495→        try:
+   496→   496→            # Bet'in açıldığı andaki model prob'u fair_value'da saklı
+   497→   497→            entry_prob = float(getattr(bet, "fair_value", 0.5) or 0.5)
+   498→   498→            current_prob = float(getattr(analysis, "estimated_prob", 0.5) or 0.5)
+   499→   499→
+   500→   500→            if entry_prob <= 0 or current_prob <= 0:
+   501→   501→                return False, ""
+   502→   502→
+   503→   503→            prob_change = current_prob - entry_prob
+   504→   504→            bet_pnl = float(getattr(bet, "unrealized_pnl", 0) or 0)
+   505→   505→            bet_stake = float(getattr(bet, "stake", bet.amount or 1))
+   506→   506→            return_pct = bet_pnl / bet_stake if bet_stake > 0 else 0
+   507→   507→
+   508→   508→            # Model prob'u %20+ ters yönde değiştiyse ve zarardaysak çık
+   509→   509→            if prob_change <= -0.20 and return_pct <= -0.10:
+   510→   510→                return (
+   511→   511→                    True,
+   512→   512→                    f"model_reversal: prob {entry_prob:.0%}->{current_prob:.0%} ({prob_change:.0%})",
+   513→   513→                )
+   514→   514→
+   515→   515→            # Model prob'u %30+ ters yönde değiştiyse (karda da olsak çık)
+   516→   516→            if prob_change <= -0.30:
+   517→   517→                return (
+   518→   518→                    True,
+   519→   519→                    f"model_reversal: prob {entry_prob:.0%}->{current_prob:.0%} ({prob_change:.0%})",
+   520→   520→                )
+   521→   521→
+   522→   522→        except Exception:
+   523→   523→            pass
+   524→   524→        return False, ""
+   525→   525→
+   526→   526→    def calculate_position_size_with_risk(self, signal, portfolio_value: float) -> float:
+   527→   527→        """Kelly + risk limitleri ile pozisyon boyutu hesapla.
+   528→   528→
+   529→   529→        Akış:
+   530→   530→        1. Kelly criterion ile ideal boyut
+   531→   531→        2. max_bet_pct (%3) sınırı
+   532→   532→        3. Smart pool (%40 dokunulmaz)
+   533→   533→        4. Exposure cap (%25)
+   534→   534→        5. City cap kontrolü
+   535→   535→        """
+   536→   536→        model_prob = getattr(
+   537→   537→            signal,
+   538→   538→            "probability",
+   539→   539→            getattr(
+   540→   540→                signal,
+   541→   541→                "model_prob",
+   542→   542→                (signal.get("model_prob") if isinstance(signal, dict) else 0.5),
+   543→   543→            ),
+   544→   544→        )
+   545→   545→        market_price = getattr(
+   546→   546→            signal,
+   547→   547→            "entry_price",
+   548→   548→            (signal.get("entry_price") if isinstance(signal, dict) else 0.5),
+   549→   549→        )
+   550→   550→
+   551→   551→        if model_prob is None or model_prob <= 0 or market_price is None or market_price <= 0:
+   552→   552→            return 0.0
+   553→   553→
+   554→   554→        # 1. Kelly — use passed portfolio_value, not self.portfolio_value
+   555→   555→        kelly_size = kelly_bet_amount(
+   556→   556→            portfolio_value,
+   557→   557→            model_prob,
+   558→   558→            market_price,
+   559→   559→            fraction=self.config.KELLY_FRACTION,
+   560→   560→            min_bet=self.config.MIN_BET_SIZE,
+   561→   561→            max_bet_pct=self.config.MAX_BET_PCT,
+   562→   562→        )
+   563→   563→
+   564→   564→        # 2. Exposure cap (conservative: initial + realized_before_today)
+   565→   565→        conservative_value = self._conservative_portfolio_value()
+   566→   566→        current_exposure = self.get_total_exposure()
+   567→   567→        max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
+   568→   568→        remaining_cap = max(0, max_exposure - current_exposure)
+   569→   569→        kelly_size = min(kelly_size, remaining_cap)
+   570→   570→
+   571→   571→        # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
+   572→   572→        if kelly_size <= 0:
+   573→   573→            return 0.0
+   574→   574→        return max(kelly_size, self.config.MIN_BET_SIZE)
+   575→   575→
+   576→   576→
+   577→   577→class BettingEngine:
+   578→   578→    """Signal analysis, ladder betting, and position management."""
+   579→   579→
+   580→   580→    def __init__(self, db_session=None, risk_manager=None, weather_engine=None):
+   581→   581→        self.db = db_session
+   582→   582→        self.risk_manager = risk_manager
+   583→   583→        self.weather_engine = weather_engine
+   584→   584→        self.config = config
+   585→   585→
+   586→   586→    def analyze_signal(self, market_data: dict, model_prob: float, side: str = "YES") -> dict | None:
+   587→   587→        """Analyze signal, calculate edge and EV."""
+   588→   588→        yes_price = market_data.get("yes_price", 0.5)
+   589→   589→        if side.upper() == "NO":
+   590→   590→            market_price = 1.0 - yes_price
+   591→   591→            edge = (1.0 - model_prob) - market_price
+   592→   592→        else:
+   593→   593→            market_price = yes_price
+   594→   594→            edge = model_prob - market_price
+   595→   595→
+   596→   596→        ev = edge - self.config.FEE_DRAG
+   597→   597→        # Canonical source: bot_config.strategy.min_edge (matches calculator).
+   598→   598→        is_eligible = edge >= bot_config.strategy.min_edge and ev > 0
+   599→   599→
+   600→   600→        if not is_eligible:
+   601→   601→            return None
+   602→   602→
+   603→   603→        return {
+   604→   604→            "city_code": market_data.get("city_code", ""),
+   605→   605→            "strike_temp": market_data.get("strike_temp", 0),
+   606→   606→            "market_type": market_data.get("market_type", "HIGH"),
+   607→   607→            "model_prob": model_prob,
+   608→   608→            "market_price": market_price,
+   609→   609→            "edge": round(edge, 4),
+   610→   610→            "ev": round(ev, 4),
+   611→   611→            "is_eligible": True,
+   612→   612→            "side": side,
+   613→   613→        }
+   614→   614→
+   615→   615→    def create_ladder_orders(self, signal: dict, bet_size: float) -> list[dict]:
+   616→   616→        """Create 3-level ladder orders. All start as PENDING."""
+   617→   617→        edge = signal.get("edge", 0)
+   618→   618→        if edge < bot_config.strategy.min_edge:
+   619→   619→            return []
+   620→   620→
+   621→   621→        current_price = signal["market_price"]
+   622→   622→        ladder = [
+   623→   623→            {
+   624→   624→                "level": 1,
+   625→   625→                "price": round(current_price, 4),  # Level 1 = market price
+   626→   626→                "size": round(bet_size * 0.5, 2),
+   627→   627→                "status": "pending",
+   628→   628→                "filled_at": None,
+   629→   629→            },
+   630→   630→            {
+   631→   631→                "level": 2,
+   632→   632→                "price": max(0.01, round(current_price * 0.98, 4)),
+   633→   633→                "size": round(bet_size * 0.3, 2),
+   634→   634→                "status": "pending",
+   635→   635→                "filled_at": None,
+   636→   636→            },
+   637→   637→            {
+   638→   638→                "level": 3,
+   639→   639→                "price": max(0.01, round(current_price * 0.95, 4)),
+   640→   640→                "size": round(bet_size * 0.2, 2),
+   641→   641→                "status": "pending",
+   642→   642→                "filled_at": None,
+   643→   643→            },
+   644→   644→        ]
+   645→   645→        return ladder
+   646→   646→
+   647→   647→    def calculate_position_size(self, signal: dict, portfolio_value: float, risk_manager) -> float:
+   648→   648→        """Calculate position size using fractional Kelly and exposure caps."""
+   649→   649→        market_price = signal["market_price"]
+   650→   650→        kelly_size = risk_manager.calculate_kelly_bet_size(signal.get("model_prob", 0.5), market_price)
+   651→   651→
+   652→   652→        current_exposure = 0.0
+   653→   653→        if risk_manager and hasattr(risk_manager, "get_total_exposure"):
+   654→   654→            current_exposure = risk_manager.get_total_exposure()
+   655→   655→
+   656→   656→        if not risk_manager.check_exposure_cap(current_exposure, kelly_size):
+   657→   657→            # Use conservative portfolio value (initial + realized only)
+   658→   658→            conservative_value = risk_manager._conservative_portfolio_value()
+   659→   659→            max_allowed = (conservative_value * self.config.TOTAL_EXPOSURE_PCT) - current_exposure
+   660→   660→            kelly_size = min(kelly_size, max_allowed)
+   661→   661→
+   662→   662→        # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
+   663→   663→        if kelly_size <= 0:
+   664→   664→            return 0.0
+   665→   665→        return max(kelly_size, self.config.MIN_BET_SIZE)
+   666→   666→
+   667→   667→    async def analyze_market(self, market_data, portfolio_value, forecast=None):
+   668→   668→        """Wrapper for analyzing a specific market."""
+   669→   669→        if not market_data:
+   670→   670→            return None
+   671→   671→
+   672→   672→        if isinstance(market_data, dict):
+   673→   673→            city = market_data.get("city", "Unknown")
+   674→   674→            city_code = market_data.get("city_code", "")
+   675→   675→            strike_temp = market_data.get("strike_temp", 25.0)
+   676→   676→            market_type = market_data.get("market_type", "HIGH")
+   677→   677→            yes_price = market_data.get("yes_price", 0.5)
+   678→   678→        else:
+   679→   679→            city = getattr(market_data, "city", "Unknown")
+   680→   680→            city_code = getattr(market_data, "city_code", "")
+   681→   681→            strike_temp = getattr(market_data, "strike_temp", 25.0)
+   682→   682→            market_type = getattr(market_data, "market_type", "HIGH")
+   683→   683→            yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
+   684→   684→
+   685→   685→        model_prob = 0.55
+   686→   686→        side = "YES"
+   687→   687→        if forecast:
+   688→   688→            from utils.probability import estimate_probability as _ep
+   689→   689→
+   690→   690→            try:
+   691→   691→                mean = forecast.get("weighted_mean", 0) if isinstance(forecast, dict) else 0
+   692→   692→                std = forecast.get("weighted_std", 0) if isinstance(forecast, dict) else 0
+   693→   693→                model_prob = _ep(
+   694→   694→                    mean=float(mean),
+   695→   695→                    std=float(std),
+   696→   696→                    threshold=float(strike_temp),
+   697→   697→                    days_ahead=0,
+   698→   698→                    market_type=str(market_type),
+   699→   699→                )
+   700→   700→                # Edge-based side selection: pick whichever side gives positive edge
+   701→   701→                yes_edge = model_prob - yes_price
+   702→   702→                no_edge = (1.0 - model_prob) - (1.0 - yes_price)
+   703→   703→                side = "YES" if yes_edge >= no_edge else "NO"
+   704→   704→
+   705→   705→                # YES probability floor filter.
+   706→   706→                # Low-probability YES bets (< min_yes_prob) lose ~90% of the
+   707→   707→                # time even when edge-positive — skip them.
+   708→   708→                if side == "YES" and model_prob < bot_config.strategy.min_yes_prob:
+   709→   709→                    logger.debug(
+   710→   710→                        "Skipping YES side on %s: model_prob=%.3f < min_yes_prob=%.2f, yes_edge=%.4f no_edge=%.4f",
+   711→   711→                        city_code,
+   712→   712→                        model_prob,
+   713→   713→                        bot_config.strategy.min_yes_prob,
+   714→   714→                        yes_edge,
+   715→   715→                        no_edge,
+   716→   716→                    )
+   717→   717→                    return None
+   718→   718→            except Exception:
+   719→   719→                model_prob = 0.55
+   720→   720→
+   721→   721→        signal_dict = self.analyze_signal(
+   722→   722→            {
+   723→   723→                "city_code": city_code,
+   724→   724→                "city": city,
+   725→   725→                "strike_temp": strike_temp,
+   726→   726→                "market_type": market_type,
+   727→   727→                "yes_price": yes_price,
+   728→   728→                "market_price": yes_price,
+   729→   729→            },
+   730→   730→            model_prob,
+   731→   731→            side=side,
+   732→   732→        )
+   733→   733→
+   734→   734→        if not signal_dict:
+   735→   735→            return None
+   736→   736→
+   737→   737→        bet_size = 10.0
+   738→   738→        if self.risk_manager and hasattr(self.risk_manager, "calculate_position_size"):
+   739→   739→            try:
+   740→   740→                bet_size = self.calculate_position_size(signal_dict, portfolio_value, self.risk_manager)
+   741→   741→            except Exception:
+   742→   742→                bet_size = 10.0
+   743→   743→        signal_dict["bet_size"] = bet_size
+   744→   744→
+   745→   745→        sig = SimpleSignal(
+   746→   746→            market_id=(
+   747→   747→                getattr(market_data, "market_id", "")
+   748→   748→                if not isinstance(market_data, dict)
+   749→   749→                else market_data.get("market_id", "")
+   750→   750→            ),
+   751→   751→            city=city,
+   752→   752→            city_code=city_code,
+   753→   753→            outcome="YES" if model_prob >= 0.5 else "NO",
+   754→   754→            entry_price=yes_price,
+   755→   755→            fair_value=model_prob,
+   756→   756→            edge=signal_dict.get("edge", 0),
+   757→   757→            probability=model_prob,
+   758→   758→            bet_size=bet_size,
+   759→   759→            ladder_orders=[],
+   760→   760→            side=side,
+   761→   761→        )
+   762→   762→
+   763→   763→        if sig.edge > bot_config.strategy.min_edge:
+   764→   764→            sig.ladder_orders = self.create_ladder_orders(signal_dict, sig.bet_size)
+   765→   765→
+   766→   766→        return sig
+   767→   767→
+   768→   768→    async def execute_signal(self, signal, market_data):
+   769→   769→        """Wrapper for placing a simulated/paper bet."""
+   770→   770→        city = getattr(signal, "city", "Unknown")
+   771→   771→        bet_size = getattr(signal, "bet_size", 10.0)
+   772→   772→        logger.info("Placing bet for %s size $%.2f", city, bet_size)
+   773→   773→
+   774→   774→        try:
+   775→   775→            if isinstance(market_data, dict):
+   776→   776→                market_id = market_data.get("market_id") or market_data.get("event_id") or ""
+   777→   777→                city_code = market_data.get("city_code", "")
+   778→   778→                yes_price = market_data.get("yes_price", 0.5)
+   779→   779→            else:
+   780→   780→                market_id = getattr(market_data, "market_id", getattr(market_data, "event_id", ""))
+   781→   781→                city_code = getattr(market_data, "city_code", "")
+   782→   782→                yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
+   783→   783→
+   784→   784→            bet = Bet(
+   785→   785→                market_id=str(market_id),
+   786→   786→                city_code=city_code,
+   787→   787→                city=city,
+   788→   788→                outcome=getattr(signal, "outcome", "YES"),
+   789→   789→                stake=bet_size,
+   790→   790→                stake_amount=bet_size,
+   791→   791→                entry_price=getattr(signal, "entry_price", yes_price),
+   792→   792→                current_price=getattr(signal, "entry_price", yes_price),
+   793→   793→                fair_value=getattr(signal, "fair_value", 0.5),
+   794→   794→                expected_value=getattr(signal, "edge", 0.0),
+   795→   795→                unrealized_pnl=0.0,
+   796→   796→                realized_pnl=0.0,
+   797→   797→                strike_temp=getattr(signal, "strike_temp", 25.0)
+   798→   798→                or (
+   799→   799→                    market_data.get("strike_temp")
+   800→   800→                    if isinstance(market_data, dict)
+   801→   801→                    else getattr(market_data, "strike_temp", 25.0)
+   802→   802→                ),
+   803→   803→                bet_type=getattr(signal, "outcome", "YES"),
+   804→   804→                side=getattr(signal, "side", "YES"),
+   805→   805→                status="active",
+   806→   806→                placed_at=datetime.now(timezone.utc),
+   807→   807→                ladder_data=(
+   808→   808→                    json.dumps(getattr(signal, "ladder_orders", [])) if hasattr(signal, "ladder_orders") else None
+   809→   809→                ),
+   810→   810→            )
+   811→   811→            if self.db:
+   812→   812→                self.db.add(bet)
+   813→   813→                self.db.commit()
+   814→   814→                self.db.refresh(bet)
+   815→   815→                if self.risk_manager and hasattr(self.risk_manager, "increment_city_bet"):
+   816→   816→                    self.risk_manager.increment_city_bet(city_code)
+   817→   817→            return bet
+   818→   818→        except Exception as e:
+   819→   819→            logger.error("Bet DB insert error (fallback): %s", e)
+   820→   820→            if self.db:
+   821→   821→                self.db.rollback()
+   822→   822→
+   823→   823→            return MockBet(
+   824→   824→                city=city,
+   825→   825→                outcome=getattr(signal, "outcome", "YES"),
+   826→   826→                bet_size=bet_size,
+   827→   827→                entry_price=getattr(signal, "entry_price", 0.5),
+   828→   828→                fair_value=getattr(signal, "fair_value", 0.5),
+   829→   829→                edge=getattr(signal, "edge", 0.0),
+   830→   830→            )
+   831→   831→
+   832→   832→
+   833→   833→class SIALoop:
+   834→   834→    """Self-Improving Algorithm loop using Brier Score optimization."""
+   835→   835→
+   836→   836→    def __init__(self, db_session_factory=None, cfg=None):
+   837→   837→        self.db_session_factory = db_session_factory
+   838→   838→        self.config = cfg or config
+   839→   839→        self.model_weights = self.config.MODEL_WEIGHTS.copy()
+   840→   840→
+   841→   841→        # Load persisted weights
+   842→   842→        persisted_weights = load_weights()
+   843→   843→        if persisted_weights:
+   844→   844→            for k, v in persisted_weights.items():
+   845→   845→                if k in self.model_weights:
+   846→   846→                    self.model_weights[k] = v
+   847→   847→            logger.info(
+   848→   848→                "SIA weights loaded from disk: %s",
+   849→   849→                {k: round(v, 4) for k, v in self.model_weights.items()},
+   850→   850→            )
+   851→   851→
+   852→   852→        # Load persisted strategy parameters
+   853→   853→        persisted_strategy = load_strategy_params()
+   854→   854→        if persisted_strategy:
+   855→   855→            strategy = bot_config.strategy
+   856→   856→            if "min_edge" in persisted_strategy:
+   857→   857→                strategy.min_edge = float(persisted_strategy["min_edge"])
+   858→   858→            if "kelly_fraction" in persisted_strategy:
+   859→   859→                strategy.kelly_fraction = float(persisted_strategy["kelly_fraction"])
+   860→   860→            logger.info("SIA strategy parameters loaded from disk: %s", persisted_strategy)
+   861→   861→
+   862→   862→    def calculate_brier_score(self, predictions: list[float], outcomes: list[bool]) -> float:
+   863→   863→        """Calculate Brier Score."""
+   864→   864→        if len(predictions) != len(outcomes) or len(predictions) == 0:
+   865→   865→            return 1.0
+   866→   866→
+   867→   867→        squared_errors = [(pred - (1.0 if outcome else 0.0)) ** 2 for pred, outcome in zip(predictions, outcomes)]
+   868→   868→        brier_score = sum(squared_errors) / len(squared_errors)
+   869→   869→        return round(brier_score, 4)
+   870→   870→
+   871→   871→    def analyze_model_performance(self, days: int = 30) -> dict[str, dict]:
+   872→   872→        """Analyze performance of each model over recent settled bets.
+   873→   873→
+   874→   874→        For each settled bet, fetches the associated Analysis record containing
+   875→   875→        per-model probability predictions (``model_predictions`` JSON).  The
+   876→   876→        YES/NO outcome is determined from the **market resolution data**
+   877→   877→        (``raw_data`` JSON → ``outcome`` field), ensuring that Brier is always
+   878→   878→        computed against P(YES) regardless of which side the bot bet.
+   879→   879→
+   880→   880→        Models with fewer than 10 predictions are logged but their statistics
+   881→   881→        carry the ``frozen`` flag so ``optimize_weights`` can skip them.
+   882→   882→        """
+   883→   883→        performance = {}
+   884→   884→
+   885→   885→        if not self.db_session_factory:
+   886→   886→            for model_name in self.model_weights.keys():
+   887→   887→                performance[model_name] = {
+   888→   888→                    "brier_score": 0.25,
+   889→   889→                    "accuracy": 0.5,
+   890→   890→                    "num_predictions": 0,
+   891→   891→                    "avg_confidence": 0.5,
+   892→   892→                }
+   893→   893→            return performance
+   894→   894→
+   895→   895→        db = self.db_session_factory()
+   896→   896→        try:
+   897→   897→            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+   898→   898→
+   899→   899→            # ── Load settled bets with their analysis + market resolution ──
+   900→   900→            settled_bets = (
+   901→   901→                db.query(Bet, Analysis, WeatherMarket)
+   902→   902→                .join(Analysis, Bet.analysis_id == Analysis.id, isouter=True)
+   903→   903→                .join(WeatherMarket, Bet.market_id == WeatherMarket.id, isouter=True)
+   904→   904→                .filter(
+   905→   905→                    Bet.status.in_(["won", "lost", "closed_early"]),
+   906→   906→                    func.coalesce(Bet.settled_at, Bet.closed_at) >= cutoff,
+   907→   907→                )
+   908→   908→                .all()
+   909→   909→            )
+   910→   910→
+   911→   911→            # Collect per-model prediction/outcome pairs
+   912→   912→            from collections import defaultdict
+   913→   913→
+   914→   914→            model_data: dict[str, list] = defaultdict(list)
+   915→   915→            # model_data[model_name] = list of (predicted_prob, actual_yes)
+   916→   916→
+   917→   917→            for _bet, analysis, market in settled_bets:
+   918→   918→                if analysis is None or not analysis.model_predictions:
+   919→   919→                    continue  # skip bets without per-model predictions
+   920→   920→
+   921→   921→                try:
+   922→   922→                    mp = json.loads(analysis.model_predictions)
+   923→   923→                except (TypeError, json.JSONDecodeError):
+   924→   924→                    continue
+   925→   925→
+   926→   926→                model_probs: dict = mp.get("model_probs", {})
+   927→   927→                if not model_probs:
+   928→   928→                    continue
+   929→   929→
+   930→   930→                # Resolve YES/NO outcome from market resolution data,
+   931→   931→                # NOT from bet.status (which reflects the bot's side,
+   932→   932→                # not the market truth).
+   933→   933→                outcome_yes = self._resolve_market_outcome(market)
+   934→   934→
+   935→   935→                if outcome_yes is None:
+   936→   936→                    continue  # market not yet resolved → skip
+   937→   937→
+   938→   938→                for model_name, prob in model_probs.items():
+   939→   939→                    if model_name not in self.model_weights:
+   940→   940→                        continue
+   941→   941→                    clamped = max(0.01, min(0.99, float(prob)))
+   942→   942→                    model_data[model_name].append((clamped, outcome_yes))
+   943→   943→
+   944→   944→            # ── Compute per-model Brier ──────────────────────────────────
+   945→   945→            for model_name in self.model_weights.keys():
+   946→   946→                records = model_data.get(model_name, [])
+   947→   947→
+   948→   948→                if not records:
+   949→   949→                    performance[model_name] = {
+   950→   950→                        "brier_score": 0.25,
+   951→   951→                        "accuracy": 0.5,
+   952→   952→                        "num_predictions": 0,
+   953→   953→                        "avg_confidence": 0.5,
+   954→   954→                        "frozen": True,
+   955→   955→                    }
+   956→   956→                    continue
+   957→   957→
+   958→   958→                predictions = [r[0] for r in records]
+   959→   959→                outcomes_bool = [r[1] for r in records]
+   960→   960→
+   961→   961→                brier_score = self.calculate_brier_score(predictions, outcomes_bool)
+   962→   962→                correct = sum(1 for pred, out in zip(predictions, outcomes_bool) if (pred >= 0.5) == out)
+   963→   963→                num_pred = len(predictions)
+   964→   964→                accuracy = correct / num_pred if num_pred else 0
+   965→   965→                frozen = num_pred < 10
+   966→   966→
+   967→   967→                if frozen:
+   968→   968→                    logger.info(
+   969→   969→                        "SIA: %s has only %d predictions (< 10) — weight frozen",
+   970→   970→                        model_name,
+   971→   971→                        num_pred,
+   972→   972→                    )
+   973→   973→
+   974→   974→                performance[model_name] = {
+   975→   975→                    "brier_score": brier_score,
+   976→   976→                    "accuracy": round(accuracy, 4),
+   977→   977→                    "num_predictions": num_pred,
+   978→   978→                    "avg_confidence": (round(sum(predictions) / num_pred, 4) if num_pred else 0),
+   979→   979→                    "frozen": frozen,
+   980→   980→                }
+   981→   981→
+   982→   982→            return performance
+   983→   983→        except Exception:
+   984→   984→            logger.exception("Error analyzing model performance")
+   985→   985→            return {}
+   986→   986→        finally:
+   987→   987→            db.close()
+   988→   988→
+   989→   989→    @staticmethod
+   990→   990→    def _resolve_market_outcome(market) -> bool | None:
+   991→   991→        """Resolve YES/NO outcome from market resolution data (raw_data JSON).
+   992→   992→
+   993→   993→        Returns ``True`` if the market resolved YES, ``False`` if NO,
+   994→   994→        ``None`` if not yet resolved or unknown.
+   995→   995→        """
+   996→   996→        if market is None:
+   997→   997→            return None
+   998→   998→        raw = getattr(market, "raw_data", None)
+   999→   999→        if not raw:
+  1000→  1000→            return None
+  1001→  1001→        try:
+  1002→  1002→            rd = json.loads(raw) if isinstance(raw, str) else raw
+  1003→  1003→            outcome = rd.get("outcome", "")
+  1004→  1004→            if outcome == "YES":
+  1005→  1005→                return True
+  1006→  1006→            if outcome == "NO":
+  1007→  1007→                return False
+  1008→  1008→        except (TypeError, json.JSONDecodeError):
+  1009→  1009→            pass
+  1010→  1010→        return None
+  1011→  1011→
+  1012→  1012→    def optimize_weights(self, performance_data: dict[str, dict]) -> dict[str, float]:
+  1013→  1013→        """Optimize model weights according to Brier Scores.
+  1014→  1014→
+  1015→  1015→        Models whose ``frozen`` flag is ``True`` (fewer than 10 predictions)
+  1016→  1016→        keep their current weight unchanged.  Remaining weights are
+  1017→  1017→        redistributed proportionally and normalized to sum to 1.0.
+  1018→  1018→        """
+  1019→  1019→        new_weights = {}
+  1020→  1020→
+  1021→  1021→        # Separate frozen vs optimizable models
+  1022→  1022→        frozen_models = {
+  1023→  1023→            m: self.model_weights.get(m, 0.0) for m, d in performance_data.items() if d.get("frozen", False)
+  1024→  1024→        }
+  1025→  1025→        optimizable = {m: d for m, d in performance_data.items() if not d.get("frozen", False)}
+  1026→  1026→
+  1027→  1027→        if optimizable:
+  1028→  1028→            frozen_total = sum(frozen_models.values())
+  1029→  1029→            remaining_budget = 1.0 - frozen_total
+  1030→  1030→
+  1031→  1031→            inverse_scores = {model: max(0.01, 1.0 - data["brier_score"]) for model, data in optimizable.items()}
+  1032→  1032→            total_inv = sum(inverse_scores.values())
+  1033→  1033→
+  1034→  1034→            if total_inv > 0:
+  1035→  1035→                for model, score in inverse_scores.items():
+  1036→  1036→                    new_weights[model] = round(score / total_inv * remaining_budget, 4)
+  1037→  1037→            else:
+  1038→  1038→                # All inverse scores collapsed; distribute remaining budget equally
+  1039→  1039→                n_opt = len(optimizable) if optimizable else 1
+  1040→  1040→                for model in optimizable:
+  1041→  1041→                    new_weights[model] = round(remaining_budget / n_opt, 4)
+  1042→  1042→        else:
+  1043→  1043→            # All models frozen — keep existing weights
+  1044→  1044→            new_weights = dict(self.model_weights)
+  1045→  1045→
+  1046→  1046→        # Carry frozen weights forward
+  1047→  1047→        new_weights.update(frozen_models)
+  1048→  1048→
+  1049→  1049→        logger.info("SIA OPTIMIZASYONU:")
+  1050→  1050→        for model, weight in new_weights.items():
+  1051→  1051→            old_weight = self.model_weights.get(model, 0)
+  1052→  1052→            change = weight - old_weight
+  1053→  1053→            arrow = "^" if change > 0 else "v" if change < 0 else "="
+  1054→  1054→            logger.info(
+  1055→  1055→                "  %s: %.2f%% %s %.2f%% (%+.2f%%)",
+  1056→  1056→                model,
+  1057→  1057→                old_weight * 100,
+  1058→  1058→                arrow,
+  1059→  1059→                weight * 100,
+  1060→  1060→                change * 100,
+  1061→  1061→            )
+  1062→  1062→        # Persist learned weights to disk so the next process
+  1063→  1063→        # restart picks them up. Threshold (0.001) is enforced
+  1064→  1064→        # inside save_weights so we do not spam writes on tiny
+  1065→  1065→        # drift between optimization cycles.
+  1066→  1066→        save_weights(new_weights)
+  1067→  1067→
+  1068→  1068→        return new_weights
+  1069→  1069→
+  1070→  1070→    def optimize_strategy_params(self, performance_summary: dict[str, float]):
+  1071→  1071→        """SIA Financial Feedback Agent: Autonomous tuning of betting parameters.
+  1072→  1072→
+  1073→  1073→        Inspired by hexo-ai/sia architecture: analyzes performance logs and
+  1074→  1074→        updates the Target Agent's (bot) harness/settings.
+  1075→  1075→        """
+  1076→  1076→        if not performance_summary:
+  1077→  1077→            return
+  1078→  1078→
+  1079→  1079→        win_rate = performance_summary.get("win_rate", 0.5)
+  1080→  1080→        total_roi = performance_summary.get("total_roi", 0.0)
+  1081→  1081→
+  1082→  1082→        # Access the strategy config
+  1083→  1083→        strategy = bot_config.strategy
+  1084→  1084→
+  1085→  1085→        logger.info(
+  1086→  1086→            "SIA FINANCIAL FEEDBACK: Win Rate=%.2f%%, ROI=%.2f%%",
+  1087→  1087→            win_rate * 100,
+  1088→  1088→            total_roi,
+  1089→  1089→        )
+  1090→  1090→
+  1091→  1091→        # 1. Selectivity (min_edge)
+  1092→  1092→        if win_rate < 0.45:
+  1093→  1093→            # Low win rate: tighten the filter
+  1094→  1094→            old_edge = strategy.min_edge
+  1095→  1095→            strategy.min_edge = min(0.15, strategy.min_edge + 0.01)
+  1096→  1096→            logger.info(
+  1097→  1097→                "  min_edge: %.2f -> %.2f (Selectivity INCREASED due to low Win Rate)",
+  1098→  1098→                old_edge,
+  1099→  1099→                strategy.min_edge,
+  1100→  1100→            )
+  1101→  1101→        elif win_rate > 0.60 and total_roi > 5:
+  1102→  1102→            # High win rate & profit: relax filter to find more trades
+  1103→  1103→            old_edge = strategy.min_edge
+  1104→  1104→            strategy.min_edge = max(0.01, strategy.min_edge - 0.005)
+  1105→  1105→            logger.info(
+  1106→  1106→                "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)",
+  1107→  1107→                old_edge,
+  1108→  1108→                strategy.min_edge,
+  1109→  1109→            )
+  1110→  1110→
+  1111→  1111→        # 2. Risk Appetite (kelly_fraction)
+  1112→  1112→        if total_roi < -10:
+  1113→  1113→            # Significant drawdown: reduce risk
+  1114→  1114→            old_kelly = strategy.kelly_fraction
+  1115→  1115→            strategy.kelly_fraction = max(0.05, strategy.kelly_fraction - 0.05)
+  1116→  1116→            logger.info(
+  1117→  1117→                "  kelly_fraction: %.2f -> %.2f (Risk REDUCED due to drawdown)",
+  1118→  1118→                old_kelly,
+  1119→  1119→                strategy.kelly_fraction,
+  1120→  1120→            )
+  1121→  1121→        elif total_roi > 10 and win_rate > 0.55:
+  1122→  1122→            # High growth: slightly increase risk (capped at 0.25)
+  1123→  1123→            old_kelly = strategy.kelly_fraction
+  1124→  1124→            strategy.kelly_fraction = min(0.25, strategy.kelly_fraction + 0.02)
+  1125→  1125→            logger.info(
+  1126→  1126→                "  kelly_fraction: %.2f -> %.2f (Risk INCREASED due to strong growth)",
+  1127→  1127→                old_kelly,
+  1128→  1128→                strategy.kelly_fraction,
+  1129→  1129→            )
+  1130→  1130→
+  1131→  1131→        # Persist changes
+  1132→  1132→        save_strategy_params({"min_edge": strategy.min_edge, "kelly_fraction": strategy.kelly_fraction})
+  1133→  1133→
+  1134→  1134→    def run_optimization_cycle(self) -> bool:
+  1135→  1135→        """Execute full SIA optimization cycle (Models + Strategy)."""
+  1136→  1136→        if not self.db_session_factory:
+  1137→  1137→            logger.error("No db_session_factory, cannot run optimization")
+  1138→  1138→            return False
+  1139→  1139→
+  1140→  1140→        db = self.db_session_factory()
+  1141→  1141→        try:
+  1142→  1142→            logger.info("SIA Multi-Agent Loop baslatiliyor...")
+  1143→  1143→
+  1144→  1144→            # --- 1. Model Weights Optimization (Legacy SIA) ---
+  1145→  1145→            performance = self.analyze_model_performance(days=30)
+  1146→  1146→            if performance:
+  1147→  1147→                new_weights = self.optimize_weights(performance)
+  1148→  1148→                self.model_weights = new_weights
+  1149→  1149→                if hasattr(self.config, "MODEL_WEIGHTS"):
+  1150→  1150→                    setattr(self.config, "MODEL_WEIGHTS", new_weights)
+  1151→  1151→
+  1152→  1152→            # --- 2. Strategy Parameter Optimization (Financial SIA) ---
+  1153→  1153→            # Aggregate overall stats for the feedback agent
+  1154→  1154→            # Include closed_early — these are real exits with real PnL
+  1155→  1155→
+  1156→  1156→            _closed_statuses = ("won", "lost", "settled", "closed_early")
+  1157→  1157→
+  1158→  1158→            all_closed = db.query(Bet.pnl, Bet.amount).filter(Bet.status.in_(_closed_statuses)).all()
+  1159→  1159→            win_count = sum(1 for b in all_closed if (b.pnl or 0) > 0)
+  1160→  1160→            loss_count = sum(1 for b in all_closed if (b.pnl or 0) <= 0)
+  1161→  1161→            total = win_count + loss_count
+  1162→  1162→
+  1163→  1163→            # ROI = realized PnL / total stake (not portfolio.total_value)
+  1164→  1164→            total_realized = sum(b.pnl or 0.0 for b in all_closed)
+  1165→  1165→            total_stake = sum(b.amount or 0.0 for b in all_closed)
+  1166→  1166→            roi = (total_realized / total_stake * 100) if total_stake > 0 else 0.0
+  1167→  1167→
+  1168→  1168→            summary = {
+  1169→  1169→                "win_rate": win_count / total if total > 0 else 0.5,
+  1170→  1170→                "total_roi": roi,
+  1171→  1171→                "total_bets": total,
+  1172→  1172→            }
+  1173→  1173→            self.optimize_strategy_params(summary)
+  1174→  1174→
+  1175→  1175→            # --- 3. Persist and Record ---
+  1176→  1176→            for model_name, perf in performance.items():
+  1177→  1177→                record = ModelPerformance(
+  1178→  1178→                    model_name=model_name,
+  1179→  1179→                    brier_score=perf["brier_score"],
+  1180→  1180→                    accuracy=perf["accuracy"],
+  1181→  1181→                    num_predictions=perf["num_predictions"],
+  1182→  1182→                    weight=self.model_weights.get(model_name, 0),
+  1183→  1183→                    recorded_at=datetime.now(timezone.utc),
+  1184→  1184→                )
+  1185→  1185→                db.add(record)
+  1186→  1186→
+  1187→  1187→            db.commit()
+  1188→  1188→            logger.info("SIA Loop tamamlandi. Model agirliklari ve strateji parametreleri guncellendi.")
+  1189→  1189→            return True
+  1190→  1190→        except Exception as e:
+  1191→  1191→            db.rollback()
+  1192→  1192→            logger.error("SIA Loop hatasi: %s", e, exc_info=True)
+  1193→  1193→            return False
+  1194→  1194→        finally:
+  1195→  1195→            db.close()
+  1196→  1196→
+  1197→  1197→    def get_adjusted_probability(self, base_prob: float, _model_name: str, recent_brier: float) -> float:
+  1198→  1198→        """Adjust base probability based on recent model Brier Score."""
+  1199→  1199→        confidence_factor = 1.0 - (recent_brier * 0.5)
+  1200→  1200→        confidence_factor = max(0.5, min(1.0, confidence_factor))
+  1201→  1201→        adjusted_prob = 0.5 + (base_prob - 0.5) * confidence_factor
+  1202→  1202→        return round(max(0.0, min(1.0, adjusted_prob)), 4)
+  1203→  1203→

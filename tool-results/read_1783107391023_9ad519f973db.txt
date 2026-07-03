@@ -1,0 +1,659 @@
+     1→"""Polymarket scraper module fetching and filtering weather events."""
+     2→
+     3→import json
+     4→import logging
+     5→import re
+     6→from datetime import UTC, datetime
+     7→
+     8→import requests
+     9→
+    10→from config.settings import bot_config, config
+    11→from database.db import get_session
+    12→from database.models import WeatherMarket
+    13→from engine.market_parser import MarketParser
+    14→from scrapers.async_client import AsyncHttpClient
+    15→from utils.errors import ScraperError
+    16→from utils.retry import retry
+    17→
+    18→logger = logging.getLogger("SCRAPER_POLYMARKET")
+    19→
+    20→
+    21→def get_market_fee_rate(market_data: dict) -> float:
+    22→    """Extract fee rate from feeSchedule (new) or takerBaseFee (legacy).
+    23→
+    24→    Polymarket docs (March 2026): "Fees should now be calculated using the
+    25→    feeSchedule object within a market." The feeSchedule contains:
+    26→      - rate: taker fee rate (e.g. "0.05" for weather)
+    27→      - exponent: fee curve exponent (typically 1)
+    28→      - taker_only: whether only takers pay
+    29→      - rebate_rate: maker rebate percentage
+    30→
+    31→    Falls back to weather category default (0.05) if no feeSchedule found.
+    32→    """
+    33→    from config.settings import bot_config
+    34→
+    35→    default_rate = bot_config.weather_fee_rate  # 0.05
+    36→
+    37→    # New: feeSchedule object (Polymarket March 2026+)
+    38→    fee_schedule = market_data.get("feeSchedule")
+    39→    if fee_schedule and isinstance(fee_schedule, dict):
+    40→        rate = fee_schedule.get("rate")
+    41→        if rate is not None:
+    42→            try:
+    43→                return float(rate)
+    44→            except (TypeError, ValueError):
+    45→                pass
+    46→
+    47→    # Legacy: takerBaseFee in basis points
+    48→    taker_base_fee = market_data.get("takerBaseFee")
+    49→    if taker_base_fee is not None:
+    50→        try:
+    51→            return float(taker_base_fee) / 10000  # bps to decimal
+    52→        except (TypeError, ValueError):
+    53→            pass
+    54→
+    55→    # Legacy: flat taker_fee field
+    56→    taker_fee = market_data.get("taker_fee")
+    57→    if taker_fee is not None:
+    58→        try:
+    59→            return float(taker_fee)
+    60→        except (TypeError, ValueError):
+    61→            pass
+    62→
+    63→    return default_rate
+    64→
+    65→
+    66→class PolymarketScraper:
+    67→    """Scrapes weather prediction markets from Polymarket Gamma API."""
+    68→
+    69→    def __init__(self):
+    70→        self.gamma_url = bot_config.polymarket.gamma_url
+    71→        self.keywords = bot_config.polymarket.weather_keywords
+    72→        self._async_client = None
+    73→
+    74→    async def init_session(self):
+    75→        """Mock init session for test compatibility."""
+    76→        pass
+    77→
+    78→    async def close_session(self):
+    79→        """Close the AsyncHttpClient aiohttp session (if any)."""
+    80→        client = getattr(self, "_async_client", None)
+    81→        if client is not None:
+    82→            await client.aclose()
+    83→
+    84→    @retry(max_attempts=3, delay=5, exceptions=(requests.RequestException,))
+    85→    def _fetch_raw_markets(self) -> list[dict]:
+    86→        """Polymarket'ten ham veri çek — public-search + today+2 gün + parallel.
+    87→
+    88→        Tier 3 #12: parallel path now goes through AsyncHttpClient which
+    89→        uses aiohttp + bounded concurrency (8) + 250 ms per-host throttle
+    90→        and an in-process cache. The sync ThreadPoolExecutor path is
+    91→        kept as the no-aiohttp fallback (the AsyncHttpClient handles
+    92→        that automatically via ``_HAS_AIOHTTP``).
+    93→        """
+    94→        from datetime import timedelta
+    95→        from urllib.parse import urlparse
+    96→
+    97→        today = datetime.now(UTC).replace(tzinfo=None)
+    98→        # Generate date strings in multiple formats to match Polymarket titles
+    99→        # which use "June 7" (no zero-pad), "June 07" (zero-pad), or "Jun 7".
+   100→        import calendar
+   101→
+   102→        date_strs = []
+   103→        for i in range(3):
+   104→            d = today + timedelta(days=i)
+   105→            month_name = calendar.month_name[d.month]  # "June"
+   106→            month_abbr = calendar.month_abbr[d.month]  # "Jun"
+   107→            day_no_pad = str(d.day)  # "7"
+   108→            day_zero_pad = f"{d.day:02d}"  # "07"
+   109→            date_strs.extend(
+   110→                [
+   111→                    f"{month_name} {day_no_pad}",  # "June 7"
+   112→                    f"{month_name} {day_zero_pad}",  # "June 07"
+   113→                    f"{month_abbr} {day_no_pad}",  # "Jun 7"
+   114→                    f"{month_abbr} {day_zero_pad}",  # "Jun 07"
+   115→                ]
+   116→            )
+   117→
+   118→        queries = [
+   119→            "highest temperature",
+   120→            "lowest temperature",
+   121→            "temperature",
+   122→            "weather temperature",
+   123→        ]
+   124→        # Add date-specific queries so Gamma API returns upcoming markets
+   125→        # instead of old/popular ones. E.g. "temperature July 3".
+   126→        for i in range(3):
+   127→            d = today + timedelta(days=i)
+   128→            month_name = calendar.month_name[d.month]
+   129→            day_no_pad = str(d.day)
+   130→            queries.append(f"temperature {month_name} {day_no_pad}")
+   131→            queries.append(f"highest temperature {month_name} {day_no_pad}")
+   132→        # Add city-specific queries to cover ALL markets on Polymarket.
+   133→        # Each query returns up to limit_per_type results from Gamma API.
+   134→        queries += [
+   135→            # US cities (high volume on Polymarket)
+   136→            "dallas temperature",
+   137→            "miami temperature",
+   138→            "new york temperature",
+   139→            "chicago temperature",
+   140→            "houston temperature",
+   141→            "los angeles temperature",
+   142→            "phoenix temperature",
+   143→            "san francisco temperature",
+   144→            "atlanta temperature",
+   145→            "boston temperature",
+   146→            "seattle temperature",
+   147→            "denver temperature",
+   148→            "washington temperature",
+   149→            "las vegas temperature",
+   150→            "orlando temperature",
+   151→            # International — Asia (very active on Polymarket)
+   152→            "london temperature",
+   153→            "paris temperature",
+   154→            "tokyo temperature",
+   155→            "seoul temperature",
+   156→            "istanbul temperature",
+   157→            "taipei temperature",
+   158→            "shanghai temperature",
+   159→            "beijing temperature",
+   160→            "hong kong temperature",
+   161→            "singapore temperature",
+   162→            "bangkok temperature",
+   163→            "mumbai temperature",
+   164→            "delhi temperature",
+   165→            "shenzhen temperature",
+   166→            "osaka temperature",
+   167→            "jakarta temperature",
+   168→            # Middle East
+   169→            "dubai temperature",
+   170→            "doha temperature",
+   171→            "tel aviv temperature",
+   172→            "cairo temperature",
+   173→            # Europe
+   174→            "berlin temperature",
+   175→            "madrid temperature",
+   176→            "rome temperature",
+   177→            "amsterdam temperature",
+   178→            "munich temperature",
+   179→            "moscow temperature",
+   180→            "vienna temperature",
+   181→            "stockholm temperature",
+   182→            "lisbon temperature",
+   183→            "zurich temperature",
+   184→            "barcelona temperature",
+   185→            "athens temperature",
+   186→            # South America
+   187→            "sao paulo temperature",
+   188→            "buenos aires temperature",
+   189→            "mexico city temperature",
+   190→            "santiago temperature",
+   191→            "lima temperature",
+   192→            "rio de janeiro temperature",
+   193→            # Oceania & Africa
+   194→            "sydney temperature",
+   195→            "melbourne temperature",
+   196→            "cape town temperature",
+   197→            "ankara temperature",
+   198→            "toronto temperature",
+   199→            "vancouver temperature",
+   200→        ]
+   201→
+   202→        gamma_host = urlparse(self.gamma_url).netloc
+   203→        # Build the batched (url, params, host) tuples once. AsyncHttpClient
+   204→        # takes care of bounded concurrency, per-host throttle and cache.
+   205→        items = [
+   206→            (
+   207→                f"{self.gamma_url}/public-search",
+   208→                {"q": q, "limit_per_type": 50},
+   209→                gamma_host,
+   210→            )
+   211→            for q in queries
+   212→        ]
+   213→        if not hasattr(self, "_async_client") or self._async_client is None:
+   214→            self._async_client = AsyncHttpClient()
+   215→        results = self._async_client.fetch_many(items)
+   216→        # Each entry is the parsed JSON or None on failure; events live
+   217→        # under the "events" key. Skip failures.
+   218→        per_query_events: list[list[dict]] = []
+   219→        for r in results:
+   220→            if not r:
+   221→                per_query_events.append([])
+   222→                continue
+   223→            per_query_events.append(r.get("events", []) or [])
+   224→
+   225→        all_events: list[dict] = []
+   226→        seen_slugs: set[str] = set()
+   227→        for events in per_query_events:
+   228→            for e in events:
+   229→                slug = e.get("slug", "")
+   230→                title = e.get("title", "")
+   231→                if slug in seen_slugs:
+   232→                    continue
+   233→                # Keep only today + next 2 days
+   234→                if not any(d in title for d in date_strs):
+   235→                    continue
+   236→                seen_slugs.add(slug)
+   237→                # Flatten event's markets so the rest of the pipeline
+   238→                # (which expects raw market dicts) keeps working.
+   239→                for m in e.get("markets", []):
+   240→                    m.setdefault("title", title)
+   241→                    m.setdefault("description", title)
+   242→                    m.setdefault("event_slug", slug)
+   243→                    all_events.append(m)
+   244→
+   245→        logger.info(f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)")
+   246→        return all_events
+   247→
+   248→    async def fetch_polymarket_events(self, limit: int = 100) -> list[dict]:
+   249→        """Fetch daily-temperature events for compatibility with test suite."""
+   250→        raw_markets = self._fetch_raw_markets()
+   251→        formatted = []
+   252→        for raw in raw_markets[:limit]:
+   253→            formatted.append(self._parse_market(raw))
+   254→        return formatted
+   255→
+   256→    def _is_weather_market(self, market: dict) -> bool:
+   257→        """Weather market check: BOTH a known city AND a strong weather term required.
+   258→
+   259→        Only temperature markets are accepted. Precipitation, wind, storm,
+   260→        and humidity markets are explicitly rejected.
+   261→        """
+   262→        question = (
+   263→            market.get("question", "") + " " + market.get("description", "") + " " + market.get("title", "")
+   264→        ).lower()
+   265→        # 1) Must mention a known city (any key from CITY_ICAO_MAP)
+   266→        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP.keys())
+   267→        if not city_match:
+   268→            return False
+   269→        # 2) Must contain a strong weather term (reject sports/politics that
+   270→        #    happen to share a city name like "Boston Bruins" or "Dallas Cowboys")
+   271→        strong_terms = (
+   272→            "temperature",
+   273→            "highest",
+   274→            "lowest",
+   275→            "heat",
+   276→            "cold",
+   277→            "°F",
+   278→            "°C",
+   279→            "celsius",
+   280→            "fahrenheit",
+   281→            "weather",
+   282→        )
+   283→        if not any(term in question for term in strong_terms):
+   284→            return False
+   285→        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.)
+   286→        reject_terms = (
+   287→            "rain",
+   288→            "snow",
+   289→            "storm",
+   290→            "hurricane",
+   291→            "tornado",
+   292→            "precipitation",
+   293→            "humidity",
+   294→            "wind",
+   295→            "snowfall",
+   296→            "rainfall",
+   297→        )
+   298→        if any(term in question for term in reject_terms):
+   299→            return False
+   300→        return True
+   301→
+   302→    def _parse_market(self, raw: dict) -> dict:
+   303→        """Ham marketi yapılandırılmış veriye çevir."""
+   304→        # 1) YES/NO price — handle multiple Polymarket data formats:
+   305→        #    - tokens[] array (full market data)
+   306→        #    - outcomePrices array (["0.32", "0.68"])
+   307→        #    - public-search fields (lastTradePrice / bestBid / bestAsk)
+   308→        yes_price = None
+   309→        no_price = None
+   310→        for token in raw.get("tokens", []) or []:
+   311→            outcome = (token.get("outcome", "") or "").upper()
+   312→            try:
+   313→                p = float(token.get("price", 0) or 0)
+   314→            except (TypeError, ValueError):
+   315→                p = None
+   316→            if outcome == "YES" and p is not None:
+   317→                yes_price = p
+   318→            elif outcome == "NO" and p is not None:
+   319→                no_price = p
+   320→        # Fallback 1: outcomePrices array (e.g. ["0.32", "0.68"])
+   321→        # Outcomes order matches the `outcomes` field: ["Yes", "No"]
+   322→        # NOTE: Both fields may arrive as JSON strings (not parsed lists)
+   323→        # from the Gamma API, so we must json.loads() them first.
+   324→        if yes_price is None:
+   325→            outcome_prices_raw = raw.get("outcomePrices")
+   326→            outcomes_raw = raw.get("outcomes")
+   327→            try:
+   328→                op_raw = outcome_prices_raw
+   329→                outcome_prices = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
+   330→                outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
+   331→            except (json.JSONDecodeError, TypeError):
+   332→                outcome_prices, outcomes = None, None
+   333→            if outcome_prices and outcomes and len(outcome_prices) == len(outcomes):
+   334→                for i, outcome_name in enumerate(outcomes):
+   335→                    name_upper = (outcome_name or "").upper()
+   336→                    try:
+   337→                        p = float(outcome_prices[i])
+   338→                    except (TypeError, ValueError, IndexError):
+   339→                        continue
+   340→                    if name_upper == "YES" and yes_price is None:
+   341→                        yes_price = p
+   342→                    elif name_upper == "NO" and no_price is None:
+   343→                        no_price = p
+   344→        # Fallback 2: public-search fields
+   345→        if yes_price is None:
+   346→            for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):
+   347→                v = raw.get(key)
+   348→                if v is not None:
+   349→                    try:
+   350→                        yes_price = float(v)
+   351→                        break
+   352→                    except (TypeError, ValueError):
+   353→                        pass
+   354→        if no_price is None:
+   355→            for key in ("noPrice", "no_price", "bestAsk"):
+   356→                v = raw.get(key)
+   357→                if v is not None:
+   358→                    try:
+   359→                        no_price = float(v)
+   360→                        break
+   361→                    except (TypeError, ValueError):
+   362→                        pass
+   363→        if no_price is None and yes_price is not None:
+   364→            no_price = max(0.0, min(1.0, 1.0 - yes_price))
+   365→        if yes_price is None:
+   366→            yes_price = 0.5
+   367→        if no_price is None:
+   368→            no_price = 0.5
+   369→
+   370→        # Extract city name dynamically from ICAO map keys
+   371→        city_name = "Unknown"
+   372→        title = raw.get("title", "") or raw.get("question", "")
+   373→        question = raw.get("question", "") or raw.get("description", "") or raw.get("title", "")
+   374→        title_lower = (title or "").lower()
+   375→        question_lower = (question or "").lower()
+   376→        for k in config.CITY_ICAO_MAP.keys():
+   377→            if k in title_lower or k in question_lower:
+   378→                city_name = k.title()
+   379→                break
+   380→
+   381→        if city_name == "Unknown":
+   382→            event_title = title or ""
+   383→            city_name = (
+   384→                event_title.split(" - ")[0].strip()
+   385→                if event_title and " - " in event_title
+   386→                else (event_title.split()[0] if event_title else "Unknown")
+   387→            )
+   388→
+   389→        # Parse structured market metadata
+   390→        target_date = self._extract_date(title)
+   391→        parser = MarketParser()
+   392→        threshold_result = parser._extract_threshold(question)
+   393→        threshold, threshold_unit, threshold_low, threshold_high = (
+   394→            threshold_result if threshold_result else (0.0, "celsius", None, None)
+   395→        )
+   396→        metric = "temperature_max" if "highest" in question_lower or "above" in question_lower else "temperature_min"
+   397→        city_code = self._extract_city(question)
+   398→        market_type = self._determine_market_type(question)
+   399→        coords = self.get_city_coords(city_code) if city_code else None
+   400→
+   401→        # Ensure correct numeric market ID matching the betting and settlement engines
+   402→        market_id_val = str(raw.get("id"))
+   403→
+   404→        return {
+   405→            "id": market_id_val,
+   406→            "condition_id": raw.get("condition_id"),
+   407→            "question": question,
+   408→            "yes_price": yes_price,
+   409→            "no_price": no_price,
+   410→            "volume": float(raw.get("volume", 0) or 0),
+   411→            "liquidity": float(raw.get("liquidity", 0) or 0),
+   412→            "end_date": raw.get("end_date_iso") or raw.get("endDate"),
+   413→            "raw_data": json.dumps(raw),
+   414→            "city_name": city_name,
+   415→            "city": city_name,
+   416→            "target_date": target_date,
+   417→            "threshold": threshold,
+   418→            "threshold_unit": threshold_unit,
+   419→            "threshold_low": threshold_low,
+   420→            "threshold_high": threshold_high,
+   421→            "metric": metric,
+   422→            "city_code": city_code,
+   423→            "market_type": market_type,
+   424→            "latitude": coords[0] if coords else 0.0,
+   425→            "longitude": coords[1] if coords else 0.0,
+   426→            "fee_rate": get_market_fee_rate(raw),
+   427→        }
+   428→
+   429→    def fetch_and_save(self) -> int:
+   430→        """Ana fonksiyon: Çek -> Filtrele -> Kaydet."""
+   431→        try:
+   432→            raw_markets = self._fetch_raw_markets()
+   433→        except Exception as e:
+   434→            raise ScraperError(f"Polymarket API hatası: {e}")
+   435→
+   436→        weather_markets = [m for m in raw_markets if self._is_weather_market(m)]
+   437→        logger.info(f"{len(weather_markets)} hava durumu marketi bulundu")
+   438→
+   439→        # Filter out closed/resolved markets — no point analyzing or betting
+   440→        # on markets that Polymarket has already settled.
+   441→        open_markets = []
+   442→        for m in weather_markets:
+   443→            if m.get("closed") is True:
+   444→                continue
+   445→            open_markets.append(m)
+   446→        skipped_closed = len(weather_markets) - len(open_markets)
+   447→        if skipped_closed:
+   448→            logger.info(f"{skipped_closed} kapalı/cozulmuş market atlandı")
+   449→        weather_markets = open_markets
+   450→
+   451→        saved = 0
+   452→        with get_session() as session:
+   453→            for raw in weather_markets:
+   454→                try:
+   455→                    parsed = self._parse_market(raw)
+   456→
+   457→                    # Markets without ICAO coordinates → no_coords status
+   458→                    has_coords = parsed["latitude"] != 0.0 or parsed["longitude"] != 0.0
+   459→                    if not has_coords and parsed["city_code"]:
+   460→                        logger.warning(
+   461→                            "No coordinates for city=%s (ICAO=%s) market=%s question=%r — status=no_coords",
+   462→                            parsed.get("city_name", "?"),
+   463→                            parsed["city_code"],
+   464→                            parsed["id"],
+   465→                            (parsed.get("question") or "")[:80],
+   466→                        )
+   467→
+   468→                    # Upsert
+   469→                    existing = session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
+   470→
+   471→                    # Skip markets with missing target_date or zero threshold
+   472→                    if parsed["target_date"] is None:
+   473→                        logger.warning(f"Skipping market {parsed['id']}: no target_date parsed")
+   474→                        continue
+   475→                    threshold_c = parsed["threshold"]
+   476→                    if threshold_c == 0.0:
+   477→                        logger.warning(f"Skipping market {parsed['id']}: threshold is 0.0")
+   478→                        continue
+   479→                    # Sanity guard: Celsius değer -40..55 aralığında değilse atla
+   480→                    if threshold_c < -40 or threshold_c > 55:
+   481→                        logger.warning(
+   482→                            "Skipping market %s: threshold %.1f°C outside sane range [-40, 55] — question=%r",
+   483→                            parsed["id"],
+   484→                            threshold_c,
+   485→                            (parsed.get("question") or "")[:80],
+   486→                        )
+   487→                        continue
+   488→
+   489→                    # Skip resolved/extreme-price markets (YES=1.0 or YES=0.0)
+   490→                    # These are already settled on Polymarket — no edge to capture.
+   491→                    yp = parsed["yes_price"]
+   492→                    np_ = parsed["no_price"]
+   493→                    if yp <= 0.01 or yp >= 0.99 or np_ <= 0.01 or np_ >= 0.99:
+   494→                        logger.debug(
+   495→                            "Skipping market %s: extreme prices YES=%.3f NO=%.3f (resolved?)",
+   496→                            parsed["id"],
+   497→                            yp,
+   498→                            np_,
+   499→                        )
+   500→                        continue
+   501→
+   502→                    status = "no_coords" if not has_coords else "open"
+   503→
+   504→                    if existing:
+   505→                        existing.yes_price = parsed["yes_price"]
+   506→                        existing.no_price = parsed["no_price"]
+   507→                        existing.volume = parsed["volume"]
+   508→                        existing.liquidity = parsed["liquidity"]
+   509→                        existing.city = parsed["city"]
+   510→                        existing.last_updated = datetime.now(UTC).replace(tzinfo=None)
+   511→                        existing.raw_data = parsed["raw_data"]
+   512→                        existing.target_date = parsed["target_date"]
+   513→                        existing.threshold = parsed["threshold"]
+   514→                        existing.metric = parsed["metric"]
+   515→                        existing.city_code = parsed["city_code"]
+   516→                        existing.latitude = parsed["latitude"]
+   517→                        existing.longitude = parsed["longitude"]
+   518→                        existing.status = status
+   519→                        existing.threshold_low = parsed.get("threshold_low")
+   520→                        existing.threshold_high = parsed.get("threshold_high")
+   521→                        existing.fee_rate = parsed.get("fee_rate", 0.05)
+   522→                    else:
+   523→                        market = WeatherMarket(
+   524→                            id=parsed["id"],
+   525→                            question=parsed["question"],
+   526→                            yes_price=parsed["yes_price"],
+   527→                            no_price=parsed["no_price"],
+   528→                            volume=parsed["volume"],
+   529→                            liquidity=parsed["liquidity"],
+   530→                            city=parsed["city"],
+   531→                            first_seen=datetime.now(UTC).replace(tzinfo=None),
+   532→                            last_updated=datetime.now(UTC).replace(tzinfo=None),
+   533→                            raw_data=parsed["raw_data"],
+   534→                            status=status,
+   535→                            target_date=parsed["target_date"],
+   536→                            threshold=parsed["threshold"],
+   537→                            threshold_low=parsed.get("threshold_low"),
+   538→                            threshold_high=parsed.get("threshold_high"),
+   539→                            metric=parsed["metric"],
+   540→                            city_code=parsed["city_code"],
+   541→                            market_type=parsed["market_type"],
+   542→                            latitude=parsed["latitude"],
+   543→                            longitude=parsed["longitude"],
+   544→                            fee_rate=parsed.get("fee_rate", 0.05),
+   545→                        )
+   546→                        session.add(market)
+   547→                    saved += 1
+   548→
+   549→                except Exception as e:
+   550→                    logger.error(f"Market parse hatası {raw.get('id')}: {e}")
+   551→                    continue
+   552→
+   553→            logger.info(f"{saved} market kaydedildi/güncellendi")
+   554→        return saved
+   555→
+   556→    @staticmethod
+   557→    def get_city_coords(city_code: str) -> tuple | None:
+   558→        """ICAO kodundan koordinat bul — merkezi Config.ICAO_COORDS."""
+   559→        return config.ICAO_COORDS.get(city_code)
+   560→
+   561→    def _extract_date(self, title: str) -> datetime | None:
+   562→        """Parse a date from a market title string.
+   563→
+   564→        Tries three patterns in order:
+   565→          1. "June 9 2026" or "June 9th, 2026"
+   566→          2. "2026-06-09" (ISO)
+   567→          3. "June 9"       (yearless — uses current year)
+   568→
+   569→        Returns a datetime at 23:59:59 on the parsed day, or None.
+   570→        """
+   571→        if not title:
+   572→            return None
+   573→        # Pattern 1: "June 9 2026" or "June 9th, 2026" or "Jun 9 2026"
+   574→        match = re.search(r"([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s*(\d{4})", title)
+   575→        if match:
+   576→            month_str, day, year = (
+   577→                match.group(1),
+   578→                int(match.group(2)),
+   579→                int(match.group(3)),
+   580→            )
+   581→            for fmt in ("%B %d %Y", "%b %d %Y"):
+   582→                try:
+   583→                    dt = datetime.strptime(f"{month_str} {day} {year}", fmt)
+   584→                    return dt.replace(hour=23, minute=59, second=59)
+   585→                except ValueError:
+   586→                    continue
+   587→        # Pattern 2: ISO "2026-06-09"
+   588→        match = re.search(r"(\d{4})-(\d{2})-(\d{2})", title)
+   589→        if match:
+   590→            year, month, day = (
+   591→                int(match.group(1)),
+   592→                int(match.group(2)),
+   593→                int(match.group(3)),
+   594→            )
+   595→            return datetime(year, month, day, 23, 59, 59)
+   596→        # Pattern 3: "June 9" (yearless) — only valid month names to avoid
+   597→        # false matches like "above 90" or "will 100"
+   598→        _MONTH_NAMES = (  # noqa: N806
+   599→            "January|February|March|April|May|June|July|"
+   600→            "August|September|October|November|December|"
+   601→            "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+   602→        )
+   603→        match = re.search(rf"(?:{_MONTH_NAMES})\s+(\d{{1,2}})", title, re.IGNORECASE)
+   604→        if match:
+   605→            month_str, day = match.group(0).split()[0], int(match.group(1))
+   606→            today = datetime.now()
+   607→            for fmt in ("%B %d %Y", "%b %d %Y"):
+   608→                try:
+   609→                    dt = datetime.strptime(f"{month_str} {day} {today.year}", fmt)
+   610→                    return dt.replace(hour=23, minute=59, second=59)
+   611→                except ValueError:
+   612→                    continue
+   613→        return None
+   614→
+   615→    def _extract_city(self, text: str) -> str:
+   616→        if not text:
+   617→            return ""
+   618→        text_lower = text.lower()
+   619→        for city_name, icao_code in config.CITY_ICAO_MAP.items():
+   620→            if city_name in text_lower:
+   621→                return icao_code
+   622→        return ""
+   623→
+   624→    def _extract_strike(self, question: str) -> float:
+   625→        if not question:
+   626→            return 0.0
+   627→        patterns = [
+   628→            r"(\d+)\s*\°\s*C",
+   629→            r"(\d+)\s*\°\s*F",
+   630→            r"(\d+)\s*degrees?\s*[CF]?",
+   631→            r"above\s+(\d+)",
+   632→            r"below\s+(\d+)",
+   633→            r"be\s+(\d+)\s*\°?",
+   634→        ]
+   635→        for pattern in patterns:
+   636→            match = re.search(pattern, question, re.IGNORECASE)
+   637→            if match:
+   638→                try:
+   639→                    strike = float(match.group(1))
+   640→                    if "F" in question.upper() or "FAHRENHEIT" in question.upper():
+   641→                        strike = (strike - 32) * 5 / 9
+   642→                    return round(strike, 1)
+   643→                except ValueError:
+   644→                    continue
+   645→        return 0.0
+   646→
+   647→    def _determine_market_type(self, question: str) -> str:
+   648→        question_lower = question.lower()
+   649→        if "above" in question_lower or "higher" in question_lower or "over" in question_lower:
+   650→            return "HIGH"
+   651→        if "below" in question_lower or "lower" in question_lower or "under" in question_lower:
+   652→            return "LOW"
+   653→        if "or below" in question_lower or "or higher" in question_lower:
+   654→            if "or below" in question_lower:
+   655→                return "LOW"
+   656→            if "or higher" in question_lower:
+   657→                return "HIGH"
+   658→        return "RANGE"
+   659→

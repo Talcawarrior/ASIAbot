@@ -1,0 +1,601 @@
+     1→     1→"""Bet placement executor making paper or live trades on Polymarket."""
+     2→     2→
+     3→     3→import json
+     4→     4→import logging
+     5→     5→import os
+     6→     6→from datetime import datetime, timezone
+     7→     7→
+     8→     8→from sqlalchemy import func, or_
+     9→     9→
+    10→    10→from config.settings import Config, bot_config
+    11→    11→from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
+    12→    12→from engine.decision import BetDecision
+    13→    13→from utils.formulas import (
+    14→    14→    bet_shares,
+    15→    15→    max_bet_cap,
+    16→    16→    polymarket_fee_from_stake,
+    17→    17→    portfolio_total_value,
+    18→    18→)
+    19→    19→from utils.price_sanity import is_valid_binary_price
+    20→    20→from utils.slippage import check_orderbook_depth, estimate_slippage
+    21→    21→
+    22→    22→logger = logging.getLogger("EXECUTOR_BET_PLACER")
+    23→    23→
+    24→    24→
+    25→    25→class BetPlacer:
+    26→    26→    """SADECE bet açar. Karar vermez - engine karar verir."""
+    27→    27→
+    28→    28→    # Statuses that count as "open" for risk/exposure accounting.
+    29→    29→    _OPEN_STATUSES = OPEN_BET_STATUSES
+    30→    30→
+    31→    31→    def __init__(self):
+    32→    32→        # Lazy-import risk manager to break import cycle:
+    33→    33→        #   engine/strategy.py  ->  imports from this module
+    34→    34→        #   executor/bet_placer.py  ->  uses engine.strategy.RiskManager
+    35→    35→        from engine.strategy import RiskManager
+    36→    36→
+    37→    37→        # NOTE: RiskManager is created WITHOUT a db_session here.
+    38→    38→        # The session is bound per-call in place_bet() so that
+    39→    39→        # _conservative_portfolio_value() always sees fresh committed data
+    40→    40→        # instead of falling back to INITIAL_PORTFOLIO ($1000).
+    41→    41→        self.risk_manager = RiskManager()
+    42→    42→
+    43→    43→        # Hard guard: the user requires paper-only mode.
+    44→    44→        if Config.DRY_RUN:
+    45→    45→            self.ready = False
+    46→    46→            logger.info(
+    47→    47→                "DRY_RUN=true is enforced. BetPlacer will ONLY emit paper/simulated "
+    48→    48→                "orders; the live Polymarket CLOB client is not initialized."
+    49→    49→            )
+    50→    50→        else:
+    51→    51→            self._init_polymarket_client()
+    52→    52→
+    53→    53→    def _init_polymarket_client(self):
+    54→    54→        """Polymarket CLOB client hazirla (sadece DRY_RUN=false ise cagrilir)."""
+    55→    55→        try:
+    56→    56→            from py_clob_client.client import (
+    57→    57→                ClobClient,  # pylint: disable=import-error,no-name-in-module
+    58→    58→            )
+    59→    59→
+    60→    60→            if not bot_config.polymarket.private_key:
+    61→    61→                self.ready = False
+    62→    62→                logger.info("Polymarket credentials not found, running in PAPER/SIMULATION trade mode.")
+    63→    63→                return
+    64→    64→
+    65→    65→            self.client = ClobClient(
+    66→    66→                bot_config.polymarket.api_url,
+    67→    67→                key=bot_config.polymarket.private_key,
+    68→    68→                chain_id=137,
+    69→    69→            )
+    70→    70→            self.client.set_api_creds(self.client.create_or_derive_api_creds())
+    71→    71→            self.ready = True
+    72→    72→            logger.warning(
+    73→    73→                "LIVE TRADING ARMED -- DRY_RUN=false and credentials present. Real orders will be sent to Polymarket."
+    74→    74→            )
+    75→    75→        except Exception as e:
+    76→    76→            logger.warning(f"Polymarket client kurulamadi (PAPER TRADE ACTIVE): {e}")
+    77→    77→            self.ready = False
+    78→    78→
+    79→    79→    def place_bet(self, analysis_id: int, session=None) -> Bet | None:
+    80→    80→        """Analiz sonucuna göre bet aç.
+    81→    81→
+    82→    82→        Optional session for batched cycles — when provided, reuses the
+    83→    83→        caller's DB session so freshly-written Analysis records from the
+    84→    84→        current cycle are visible.
+    85→    85→        """
+    86→    86→        d = BetDecision(market_id=f"analysis:{analysis_id}")
+    87→    87→        from database.db import get_session_or
+    88→    88→
+    89→    89→        with get_session_or(session) as session:
+    90→    90→            # Bind session to risk manager so _conservative_portfolio_value()
+    91→    91→            # queries DB instead of returning stale INITIAL_PORTFOLIO.
+    92→    92→            self.risk_manager.db = session
+    93→    93→            analysis = session.query(Analysis).filter_by(id=analysis_id).first()
+    94→    94→            d.check("analysis_exists", analysis is not None and analysis.should_bet)
+    95→    95→            if not d.should_bet:
+    96→    96→                d.log(logging.DEBUG)
+    97→    97→                return None
+    98→    98→
+    99→    99→            # Guard: edge must be positive (prevents neg-EV bets from stale analyses)
+   100→   100→            edge_val = float(analysis.edge or 0.0)
+   101→   101→            d.check("edge_positive", edge_val > 0, edge=edge_val)
+   102→   102→            if not d.should_bet:
+   103→   103→                d.log(logging.WARNING)
+   104→   104→                return None
+   105→   105→
+   106→   106→            market = session.query(WeatherMarket).filter_by(id=analysis.market_id).first()
+   107→   107→            d.check("market_exists", market is not None)
+   108→   108→            if not d.should_bet:
+   109→   109→                d.log(logging.DEBUG)
+   110→   110→                return None
+   111→   111→            d.market_id = market.id
+   112→   112→
+   113→   113→            # Guard: daily loss limit (circuit breaker)
+   114→   114→            if self.risk_manager.is_bot_locked():
+   115→   115→                d.check("daily_loss_limit", False, daily_pnl=self.risk_manager.daily_pnl)
+   116→   116→                d.log(logging.WARNING)
+   117→   117→                return None
+   118→   118→
+   119→   119→            # Price sanity check - skip invalid binary markets
+   120→   120→            price_valid = is_valid_binary_price(market.yes_price or 0, market.no_price or 0)
+   121→   121→            d.check("price_valid", price_valid, yes=market.yes_price, no=market.no_price)
+   122→   122→            if not d.should_bet:
+   123→   123→                d.log(logging.DEBUG)
+   124→   124→                return None
+   125→   125→
+   126→   126→            # Guard: skip resolved markets
+   127→   127→            _now = datetime.now(timezone.utc).replace(tzinfo=None)
+   128→   128→            date_ok = not (market.target_date and market.target_date <= _now)
+   129→   129→            d.check("target_date_ok", date_ok, target_date=str(market.target_date) if market.target_date else None)
+   130→   130→            if not d.should_bet:
+   131→   131→                d.log(logging.DEBUG)
+   132→   132→                return None
+   133→   133→
+   134→   134→            # Guard: skip markets with no real liquidity (Karpathy-search-
+   135→   135→            # discovered min_entry_price filter — long-shot bets are the
+   136→   136→            # source of the asymmetric-payoff bleed).
+   137→   137→            market_price = float(market.yes_price or 0.5)
+   138→   138→            # Prefer the Karpathy-tuned strategy value; fall back to legacy
+   139→   139→            # Config.MIN_ENTRY_PRICE for backwards compatibility.
+   140→   140→            strategy_min_price = getattr(self.risk_manager.config, "strategy", None)
+   141→   141→            if strategy_min_price is not None and hasattr(strategy_min_price, "min_entry_price"):
+   142→   142→                min_price = float(strategy_min_price.min_entry_price)
+   143→   143→            else:
+   144→   144→                min_price = float(getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01))
+   145→   145→            d.check("min_entry_price", market_price >= min_price, price=market_price, min_price=min_price)
+   146→   146→            if not d.should_bet:
+   147→   147→                d.log(logging.DEBUG)
+   148→   148→                return None
+   149→   149→
+   150→   150→            # Bu market'te su an acik veya bugun yerlestirilmis bir bahis var mi?
+   151→   151→            # Ayni market'te ayni gun icinde tekrar bahis acmayi onler.
+   152→   152→            _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+   153→   153→            _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
+   154→   154→            existing_open = (
+   155→   155→                session.query(Bet)
+   156→   156→                .filter(
+   157→   157→                    Bet.market_id == analysis.market_id,
+   158→   158→                    or_(
+   159→   159→                        Bet.status.in_(OPEN_BET_STATUSES),
+   160→   160→                        Bet.placed_at >= _today_start,
+   161→   161→                    ),
+   162→   162→                )
+   163→   163→                .first()
+   164→   164→            )
+   165→   165→            d.check(
+   166→   166→                "no_existing_bet",
+   167→   167→                existing_open is None,
+   168→   168→                existing_id=existing_open.id if existing_open else None,
+   169→   169→                existing_status=existing_open.status if existing_open else None,
+   170→   170→            )
+   171→   171→            if not d.should_bet:
+   172→   172→                d.log(logging.INFO)
+   173→   173→                return None
+   174→   174→
+   175→   175→            # ------------------------------------------------------------------
+   176→   176→            # Sync RiskManager portfolio_value from DB so risk caps reflect
+   177→   177→            # actual portfolio state (ONLY realized PnL, no unrealized).
+   178→   178→            # This prevents the feedback loop where unrealized profits
+   179→   179→            # inflate portfolio → raise 25% cap → allow more bets → etc.
+   180→   180→            _pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
+   181→   181→            if _pf and _pf.total_value is not None:
+   182→   182→                # Use conservative value (initial + realized only)
+   183→   183→                self.risk_manager.update_portfolio(self.risk_manager._conservative_portfolio_value())
+   184→   184→
+   185→   185→            # Risk checks. These are enforced HERE (not in run_place_bets)
+   186→   186→            # so every entry point "" scheduler, manual API call, CLI "" is
+   187→   187→            # guarded by the same hard caps. A previous version of this
+   188→   188→            # module skipped all caps and let exposure balloon to 35x the
+   189→   189→            # smart-pool ceiling, which is what surfaced the
+   190→   190→            # "$14,000 exposure vs $400 smart pool" dashboard disconnect.
+   191→   191→            # ------------------------------------------------------------------
+   192→   192→            proposed_amount = float(analysis.recommended_amount or 0.0)
+   193→   193→            d.proposed_amount = proposed_amount
+   194→   194→
+   195→   195→            # Optional flat-bet override: when Config.FLAT_BET_USD > 0,
+   196→   196→            # every bet is exactly that many USD, ignoring Kelly sizing.
+   197→   197→            # Useful for backtests and small-portfolio testing where
+   198→   198→            # Kelly-derived sizes would otherwise be too small to matter.
+   199→   199→            # Risk caps below still apply on top.
+   200→   200→            flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
+   201→   201→            if flat_bet > 0.0:
+   202→   202→                logger.info(
+   203→   203→                    f"Flat-bet override active: ${flat_bet:.2f} per bet (was ${proposed_amount:.2f} from Kelly)."
+   204→   204→                )
+   205→   205→                proposed_amount = flat_bet
+   206→   206→                d.set_param("flat_bet_override", True)
+   207→   207→
+   208→   208→            # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). Formula from
+   209→   209→            # utils/formulas.py → max_bet_cap(). Kelly sizing in calculator.py
+   210→   210→            # already enforces this, but we re-apply here as a hard ceiling.
+   211→   211→            max_bet = max_bet_cap(
+   212→   212→                float(self.risk_manager.portfolio_value),
+   213→   213→                float(self.risk_manager.config.MAX_BET_PCT),
+   214→   214→            )
+   215→   215→            if proposed_amount > max_bet:
+   216→   216→                logger.warning(
+   217→   217→                    f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
+   218→   218→                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
+   219→   219→                )
+   220→   220→                proposed_amount = max_bet
+   221→   221→            d.set_param("max_bet_cap", max_bet)
+   222→   222→
+   223→   223→            # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * conservative portfolio).
+   224→   224→            # check_exposure_cap now dynamically computes conservative value
+   225→   225→            # (cash + open_exposure) from DB, so no stale portfolio_value.
+   226→   226→            current_exposure = (
+   227→   227→                session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+   228→   228→                .filter(Bet.status.in_(self._OPEN_STATUSES))
+   229→   229→                .scalar()
+   230→   230→            ) or 0.0
+   231→   231→            current_exposure = float(current_exposure)
+   232→   232→            exposure_ok = self.risk_manager.check_exposure_cap(current_exposure, proposed_amount)
+   233→   233→            conservative_value = self.risk_manager._conservative_portfolio_value()
+   234→   234→            max_exposure = float(conservative_value) * float(self.risk_manager.config.TOTAL_EXPOSURE_PCT)
+   235→   235→            d.check(
+   236→   236→                "exposure_cap",
+   237→   237→                exposure_ok,
+   238→   238→                current=current_exposure,
+   239→   239→                proposed=proposed_amount,
+   240→   240→                max_exposure=max_exposure,
+   241→   241→                conservative=conservative_value,
+   242→   242→            )
+   243→   243→            if not exposure_ok:
+   244→   244→                logger.warning(
+   245→   245→                    f"Risk cap: Market {market.id} rejected — exposure would "
+   246→   246→                    f"reach ${current_exposure + proposed_amount:.2f}, "
+   247→   247→                    f"exceeding cap ${max_exposure:.2f} "
+   248→   248→                    f"(conservative=${conservative_value:.2f})."
+   249→   249→                )
+   250→   250→                # Record a synthetic "rejected" bet row for audit visibility
+   251→   251→                # so the user can see WHY exposure is being held back.
+   252→   252→                rejected = Bet(
+   253→   253→                    market_id=analysis.market_id,
+   254→   254→                    analysis_id=analysis_id,
+   255→   255→                    city=market.city,
+   256→   256→                    city_code=market.city_code,
+   257→   257→                    side=analysis.recommended_side,
+   258→   258→                    amount=proposed_amount,
+   259→   259→                    price=(market.yes_price if analysis.recommended_side == "YES" else market.no_price),
+   260→   260→                    status="rejected",
+   261→   261→                    error_message=(
+   262→   262→                        f"Exposure cap: ${current_exposure:.2f} + ${proposed_amount:.2f} > "
+   263→   263→                        f"${max_exposure:.2f} (conservative=${conservative_value:.2f})"
+   264→   264→                    ),
+   265→   265→                )
+   266→   266→                session.add(rejected)
+   267→   267→                session.commit()
+   268→   268→                d.log(logging.WARNING)
+   269→   269→                return None
+   270→   270→
+   271→   271→            # Cap 3: city cap (CITY_CAP per city).
+   272→   272→            city_key = (market.city or "").lower()
+   273→   273→            city_open_count = (
+   274→   274→                session.query(func.count(Bet.id))  # pylint: disable=not-callable
+   275→   275→                .join(WeatherMarket, Bet.market_id == WeatherMarket.id)
+   276→   276→                .filter(
+   277→   277→                    Bet.status.in_(self._OPEN_STATUSES),
+   278→   278→                    func.lower(WeatherMarket.city) == city_key,
+   279→   279→                )
+   280→   280→                .scalar()
+   281→   281→            ) or 0
+   282→   282→            city_cap = int(self.risk_manager.config.CITY_CAP)
+   283→   283→            city_ok = int(city_open_count) < city_cap
+   284→   284→            d.check("city_cap", city_ok, city=market.city, open_count=int(city_open_count), max_city=city_cap)
+   285→   285→            if not city_ok:
+   286→   286→                logger.warning(
+   287→   287→                    f"Risk cap: Market {market.id} rejected — city cap "
+   288→   288→                    f"({city_open_count}/{city_cap}) "
+   289→   289→                    f"reached for {market.city}."
+   290→   290→                )
+   291→   291→                rejected = Bet(
+   292→   292→                    market_id=analysis.market_id,
+   293→   293→                    analysis_id=analysis_id,
+   294→   294→                    city=market.city,
+   295→   295→                    city_code=market.city_code,
+   296→   296→                    side=analysis.recommended_side,
+   297→   297→                    amount=proposed_amount,
+   298→   298→                    price=(market.yes_price if analysis.recommended_side == "YES" else market.no_price),
+   299→   299→                    status="rejected",
+   300→   300→                    error_message=f"City cap: {city_open_count}/{city_cap} for {market.city}",
+   301→   301→                )
+   302→   302→                session.add(rejected)
+   303→   303→                session.commit()
+   304→   304→                d.log(logging.WARNING)
+   305→   305→                return None
+   306→   306→
+   307→   307→            # Extract condition_id from market.raw_data for slippage & depth check
+   308→   308→            condition_id = None
+   309→   309→            try:
+   310→   310→                raw = json.loads(market.raw_data) if market.raw_data else {}
+   311→   311→                for tok in raw.get("tokens", []):
+   312→   312→                    if tok.get("outcome", "").upper() == (analysis.recommended_side or "").upper():
+   313→   313→                        condition_id = tok.get("condition_id") or tok.get("token_id")
+   314→   314→                        break
+   315→   315→            except (json.JSONDecodeError, TypeError):
+   316→   316→                pass
+   317→   317→
+   318→   318→            # Resolve fill price for the chosen side, adjusted for slippage
+   319→   319→            raw_fill = market.yes_price if analysis.recommended_side == "YES" else market.no_price
+   320→   320→            raw_fill = float(raw_fill) if raw_fill is not None else 0.0
+   321→   321→            slip_est = estimate_slippage(raw_fill, stake_usd=proposed_amount, condition_id=condition_id)
+   322→   322→            fill_price = raw_fill * (1.0 + slip_est.slippage_pct)
+   323→   323→            fill_price = max(0.01, min(0.99, round(fill_price, 4)))
+   324→   324→            # Shares = amount / price (position size in contracts).
+   325→   325→            # Formula from utils/formulas.py → bet_shares().
+   326→   326→            shares = bet_shares(proposed_amount, fill_price)
+   327→   327→            logger.info(
+   328→   328→                f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} "
+   329→   329→                f"(slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
+   330→   330→            )
+   331→   331→            d.set_param("slippage_pct", slip_est.slippage_pct)
+   332→   332→            d.set_param("slippage_model", slip_est.model_used)
+   333→   333→
+   334→   334→            min_depth = float(getattr(bot_config.strategy, "min_depth_usd", 0.0) or 0.0)
+   335→   335→            depth_ok, depth_usd = check_orderbook_depth(
+   336→   336→                condition_id,
+   337→   337→                analysis.recommended_side or "YES",
+   338→   338→                fill_price,
+   339→   339→                proposed_amount,
+   340→   340→                min_depth_usd=min_depth,
+   341→   341→            )
+   342→   342→            if not depth_ok:
+   343→   343→                logger.warning(f"Market {market.id}: depth filter rejected (${depth_usd:.2f} < ${min_depth:.2f} min)")
+   344→   344→                d.check("depth_ok", False, depth_usd=depth_usd, min_depth=min_depth)
+   345→   345→                rejected = Bet(
+   346→   346→                    market_id=analysis.market_id,
+   347→   347→                    analysis_id=analysis_id,
+   348→   348→                    city=market.city,
+   349→   349→                    city_code=market.city_code,
+   350→   350→                    side=analysis.recommended_side,
+   351→   351→                    amount=proposed_amount,
+   352→   352→                    price=fill_price,
+   353→   353→                    status="rejected",
+   354→   354→                    error_message=f"Depth filter: ${depth_usd:.2f} < ${min_depth:.2f}",
+   355→   355→                )
+   356→   356→                session.add(rejected)
+   357→   357→                session.commit()
+   358→   358→                d.log(logging.WARNING)
+   359→   359→                return None
+   360→   360→            d.check("depth_ok", True, depth_usd=depth_usd, min_depth=min_depth)
+   361→   361→
+   362→   362→            # Calculate Polymarket taker fee at entry time.
+   363→   363→            # Official formula: fee = stake × feeRate × (1-p)
+   364→   364→            # This is charged at match time, NOT at settlement.
+   365→   365→            # See utils/formulas.py → polymarket_fee_from_stake().
+   366→   366→            # Use market's fee_rate from feeSchedule (dynamic), fallback to config.
+   367→   367→            fee_rate = getattr(market, "fee_rate", None) or Config.WEATHER_FEE_RATE
+   368→   368→            entry_fee = polymarket_fee_from_stake(proposed_amount, fill_price, fee_rate)
+   369→   369→
+   370→   370→            # Bet objesi oluştur
+   371→   371→            fair_value = float(analysis.estimated_probability or 0.5)
+   372→   372→            bet = Bet(
+   373→   373→                market_id=analysis.market_id,
+   374→   374→                analysis_id=analysis_id,
+   375→   375→                city=market.city,  # FIX: copy city from market so the
+   376→   376→                city_code=market.city_code,  # dashboard "City" column is populated
+   377→   377→                side=analysis.recommended_side,
+   378→   378→                amount=proposed_amount,
+   379→   379→                stake_amount=proposed_amount,  # FIX: set stake_amount for ROI calculations
+   380→   380→                price=fill_price,
+   381→   381→                entry_price=fill_price,  # NEW: source of truth for PNL math
+   382→   382→                shares=shares,  # NEW: needed for unrealized_pnl
+   383→   383→                current_price=fill_price,  # NEW: starts equal to entry, refreshed by run_update_prices
+   384→   384→                status="pending",
+   385→   385→                fair_value=fair_value,
+   386→   386→                expected_value=float(analysis.edge or 0.0),
+   387→   387→                entry_fee=round(entry_fee, 4),
+   388→   388→            )
+   389→   389→
+   390→   390→            bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
+   391→   391→
+   392→   392→            # Paper ladder: if edge >= 0.05, create a 3-level ladder
+   393→   393→            ladder_orders = []
+   394→   394→            edge_val = float(analysis.edge or 0.0)
+   395→   395→            if edge_val >= 0.05:
+   396→   396→                for lvl, pct in [(1, 0.50), (2, 0.30), (3, 0.20)]:
+   397→   397→                    lvl_amount = round(proposed_amount * pct, 2)
+   398→   398→                    if lvl == 1:
+   399→   399→                        lvl_price = fill_price
+   400→   400→                    elif lvl == 2:
+   401→   401→                        lvl_price = fill_price * 0.98
+   402→   402→                    else:
+   403→   403→                        lvl_price = fill_price * 0.95
+   404→   404→                    # Clamp price to [0.01, 0.99]
+   405→   405→                    lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
+   406→   406→                    lvl_shares = round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
+   407→   407→                    ladder_orders.append(
+   408→   408→                        {
+   409→   409→                            "level": lvl,
+   410→   410→                            "price": lvl_price,
+   411→   411→                            "amount": lvl_amount,
+   412→   412→                            "shares": lvl_shares,
+   413→   413→                            "status": "pending",
+   414→   414→                        }
+   415→   415→                    )
+   416→   416→            bet.ladder_data = json.dumps(ladder_orders) if ladder_orders else "[]"
+   417→   417→
+   418→   418→            # Live vs Paper execution logic
+   419→   419→            # HARD GUARD: always paper unless LIVE_TRADING_ENABLED=true
+   420→   420→            _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
+   421→   421→            if self.ready and _live_allowed:
+   422→   422→                try:
+   423→   423→                    from py_clob_client.order_builder.constants import (
+   424→   424→                        BUY,  # pylint: disable=import-error,no-name-in-module
+   425→   425→                    )
+   426→   426→
+   427→   427→                    order = self.client.create_and_post_order(
+   428→   428→                        {
+   429→   429→                            "token_id": self._get_token_id(market, analysis.recommended_side),
+   430→   430→                            "price": bet.price,
+   431→   431→                            "size": bet.amount / bet.price,
+   432→   432→                            "side": BUY,
+   433→   433→                        }
+   434→   434→                    )
+   435→   435→
+   436→   436→                    bet.order_id = order.get("orderID")
+   437→   437→                    bet.status = "placed"
+   438→   438→                    bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+   439→   439→
+   440→   440→                    market.status = "bet_placed"
+   441→   441→                    logger.info(
+   442→   442→                        f"LIVE BET OPENED: {market.id} | {analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
+   443→   443→                    )
+   444→   444→                except Exception as e:
+   445→   445→                    bet.status = "failed"
+   446→   446→                    bet.error_message = str(e)
+   447→   447→                    logger.error(f"Live Bet failed {market.id}: {e}")
+   448→   448→            else:
+   449→   449→                # Simulated / Paper trade fallback. Also covers the case
+   450→   450→                # where Config.DRY_RUN is true (defense-in-depth).
+   451→   451→                now_ts = int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())
+   452→   452→                bet.order_id = f"paper_order_{market.id}_{now_ts}"
+   453→   453→                bet.status = "placed"
+   454→   454→                bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+   455→   455→                market.status = "bet_placed"
+   456→   456→                logger.info(
+   457→   457→                    f"PAPER BET OPENED: {market.id} | "
+   458→   458→                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
+   459→   459→                    f"({shares:.2f} shares)"
+   460→   460→                )
+   461→   461→
+   462→   462→            # Deduct stake from portfolio cash — via central accounting API.
+   463→   463→            # Ladder: L1 is filled immediately; L2/L3 stay pending.
+   464→   464→            from utils.accounting import debit_stake
+   465→   465→
+   466→   466→            initial_stake = proposed_amount
+   467→   467→            if ladder_orders:
+   468→   468→                l1_amount = ladder_orders[0].get("amount") if isinstance(ladder_orders[0], dict) else None
+   469→   469→                if l1_amount and l1_amount > 0:
+   470→   470→                    initial_stake = l1_amount
+   471→   471→                    # Mark L1 as filled immediately (prevents double-debit in run_update_prices)
+   472→   472→                    ladder_orders[0]["status"] = "filled"
+   473→   473→                    ladder_orders[0]["filled_at"] = datetime.now(timezone.utc).isoformat()
+   474→   474→                    # Persist updated ladder back to bet.ladder_data
+   475→   475→                    bet.ladder_data = json.dumps(ladder_orders)
+   476→   476→            try:
+   477→   477→                debit_stake(session, initial_stake, f"bet_open:{bet.market_id}")
+   478→   478→                # Also debit the Polymarket taker fee paid at match time.
+   479→   479→                # On Polymarket, fee = stake × feeRate × (1-p) is charged at
+   480→   480→                # entry, NOT at settlement. See utils/formulas.py → polymarket_fee*().
+   481→   481→                if entry_fee > 0:
+   482→   482→                    debit_stake(session, entry_fee, f"bet_fee:{bet.market_id}")
+   483→   483→            except ValueError as e:
+   484→   484→                logger.error("Cannot open bet %s: %s", bet.market_id, e)
+   485→   485→                bet.status = "failed"
+   486→   486→                bet.error_message = str(e)
+   487→   487→                session.add(bet)
+   488→   488→                session.commit()
+   489→   489→                return bet
+   490→   490→            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+   491→   491→            if portfolio:
+   492→   492→                # Include unrealized PnL from other open bets in current_value
+   493→   493→                open_exposure = (
+   494→   494→                    session.query(func.coalesce(func.sum(Bet.amount), 0.0))
+   495→   495→                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
+   496→   496→                    .scalar()
+   497→   497→                ) or 0.0
+   498→   498→                portfolio.current_value = portfolio_total_value(portfolio.cash_balance or 0.0, float(open_exposure))
+   499→   499→                portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+   500→   500→            session.add(bet)
+   501→   501→            session.commit()
+   502→   502→            # Final structured decision log — one JSON line per placed bet.
+   503→   503→            d.final_amount = proposed_amount
+   504→   504→            d.set_param("entry_fee", round(entry_fee, 4))
+   505→   505→            d.set_param("fill_price", fill_price)
+   506→   506→            d.set_param("shares", shares)
+   507→   507→            d.set_param("side", analysis.recommended_side)
+   508→   508→            d.set_param("status", bet.status)
+   509→   509→            d.log(logging.INFO)
+   510→   510→            return bet
+   511→   511→
+   512→   512→    def _get_token_id(self, market, side: str) -> str:
+   513→   513→        """Market'ten token ID al."""
+   514→   514→        raw = json.loads(market.raw_data) if market.raw_data else {}
+   515→   515→        tokens = raw.get("tokens", [])
+   516→   516→        for token in tokens:
+   517→   517→            if token.get("outcome", "").upper() == side.upper():
+   518→   518→                return token.get("token_id")
+   519→   519→        raise ValueError(f"Token ID bulunamadı: {side}")
+   520→   520→
+   521→   521→    def place_all_pending(self, session=None) -> int:
+   522→   522→        """should_bet=True olan tum analizler icin bet ac.
+   523→   523→
+   524→   524→        Optional session for batched cycles — when provided, reuses the
+   525→   525→        caller's session instead of creating a new one. This ensures
+   526→   526→        freshly-written Analysis records from the current cycle's
+   527→   527→        run_analyze() are visible to bet placement.
+   528→   528→        """
+   529→   529→        placed = 0
+   530→   530→        # Build mapping of analysis_id -> market_id + set of markets that
+   531→   531→        # already have bets, inside a single session.
+   532→   532→        aid_to_market: dict[int, str] = {}
+   533→   533→        markets_with_bets: set[str] = set()
+   534→   534→
+   535→   535→        from database.db import get_session_or
+   536→   536→
+   537→   537→        with get_session_or(session) as sess:
+   538→   538→            # Only use the LATEST analysis per market (highest id).
+   539→   539→            # This prevents old analyses with stale recommended_amount
+   540→   540→            # (e.g. pre-config-change $29.70) from being placed.
+   541→   541→            from sqlalchemy import func as sa_func
+   542→   542→
+   543→   543→            subq = (
+   544→   544→                sess.query(
+   545→   545→                    Analysis.market_id,
+   546→   546→                    sa_func.max(Analysis.id).label("max_id"),
+   547→   547→                )
+   548→   548→                .filter(Analysis.should_bet.is_(True))
+   549→   549→                .group_by(Analysis.market_id)
+   550→   550→                .subquery()
+   551→   551→            )
+   552→   552→            pending = (
+   553→   553→                sess.query(Analysis)
+   554→   554→                .join(subq, Analysis.id == subq.c.max_id)
+   555→   555→                .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
+   556→   556→                .order_by(WeatherMarket.target_date.desc())
+   557→   557→                .all()
+   558→   558→            )
+   559→   559→
+   560→   560→            # Dedup: skip market_ids that already have a bet (OPEN or placed today).
+   561→   561→            # Prevents re-betting the same market across scan cycles on the same day.
+   562→   562→            market_ids = {a.market_id for a in pending}
+   563→   563→            if market_ids:
+   564→   564→                _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+   565→   565→                _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
+   566→   566→                existing_rows = (
+   567→   567→                    sess.query(Bet.market_id)
+   568→   568→                    .filter(
+   569→   569→                        Bet.market_id.in_(list(market_ids)),
+   570→   570→                        or_(
+   571→   571→                            Bet.status.in_(OPEN_BET_STATUSES),
+   572→   572→                            Bet.placed_at >= _today_start,
+   573→   573→                        ),
+   574→   574→                    )
+   575→   575→                    .all()
+   576→   576→                )
+   577→   577→                markets_with_bets = {row[0] for row in existing_rows if row[0] is not None}
+   578→   578→
+   579→   579→            for a in pending:
+   580→   580→                aid_to_market[a.id] = a.market_id
+   581→   581→
+   582→   582→        for aid, mkt_id in aid_to_market.items():
+   583→   583→            if mkt_id in markets_with_bets:
+   584→   584→                logger.debug(
+   585→   585→                    "Market %s already has a bet, skipping analysis %d",
+   586→   586→                    mkt_id,
+   587→   587→                    aid,
+   588→   588→                )
+   589→   589→                continue
+   590→   590→            try:
+   591→   591→                bet = self.place_bet(aid, session=sess)
+   592→   592→                if bet is not None:
+   593→   593→                    placed += 1
+   594→   594→                    # Track this market to skip duplicate analyses in same batch
+   595→   595→                    markets_with_bets.add(mkt_id)
+   596→   596→            except Exception as e:
+   597→   597→                logger.error(f"Bet hatasi (analysis {aid}): {e}")
+   598→   598→                continue
+   599→   599→
+   600→   600→        return placed
+   601→   601→

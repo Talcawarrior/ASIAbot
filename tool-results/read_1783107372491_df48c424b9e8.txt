@@ -1,0 +1,1462 @@
+     1→"""FastAPI application for ASIAbot - Polymarket weather betting bot.
+     2→
+     3→Provides REST API endpoints for status, markets, signals, history, cleanup,
+     4→and WebSocket push. The bot runs fetch -> parse -> forecast -> analyze ->
+     5→place -> settle cycles at configurable intervals.
+     6→"""
+     7→
+     8→# pylint: disable=E1102,E1111  # SQLAlchemy func.* false positives
+     9→
+    10→import asyncio
+    11→import json
+    12→import logging
+    13→import os
+    14→from contextlib import asynccontextmanager
+    15→from datetime import datetime, timezone
+    16→
+    17→from fastapi import Depends, FastAPI, Header, WebSocket, WebSocketDisconnect
+    18→from fastapi.middleware.cors import CORSMiddleware
+    19→from fastapi.responses import FileResponse, HTMLResponse
+    20→from asi_engine.calibration_engine import CalibrationEngine
+    21→from asi_engine.data_backfiller import DataBackfiller
+    22→
+    23→# ASI Engine imports (for ASI-Evolve dashboard endpoints)
+    24→from asi_engine.orchestrator import ASIAbotOrchestrator
+    25→from config.logging_config import setup_logging
+    26→
+    27→# Package Imports
+    28→from config.settings import config
+    29→from data_pipeline.poly_data_helper import PolyDataPipeline
+    30→from data_pipeline.resolved_markets_helper import ResolvedMarketsClient
+    31→from database.db import (
+    32→    ensure_initial_portfolio,
+    33→    get_db_session,
+    34→    get_db_session_factory,
+    35→    init_db,
+    36→)
+    37→from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
+    38→from engine.calculator import WeatherEngine
+    39→from engine.strategy import BettingEngine, RiskManager, SIALoop
+    40→from executor.settler import SettlementEngine
+    41→from scrapers.polymarket import PolymarketScraper
+    42→from utils.formulas import max_exposure_cap, portfolio_current_value
+    43→from utils.price_sanity import safe_ev
+    44→from utils.weights_store import load_weights
+    45→
+    46→setup_logging()
+    47→logger = logging.getLogger(__name__)
+    48→
+    49→
+    50→# ── API Key Authentication ──────────────────────────────────────────────────
+    51→# Protects sensitive POST endpoints (reset, asi/*, start, stop, cleanup).
+    52→# Set ASIABOT_API_KEY env var to enable. If not set, auth is disabled (dev mode).
+    53→
+    54→API_KEY = os.getenv("ASIABOT_API_KEY", "")
+    55→
+    56→
+    57→async def verify_api_key(x_api_key: str = Header(default="")):
+    58→    """FastAPI dependency: verify X-API-Key header for protected endpoints."""
+    59→    if not API_KEY:
+    60→        return  # No key configured — dev mode, allow all
+    61→    if x_api_key != API_KEY:
+    62→        from fastapi import HTTPException
+    63→
+    64→        raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    65→
+    66→
+    67→# ── Global State tracking for FastAPI Web App ───────────────────────────────
+    68→class BotState:
+    69→    """Global bot state tracking running status, modules, and tasks."""
+    70→
+    71→    def __init__(self):
+    72→        self.is_running = False
+    73→        self.locked = False
+    74→        self.lock_reason = None
+    75→        self.last_scan = None
+    76→        self.total_signals = 0
+    77→        self.total_bets = 0
+    78→        self.websocket_clients: list[WebSocket] = []
+    79→        self.tasks = {}
+    80→        self.start_stop_lock = asyncio.Lock()
+    81→
+    82→        # Config reference
+    83→        self.config = config
+    84→        self.db_session_factory = None
+    85→        self.data_fetcher = None
+    86→        self.weather_engine = None
+    87→        self.risk_manager = None
+    88→        self.betting_engine = None
+    89→        self.settlement_engine = None
+    90→        self.sia_loop = None
+    91→        self.sia_last_run = None  # datetime of last SIA optimization
+    92→        self.sia_interval_hours = 1  # run SIA hourly (was 24)
+    93→
+    94→        # ASI-Evolve engines
+    95→        self.orchestrator = None
+    96→        self.backfiller = None
+    97→        self.calibration_engine = None
+    98→
+    99→    def initialize_modules(self):
+   100→        """Initialize all modular components."""
+   101→        self.db_session_factory = get_db_session_factory()
+   102→        self.data_fetcher = PolymarketScraper()
+   103→        self.weather_engine = WeatherEngine(self.db_session_factory, self.config)
+   104→        self.risk_manager = RiskManager(None, self.config)
+   105→        self.betting_engine = BettingEngine(None, self.risk_manager, self.weather_engine)
+   106→        self.settlement_engine = SettlementEngine()
+   107→        self.sia_loop = SIALoop(self.db_session_factory, self.config)
+   108→
+   109→        # ASI-Evolve engines
+   110→        self.orchestrator = ASIAbotOrchestrator()
+   111→        self.backfiller = DataBackfiller()
+   112→        self.calibration_engine = CalibrationEngine()
+   113→
+   114→
+   115→state = BotState()
+   116→
+   117→
+   118→@asynccontextmanager
+   119→async def lifespan(_app: FastAPI):
+   120→    """Lifespan context manager for startup and shutdown."""
+   121→    logger.info("ASIAbot Weather Prediction Bot starting...")
+   122→    init_db()
+   123→    state.initialize_modules()
+   124→
+   125→    # Ensure initial portfolio row exists in DB
+   126→    try:
+   127→        ensure_initial_portfolio()
+   128→    except Exception as e:
+   129→        logger.warning("Portfolio init warning: %s", e)
+   130→
+   131→    logger.info("Database and all modules ready.")
+   132→    logger.info("ASIAbot Weather Prediction Bot v1.0")
+   133→    yield
+   134→
+   135→    # Shutdown
+   136→    logger.info("Bot shutting down...")
+   137→    if state.tasks:
+   138→        for task in list(state.tasks.values()):
+   139→            if not task.done():
+   140→                task.cancel()
+   141→        await asyncio.gather(*state.tasks.values(), return_exceptions=True)
+   142→        state.tasks.clear()
+   143→
+   144→
+   145→app = FastAPI(title="âš¡ ASIAbot - Self-Evolving Predictor", lifespan=lifespan)
+   146→
+   147→app.add_middleware(
+   148→    CORSMiddleware,
+   149→    allow_origins=["*"],
+   150→    allow_credentials=False,
+   151→    allow_methods=["GET", "POST", "OPTIONS"],
+   152→    allow_headers=["*"],
+   153→)
+   154→
+   155→
+   156→async def broadcast_message(message: dict):
+   157→    """Broadcast message to all connected WebSocket clients."""
+   158→    if not state.websocket_clients:
+   159→        return
+   160→    disconnected = []
+   161→    for client in state.websocket_clients:
+   162→        try:
+   163→            await client.send_json(message)
+   164→        except Exception:
+   165→            disconnected.append(client)
+   166→    for client in disconnected:
+   167→        if client in state.websocket_clients:
+   168→            state.websocket_clients.remove(client)
+   169→
+   170→
+   171→@app.get("/")
+   172→async def root():
+   173→    """Serve Next.js Dashboard"""
+   174→    _base = os.path.dirname(os.path.abspath(__file__))
+   175→    _out = os.path.join(_base, "out")
+   176→    _dash = os.path.join(_base, "dashboard", "out")
+   177→    dashboard_out = _out if os.path.isdir(_out) else _dash
+   178→    index_path = os.path.join(dashboard_out, "index.html")
+   179→    if os.path.exists(index_path):
+   180→        return FileResponse(index_path)
+   181→    return HTMLResponse("<h1>Dashboard yukleniyor... Build gerekli: cd dashboard && npx next build</h1>")
+   182→
+   183→
+   184→@app.get("/api/status")
+   185→def get_status():
+   186→    """Get bot status and metrics with strict accounting."""
+   187→    from sqlalchemy import func
+   188→
+   189→    from database.models import Analysis, Bet
+   190→
+   191→    db = get_db_session()
+   192→    try:
+   193→        db.query(Portfolio).filter(Portfolio.id == 1).first()
+   194→
+   195→        # 1. Realized PnL (Closed bets)
+   196→        from datetime import datetime, timezone
+   197→
+   198→        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+   199→        _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
+   200→        # All closed bet statuses (settled + bot-closed early exits)
+   201→        _closed_statuses = ("won", "lost", "settled", "closed_early")
+   202→        from sqlalchemy import or_
+   203→
+   204→        daily_pnl = (
+   205→            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+   206→            .filter(
+   207→                Bet.status.in_(_closed_statuses),
+   208→                or_(Bet.settled_at >= _today_start, Bet.closed_at >= _today_start),
+   209→            )
+   210→            .scalar()
+   211→        ) or 0.0
+   212→
+   213→        realized_pnl_db = (
+   214→            db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()
+   215→        ) or 0.0
+   216→
+   217→        # 2. Unrealized PnL (Open bets)
+   218→        open_statuses = OPEN_BET_STATUSES
+   219→        unrealized_pnl_db = (
+   220→            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
+   221→        ) or 0.0
+   222→
+   223→        # 3. Counts — win/loss based on PnL (includes closed_early)
+   224→        _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
+   225→        win_count = sum(1 for b in _all_closed if (b.pnl or 0) > 0)
+   226→        loss_count = sum(1 for b in _all_closed if (b.pnl or 0) <= 0)
+   227→        total_bets_db = db.query(Bet).filter(Bet.status.in_(open_statuses)).count()
+   228→        total_signals_db = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
+   229→
+   230→        # Open positions with details for frontend
+   231→        open_bets = db.query(Bet).filter(Bet.status.in_(open_statuses)).all()
+   232→        open_positions = []
+   233→        for bet in open_bets:
+   234→            wm = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
+   235→            open_positions.append(
+   236→                {
+   237→                    "id": str(bet.id),
+   238→                    "city": bet.city,
+   239→                    "side": bet.side,
+   240→                    "entry_price": float(bet.entry_price or 0),
+   241→                    "current_price": float(bet.current_price or bet.entry_price or 0),
+   242→                    "unrealized_pnl": float(bet.unrealized_pnl or 0),
+   243→                    "edge": float(bet.expected_value or 0) * 100,
+   244→                    "shares": float(bet.shares or 0),
+   245→                    "amount": float(bet.amount or 0),
+   246→                    "opened_at": bet.placed_at.isoformat() if bet.placed_at else None,
+   247→                    "market_id": bet.market_id,
+   248→                    "market_type": wm.market_type if wm else None,
+   249→                    "threshold": float(wm.threshold) if wm and wm.threshold else None,
+   250→                    "question": wm.question if wm else None,
+   251→                    "metric": wm.metric if wm else None,
+   252→                }
+   253→            )
+   254→
+   255→        exposure_db = (
+   256→            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
+   257→        ) or 0.0
+   258→
+   259→        initial_capital = state.config.INITIAL_PORTFOLIO
+   260→        total_pnl = realized_pnl_db + unrealized_pnl_db
+   261→
+   262→        # Total amount staked in settled bets (sum of all bet amounts
+   263→        # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
+   264→        total_stake_settled = (
+   265→            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()
+   266→        ) or 0.0
+   267→
+   268→        # Realized PnL from bets closed BEFORE today (for daily exposure cap)
+   269→        realized_before_today = (
+   270→            db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
+   271→            .filter(
+   272→                Bet.status.in_(_closed_statuses),
+   273→                or_(
+   274→                    Bet.settled_at < _today_start,
+   275→                    Bet.closed_at < _today_start,
+   276→                ),
+   277→            )
+   278→            .scalar()
+   279→        ) or 0.0
+   280→
+   281→        # ROI for CLOSED bets: realized PNL / total stake (bet amounts)
+   282→        total_roi = (realized_pnl_db / total_stake_settled) * 100 if total_stake_settled > 0 else 0
+   283→        # Daily ROI: daily realized PNL / total stake settled today
+   284→        total_stake_today = (
+   285→            db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+   286→            .filter(
+   287→                Bet.status.in_(_closed_statuses),
+   288→                or_(Bet.settled_at >= _today_start, Bet.closed_at >= _today_start),
+   289→            )
+   290→            .scalar()
+   291→        ) or 0.0
+   292→        daily_roi = (daily_pnl / total_stake_today) * 100 if total_stake_today > 0 else 0
+   293→
+   294→        # --- Sharpe Ratio & Max Drawdown ---
+   295→        import math
+   296→
+   297→        sharpe_ratio = 0.0
+   298→        max_drawdown_pct = 0.0
+   299→        closed_bets = (
+   300→            db.query(Bet.pnl, Bet.settled_at)
+   301→            .filter(Bet.status.in_(_closed_statuses))
+   302→            .order_by(Bet.settled_at.asc())
+   303→            .all()
+   304→        )
+   305→        if len(closed_bets) > 1:
+   306→            pnls = [float(b.pnl or 0.0) for b in closed_bets]
+   307→            mean_pnl = sum(pnls) / len(pnls)
+   308→            std_pnl = math.sqrt(sum((p - mean_pnl) ** 2 for p in pnls) / len(pnls))
+   309→            sharpe_ratio = round(mean_pnl / std_pnl, 4) if std_pnl > 0 else 0.0
+   310→
+   311→            # Max Drawdown: simulate portfolio from initial capital
+   312→            port_val = float(initial_capital)
+   313→            peak = port_val
+   314→            for b in closed_bets:
+   315→                port_val += float(b.pnl or 0.0)
+   316→                if port_val > peak:
+   317→                    peak = port_val
+   318→                dd = (peak - port_val) / peak * 100 if peak > 0 else 0
+   319→                if dd > max_drawdown_pct:
+   320→                    max_drawdown_pct = round(dd, 2)
+   321→
+   322→        return {
+   323→            "is_running": state.is_running,
+   324→            "locked": state.locked,
+   325→            "portfolio": {
+   326→                "initial": initial_capital,
+   327→                "current": portfolio_current_value(initial_capital, realized_pnl_db, unrealized_pnl_db),
+   328→                "daily_pnl": daily_pnl,
+   329→                "daily_roi": daily_roi,
+   330→                "unrealized_pnl": float(unrealized_pnl_db),
+   331→                "realized_pnl": float(realized_pnl_db),
+   332→                "total_pnl": total_pnl,
+   333→                "total_roi": total_roi,
+   334→                "exposure": float(exposure_db),
+   335→                "max_exposure": round(
+   336→                    max_exposure_cap(
+   337→                        initial_capital,
+   338→                        realized_before_today,
+   339→                        state.config.TOTAL_EXPOSURE_PCT,
+   340→                    ),
+   341→                    2,
+   342→                ),
+   343→            },
+   344→            "stats": {
+   345→                "total_signals": total_signals_db,
+   346→                "total_bets": total_bets_db,
+   347→                "win_count": win_count,
+   348→                "loss_count": loss_count,
+   349→                "total_closed": win_count + loss_count,
+   350→                "last_scan": state.last_scan.isoformat() if state.last_scan else None,
+   351→            },
+   352→            "limits": {
+   353→                "max_bet_pct": state.config.MAX_BET_PCT * 100,
+   354→                "max_exposure_pct": state.config.TOTAL_EXPOSURE_PCT * 100,
+   355→                "daily_stop_loss_pct": state.config.DAILY_LOSS_LIMIT * 100,
+   356→                "city_cap": state.config.CITY_CAP,
+   357→            },
+   358→            "metrics": {
+   359→                "sharpe_ratio": sharpe_ratio,
+   360→                "max_drawdown_pct": max_drawdown_pct,
+   361→            },
+   362→            "open_positions": open_positions,
+   363→        }
+   364→    except Exception as e:
+   365→        return {"error": str(e)}
+   366→    finally:
+   367→        db.close()
+   368→
+   369→
+   370→# --- ASI-Evolve Dashboard Endpoints ---
+   371→
+   372→
+   373→@app.get("/api/asi/weights")
+   374→def get_asi_weights():
+   375→    """Retrieve current evolved weights with model performance metrics."""
+   376→    from database.models import ModelPerformance
+   377→    from sqlalchemy import func
+   378→
+   379→    weights = load_weights()
+   380→    if not weights:
+   381→        weights = config.MODEL_WEIGHTS
+   382→
+   383→    # Get latest performance metrics for each model
+   384→    db = get_db_session()
+   385→    try:
+   386→        # Subquery to get latest record per model
+   387→        latest_perf = (
+   388→            db.query(
+   389→                ModelPerformance.model_name,
+   390→                func.max(ModelPerformance.recorded_at).label("max_date"),
+   391→            )
+   392→            .group_by(ModelPerformance.model_name)
+   393→            .subquery()
+   394→        )
+   395→
+   396→        perf_records = (
+   397→            db.query(ModelPerformance)
+   398→            .join(
+   399→                latest_perf,
+   400→                (ModelPerformance.model_name == latest_perf.c.model_name)
+   401→                & (ModelPerformance.recorded_at == latest_perf.c.max_date),
+   402→            )
+   403→            .all()
+   404→        )
+   405→
+   406→        perf_map = {p.model_name: p for p in perf_records}
+   407→    finally:
+   408→        db.close()
+   409→
+   410→    # Return enriched weights with performance data
+   411→    result = {}
+   412→    for model, weight in weights.items():
+   413→        perf = perf_map.get(model)
+   414→        result[model] = {
+   415→            "weight": weight,
+   416→            "brier_score": perf.brier_score if perf else None,
+   417→            "accuracy": perf.accuracy if perf else None,
+   418→            "num_predictions": perf.num_predictions if perf else 0,
+   419→            "last_updated": perf.recorded_at.isoformat() if perf and perf.recorded_at else None,
+   420→        }
+   421→    return result
+   422→
+   423→
+   424→@app.get("/api/asi/cognition")
+   425→def get_asi_cognition():
+   426→    """Retrieve ASI Cognition Base insights."""
+   427→    if not state.orchestrator:
+   428→        state.orchestrator = ASIAbotOrchestrator()
+   429→    return state.orchestrator.cognition_base.get_all_insights()
+   430→
+   431→
+   432→@app.post("/api/asi/evolve")
+   433→async def run_asi_evolve(_key: str = Depends(verify_api_key)):
+   434→    """Run an autonomous evolution pipeline round (5 rounds)."""
+   435→    if not state.orchestrator:
+   436→        state.orchestrator = ASIAbotOrchestrator()
+   437→    loop = asyncio.get_running_loop()
+   438→    result = await loop.run_in_executor(None, state.orchestrator.run_evolution_pipeline, 5)
+   439→    return result
+   440→
+   441→
+   442→@app.post("/api/asi/backfill")
+   443→async def run_asi_backfill(days: int = 90, _key: str = Depends(verify_api_key)):
+   444→    """Trigger a deep historical weather backfill from Open-Meteo APIs."""
+   445→    if not state.backfiller:
+   446→        state.backfiller = DataBackfiller()
+   447→    loop = asyncio.get_running_loop()
+   448→    records_inserted = await loop.run_in_executor(None, state.backfiller.run_deep_backfill, days, 12)
+   449→    if state.calibration_engine:
+   450→        state.calibration_engine.calculate_biases()
+   451→    return {"status": "success", "inserted_records": records_inserted}
+   452→
+   453→
+   454→@app.get("/api/asi/calibration")
+   455→def get_asi_calibration():
+   456→    """Retrieve the pre-calculated bias calibration maps for each city."""
+   457→    if not state.calibration_engine:
+   458→        state.calibration_engine = CalibrationEngine()
+   459→    return state.calibration_engine.bias_map
+   460→
+   461→
+   462→@app.post("/api/asi/calibration/recalculate")
+   463→def run_asi_calibration_recalculate(_key: str = Depends(verify_api_key)):
+   464→    """Manually recalculate model biases from the historical calibrations table."""
+   465→    if not state.calibration_engine:
+   466→        state.calibration_engine = CalibrationEngine()
+   467→    biases = state.calibration_engine.calculate_biases()
+   468→    return {"status": "success", "cities_calibrated": len(biases)}
+   469→
+   470→
+   471→@app.get("/api/asi/trades")
+   472→def get_asi_trades():
+   473→    """Retrieve on-chain Polymarket trades fetched from warproxxx/poly_data."""
+   474→    pipeline = PolyDataPipeline()
+   475→    df = pipeline.load_trades_dataset()
+   476→    return df.head(50).to_dict(orient="records")
+   477→
+   478→
+   479→@app.get("/api/asi/orderbook")
+   480→def get_asi_orderbook(market_id: str = "2513866"):
+   481→    """Retrieve high-fidelity CLOB orderbook depth from resolvedmarkets.com."""
+   482→    client = ResolvedMarketsClient()
+   483→    orderbook = client.fetch_historical_orderbook(market_id)
+   484→    return orderbook
+   485→
+   486→
+   487→# --- Standard Endpoints ---
+   488→
+   489→
+   490→@app.get("/api/markets")
+   491→def get_markets():
+   492→    """Get all future active weather markets AND missed signals (rejected bets)."""
+   493→    from datetime import timedelta
+   494→
+   495→    from database.models import Analysis, Bet, WeatherForecast, WeatherMarket
+   496→    from engine.calculator import Calculator
+   497→
+   498→    db = get_db_session()
+   499→    try:
+   500→        now = datetime.now(timezone.utc).replace(tzinfo=None)
+   501→
+   502→        # 1. Fetch missed signals (should_bet=True but no active bet)
+   503→        # These are the "164 - 8 = 156" signals
+   504→        missed_signals = (
+   505→            db.query(Analysis, WeatherMarket)
+   506→            .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
+   507→            .filter(Analysis.should_bet.is_(True))
+   508→            .filter(
+   509→                ~Analysis.market_id.in_(db.query(Bet.market_id).filter(Bet.status.in_(["placed", "active", "open"])))
+   510→            )
+   511→            .order_by(Analysis.analyzed_at.desc())
+   512→            .all()
+   513→        )
+   514→
+   515→        market_list = []
+   516→        for analysis, m in missed_signals:
+   517→            market_list.append(
+   518→                {
+   519→                    "id": m.id,
+   520→                    "city": m.city,
+   521→                    "city_code": "SIGNAL",
+   522→                    "date": m.target_date.isoformat() if m.target_date else None,
+   523→                    "outcome_type": m.metric or "YES",
+   524→                    "strike_temp": float(m.threshold) if m.threshold else 0,
+   525→                    "current_yes_bid": float(m.yes_price) if m.yes_price else 0,
+   526→                    "current_no_bid": float(m.no_price) if m.no_price else 0,
+   527→                    "model_prob": float(analysis.estimated_probability),
+   528→                    "edge": float(analysis.edge),
+   529→                    "ev": safe_ev(analysis.estimated_probability, m.yes_price or 0.5),
+   530→                    "status": "REJECTED (Risk Cap)",
+   531→                }
+   532→            )
+   533→
+   534→        # 2. Fetch other open markets (today + 7 days)
+   535→        upper = now + timedelta(days=7)
+   536→        markets = (
+   537→            db.query(WeatherMarket)
+   538→            .filter(
+   539→                WeatherMarket.target_date >= now,
+   540→                WeatherMarket.target_date <= upper,
+   541→                WeatherMarket.status == "open",
+   542→                ~WeatherMarket.id.in_([m["id"] for m in market_list]),
+   543→            )
+   544→            .limit(100)
+   545→            .all()
+   546→        )
+   547→
+   548→        calc = Calculator()
+   549→        for m in markets:
+   550→            if m.yes_price is None or m.threshold is None:
+   551→                continue
+   552→            current_price = float(m.yes_price)
+   553→            model_prob = current_price
+   554→            forecasts = (
+   555→                db.query(WeatherForecast)
+   556→                .filter(WeatherForecast.market_id == m.id)
+   557→                .order_by(WeatherForecast.fetched_at.desc())
+   558→                .limit(8)
+   559→                .all()
+   560→            )
+   561→            if forecasts:
+   562→                latest_vals = [f.predicted_value for f in forecasts]
+   563→                days_ahead = max((m.target_date - now).days, 1)
+   564→                model_prob = calc.estimate_probability(latest_vals, float(m.threshold), days_ahead)
+   565→
+   566→            market_list.append(
+   567→                {
+   568→                    "id": m.id,
+   569→                    "city": m.city,
+   570→                    "city_code": "",
+   571→                    "date": m.target_date.isoformat() if m.target_date else None,
+   572→                    "outcome_type": m.metric or "YES",
+   573→                    "strike_temp": float(m.threshold),
+   574→                    "current_yes_bid": current_price,
+   575→                    "current_no_bid": m.no_price or (1 - current_price),
+   576→                    "model_prob": model_prob,
+   577→                    "edge": model_prob - current_price,
+   578→                    "ev": safe_ev(model_prob, current_price),
+   579→                    "status": "OPEN",
+   580→                }
+   581→            )
+   582→
+   583→        return {"markets": market_list, "count": len(market_list)}
+   584→    except Exception as e:
+   585→        logger.error("Markets API error: %s", e)
+   586→        return {"error": str(e), "markets": []}
+   587→    finally:
+   588→        db.close()
+   589→
+   590→
+   591→@app.get("/api/bets")
+   592→def get_bets(status: str = "", limit: int = 100, offset: int = 0):
+   593→    """Get all bets with optional status filter and pagination.
+   594→
+   595→    Query params:
+   596→      status  (str, optional)  -- comma-separated list of statuses to filter by.
+   597→                                Omitting returns ALL statuses.
+   598→      limit   (int, default 100)
+   599→      offset  (int, default 0)
+   600→    """
+   601→    db = get_db_session()
+   602→    try:
+   603→        q = db.query(Bet)
+   604→        if status:
+   605→            statuses = [s.strip() for s in status.split(",") if s.strip()]
+   606→            q = q.filter(Bet.status.in_(statuses))
+   607→        total = q.count()
+   608→        rows = q.order_by(Bet.placed_at.desc()).offset(offset).limit(limit).all()
+   609→        bets = []
+   610→        for b in rows:
+   611→            bets.append(
+   612→                {
+   613→                    "id": b.id,
+   614→                    "market_id": b.market_id,
+   615→                    "city": b.city or "",
+   616→                    "side": b.side or b.outcome or "YES",
+   617→                    "amount": float(b.amount or 0),
+   618→                    "entry_price": float(b.entry_price or b.price or 0),
+   619→                    "current_price": float(b.current_price or b.entry_price or b.price or 0),
+   620→                    "status": b.status,
+   621→                    "realized_pnl": float(b.realized_pnl or 0),
+   622→                    "unrealized_pnl": float(b.unrealized_pnl or 0),
+   623→                    "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+   624→                    "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+   625→                }
+   626→            )
+   627→        return {"bets": bets, "count": len(bets), "total": total}
+   628→    except Exception as e:
+   629→        logger.error("Bets API error: %s", e)
+   630→        return {"error": str(e), "bets": [], "count": 0, "total": 0}
+   631→    finally:
+   632→        db.close()
+   633→
+   634→
+   635→# Keep other endpoints (signals, history, cleanup, start, stop,
+   636→# reset, ws, loops, run_cli) exactly as they were.
+   637→
+   638→
+   639→def _safe_parse_ladder(raw):
+   640→    if not raw:
+   641→        return []
+   642→    try:
+   643→        data = json.loads(raw) if isinstance(raw, str) else raw
+   644→        return data if isinstance(data, list) else []
+   645→    except Exception:
+   646→        return []
+   647→
+   648→
+   649→@app.get("/api/signals")
+   650→def get_signals():
+   651→    """Get all currently active (open) bets with live edge/price data."""
+   652→    db = get_db_session()
+   653→    try:
+   654→        active_bets = (
+   655→            db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).order_by(Bet.placed_at.desc().nullslast()).all()
+   656→        )
+   657→        signals = []
+   658→        for bet in active_bets:
+   659→            market = db.query(WeatherMarket).filter(WeatherMarket.id == bet.market_id).first()
+   660→            res_date = market.target_date if market else None
+   661→            entry = bet.entry_price if bet.entry_price is not None else bet.price
+   662→            current = bet.current_price if bet.current_price is not None else bet.entry_price
+   663→            fair_value = None
+   664→            live_edge = None
+   665→            entry_edge = None
+   666→            move_pct = None
+   667→            try:
+   668→                latest = (
+   669→                    db.query(Analysis)
+   670→                    .filter(Analysis.market_id == bet.market_id)
+   671→                    .order_by(Analysis.analyzed_at.desc())
+   672→                    .first()
+   673→                )
+   674→                if latest:
+   675→                    fair_value = float(latest.estimated_probability)
+   676→                    if current is not None:
+   677→                        live_edge = fair_value - current
+   678→                if bet.analysis_id:
+   679→                    origin = db.query(Analysis).filter(Analysis.id == bet.analysis_id).first()
+   680→                    if origin:
+   681→                        entry_edge = float(origin.edge)
+   682→                if entry and current and entry > 0:
+   683→                    move_pct = (current - entry) / entry
+   684→            except Exception:
+   685→                pass
+   686→            signals.append(
+   687→                {
+   688→                    "id": bet.id,
+   689→                    "market_id": bet.market_id,
+   690→                    "city": bet.city or (market.city if market else "Unknown"),
+   691→                    "outcome": bet.side or bet.outcome or "YES",
+   692→                    "entry_price": entry,
+   693→                    "current_price": current,
+   694→                    "stake_amount": bet.amount or bet.stake_amount,
+   695→                    "unrealized_pnl": float(bet.unrealized_pnl or 0.0),
+   696→                    "fair_value": fair_value,
+   697→                    "edge": live_edge,
+   698→                    "entry_edge": entry_edge,
+   699→                    "live_edge": live_edge,
+   700→                    "move_pct": move_pct,
+   701→                    "ladder_orders": _safe_parse_ladder(bet.ladder_data),
+   702→                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+   703→                    "resolution_date": res_date.isoformat() if res_date else None,
+   704→                    "status": bet.status,
+   705→                    "market_type": market.market_type if market else None,
+   706→                    "threshold": float(market.threshold) if market and market.threshold else None,
+   707→                    "question": market.question if market else None,
+   708→                    "metric": market.metric if market else None,
+   709→                }
+   710→            )
+   711→        return {"signals": signals, "count": len(signals)}
+   712→    finally:
+   713→        db.close()
+   714→
+   715→
+   716→@app.get("/api/history")
+   717→def get_history():
+   718→    """Get settled bet history with win/loss stats."""
+   719→    db = get_db_session()
+   720→    try:
+   721→        from sqlalchemy import case, func
+   722→
+   723→        # True settlement stats: won+lost+settled+closed_early
+   724→        # closed_early bets are real exits — their PnL is realized cash.
+   725→        # Excluding them from stats gives a misleadingly small picture.
+   726→        real_settled_statuses = ["settled", "won", "lost", "closed_early"]
+   727→
+   728→        stats_q = (
+   729→            db.query(
+   730→                func.count(Bet.id),
+   731→                func.sum(case((Bet.pnl > 0, 1), else_=0)),
+   732→                func.sum(case((Bet.pnl <= 0, 1), else_=0)),
+   733→                func.coalesce(func.sum(Bet.amount), 0.0),
+   734→                func.coalesce(func.sum(Bet.pnl), 0.0),
+   735→                func.coalesce(func.sum(case((Bet.pnl > 0, Bet.pnl), else_=0.0)), 0.0),
+   736→                func.coalesce(func.sum(case((Bet.pnl <= 0, func.abs(Bet.pnl)), else_=0.0)), 0.0),
+   737→            )
+   738→            .filter(Bet.status.in_(real_settled_statuses))
+   739→            .one()
+   740→        )
+   741→        total_won = stats_q[1] or 0
+   742→        total_lost = stats_q[2] or 0
+   743→        total_stake_all = float(stats_q[3] or 0)
+   744→        total_pnl_all = float(stats_q[4] or 0)
+   745→        total_win_pnl = float(stats_q[5] or 0)
+   746→        total_loss_pnl = float(stats_q[6] or 0)
+   747→
+   748→        # closed_early count and PnL (separate category)
+   749→        ce_q = (
+   750→            db.query(
+   751→                func.count(Bet.id),
+   752→                func.coalesce(func.sum(Bet.amount), 0.0),
+   753→                func.coalesce(func.sum(Bet.pnl), 0.0),
+   754→            )
+   755→            .filter(Bet.status == "closed_early")
+   756→            .one()
+   757→        )
+   758→        total_closed_early = ce_q[0] or 0
+   759→        ce_pnl = float(ce_q[2] or 0)
+   760→
+   761→        # Average edge from settled bets (via Analysis join)
+   762→        avg_edge_q = (
+   763→            db.query(func.coalesce(func.avg(Analysis.edge), 0.0))
+   764→            .join(Bet, Bet.analysis_id == Analysis.id)
+   765→            .filter(Bet.status.in_(real_settled_statuses), Analysis.edge.isnot(None))
+   766→            .scalar()
+   767→        )
+   768→        avg_edge = float(avg_edge_q or 0.0)
+   769→
+   770→        # History list: all settled + closed_early (most recent 300)
+   771→        all_closed_statuses = ["settled", "won", "lost", "closed_early"]
+   772→        # Use coalesce(settled_at, closed_at) for correct ordering
+   773→        close_date = func.coalesce(Bet.settled_at, Bet.closed_at)
+   774→        settled_bets = (
+   775→            db.query(Bet)
+   776→            .filter(Bet.status.in_(all_closed_statuses))
+   777→            .order_by(close_date.desc(), Bet.placed_at.desc())
+   778→            .limit(300)
+   779→            .all()
+   780→        )
+   781→
+   782→        # Batch-load analyses for edge data (N+1 fix)
+   783→        bet_analysis_ids = [b.analysis_id for b in settled_bets if b.analysis_id]
+   784→        bet_analyses = {}
+   785→        if bet_analysis_ids:
+   786→            for a in db.query(Analysis).filter(Analysis.id.in_(bet_analysis_ids)).all():
+   787→                bet_analyses[a.id] = a
+   788→
+   789→        history = []
+   790→        for bet in settled_bets:
+   791→            pnl = bet.pnl or bet.realized_pnl or 0.0
+   792→            stake = bet.amount or 0.0
+   793→            roi = (pnl / stake * 100) if stake > 0 else 0.0
+   794→            # Get actual edge from Analysis (net edge after slippage+fee)
+   795→            analysis = bet_analyses.get(bet.analysis_id) if bet.analysis_id else None
+   796→            edge_pct = round((analysis.edge or 0) * 100, 2) if analysis and analysis.edge else None
+   797→            # Determine exit type code from status + close_reason
+   798→            if bet.status == "closed_early" and bet.close_reason:
+   799→                cr = bet.close_reason.lower()
+   800→                if cr.startswith("take_profit"):
+   801→                    exit_type = "TP"
+   802→                elif cr.startswith("stop_loss"):
+   803→                    exit_type = "SL"
+   804→                elif cr.startswith("trailing_stop"):
+   805→                    exit_type = "TS"
+   806→                elif cr.startswith("time_decay"):
+   807→                    exit_type = "TD"
+   808→                else:
+   809→                    exit_type = "OT"
+   810→            else:
+   811→                exit_type = "ST"  # settlement (Polymarket resolved)
+   812→
+   813→            history.append(
+   814→                {
+   815→                    "id": bet.id,
+   816→                    "city": bet.city,
+   817→                    "outcome": bet.side or "YES",
+   818→                    "entry_price": bet.price,
+   819→                    "exit_price": bet.current_price,  # actual fill price for early exits
+   820→                    "stake_amount": stake,
+   821→                    "realized_pnl": pnl,
+   822→                    "roi": round(roi, 2),
+   823→                    "edge": edge_pct,
+   824→                    "result": "WIN" if pnl > 0 else "LOSS",
+   825→                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+   826→                    "settled_at": (bet.settled_at.isoformat() if bet.settled_at else None),
+   827→                    "closed_at": (bet.closed_at.isoformat() if bet.closed_at else None),
+   828→                    "exit_type": exit_type,
+   829→                }
+   830→            )
+   831→        win_rate = (total_won / (total_won + total_lost) * 100) if (total_won + total_lost) > 0 else 0
+   832→        overall_roi = (total_pnl_all / total_stake_all * 100) if total_stake_all > 0 else 0.0
+   833→        profit_factor = round(total_win_pnl / total_loss_pnl, 2) if total_loss_pnl > 0 else 0.0
+   834→        return {
+   835→            "history": history,
+   836→            "stats": {
+   837→                "total_won": total_won,
+   838→                "total_lost": total_lost,
+   839→                "total_closed_early": total_closed_early,
+   840→                "closed_early_pnl": round(ce_pnl, 2),
+   841→                "win_rate": round(win_rate, 2),
+   842→                "overall_roi": round(overall_roi, 2),
+   843→                "total_stake": round(total_stake_all, 2),
+   844→                "total_pnl": round(total_pnl_all, 2),
+   845→                "total_win_pnl": round(total_win_pnl, 2),
+   846→                "total_loss_pnl": round(total_loss_pnl, 2),
+   847→                "profit_factor": profit_factor,
+   848→                "avg_edge": round(avg_edge * 100, 2) if avg_edge else 0.0,
+   849→            },
+   850→        }
+   851→    finally:
+   852→        db.close()
+   853→
+   854→
+   855→@app.get("/api/equity-curve")
+   856→def get_equity_curve():
+   857→    """Daily equity curve from ALL settled + closed_early bets (no limit).
+   858→
+   859→    Returns [{date, pnl, count}] for every day that had at least one closure.
+   860→    The frontend starts from INITIAL_PORTFOLIO and accumulates daily PnL.
+   861→    """
+   862→    from sqlalchemy import func
+   863→
+   864→    db = get_db_session()
+   865→    try:
+   866→        initial = state.config.INITIAL_PORTFOLIO
+   867→        closed_statuses = ("won", "lost", "settled", "closed_early")
+   868→        close_col = func.coalesce(Bet.settled_at, Bet.closed_at)
+   869→        # SQLite: use date() function to extract calendar date from datetime string
+   870→        day_expr = func.date(close_col)
+   871→
+   872→        # Group PnL by calendar date (UTC)
+   873→        rows = (
+   874→            db.query(
+   875→                day_expr.label("day"),
+   876→                func.sum(Bet.pnl).label("daily_pnl"),
+   877→                func.count(Bet.id).label("cnt"),
+   878→            )
+   879→            .filter(Bet.status.in_(closed_statuses))
+   880→            .group_by(day_expr)
+   881→            .order_by(day_expr.asc())
+   882→            .all()
+   883→        )
+   884→
+   885→        points = []
+   886→        running = initial
+   887→        for row in rows:
+   888→            # row.day is "YYYY-MM-DD" string from SQLite date()
+   889→            day_str = row.day  # "2026-06-24"
+   890→            pnl = float(row.daily_pnl or 0)
+   891→            running += pnl
+   892→            # Format: "24 Haz"
+   893→            from datetime import datetime as dt
+   894→
+   895→            d = dt.strptime(day_str, "%Y-%m-%d")
+   896→            label = f"{d.day} {d.strftime('%b')}"
+   897→            points.append(
+   898→                {
+   899→                    "date": label,
+   900→                    "value": round(running, 2),
+   901→                    "pnl": round(pnl, 2),
+   902→                    "count": row.cnt,
+   903→                }
+   904→            )
+   905→
+   906→        # Add today with current unrealized value
+   907→        unrealized = (
+   908→            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
+   909→            .filter(Bet.status.in_(OPEN_BET_STATUSES))
+   910→            .scalar()
+   911→        ) or 0.0
+   912→        realized_now = running - initial  # all realized PnL accumulated
+   913→        today_val = initial + realized_now + float(unrealized)
+   914→        from datetime import datetime, timezone as tz
+   915→
+   916→        today = datetime.now(tz.utc).replace(tzinfo=None)
+   917→        label = f"{today.day} {today.strftime('%b')}"
+   918→        if points and points[-1]["date"] == label:
+   919→            points[-1]["value"] = round(today_val, 2)
+   920→        else:
+   921→            points.append(
+   922→                {
+   923→                    "date": label,
+   924→                    "value": round(today_val, 2),
+   925→                    "pnl": 0,
+   926→                    "count": 0,
+   927→                }
+   928→            )
+   929→
+   930→        return {"initial": initial, "points": points}
+   931→    except Exception as e:
+   932→        logger.error("Equity curve error: %s", e)
+   933→        return {"error": str(e), "initial": config.INITIAL_PORTFOLIO, "points": []}
+   934→    finally:
+   935→        db.close()
+   936→
+   937→
+   938→@app.get("/api/slippage")
+   939→def get_slippage():
+   940→    """Return recent slippage data from analyses joined with market info."""
+   941→    db = get_db_session()
+   942→    try:
+   943→        rows = (
+   944→            db.query(
+   945→                Analysis,
+   946→                WeatherMarket.city,
+   947→                Bet.side,
+   948→                Bet.entry_price,
+   949→                Bet.pnl,
+   950→                Bet.status,
+   951→            )
+   952→            .outerjoin(WeatherMarket, WeatherMarket.id == Analysis.market_id)
+   953→            .outerjoin(Bet, Bet.analysis_id == Analysis.id)
+   954→            .filter(Analysis.slippage_pct.isnot(None))
+   955→            .order_by(Analysis.analyzed_at.desc())
+   956→            .limit(50)
+   957→            .all()
+   958→        )
+   959→
+   960→        entries = []
+   961→        for analysis, city, _bet_side, entry_price, bet_pnl, _bet_status in rows:
+   962→            # Use Analysis fields for expected values, Bet fields for actuals
+   963→            expected_price = round(float(analysis.market_implied_prob or 0), 4)
+   964→            side = analysis.recommended_side or "—"
+   965→            # entry_price: 0 if no bet placed (frontend expects number)
+   966→            entry_price_val = round(float(entry_price), 4) if entry_price is not None else 0.0
+   967→            # result: PENDING if no bet, WIN/LOSS if bet settled
+   968→            if bet_pnl is not None:
+   969→                result = "WIN" if bet_pnl > 0 else "LOSS"
+   970→            else:
+   971→                result = "PENDING"
+   972→            entries.append(
+   973→                {
+   974→                    "id": str(analysis.id),
+   975→                    "city": city or "—",
+   976→                    "side": side,
+   977→                    "expected_price": expected_price,
+   978→                    "entry_price": entry_price_val,
+   979→                    "slippage_pct": round(float(analysis.slippage_pct), 6),  # as decimal (0.005)
+   980→                    "result": result,
+   981→                    "analyzed_at": (analysis.analyzed_at.isoformat() if analysis.analyzed_at else None),
+   982→                }
+   983→            )
+   984→        return {"slippage": entries}
+   985→    except Exception as e:
+   986→        return {"error": str(e)}
+   987→    finally:
+   988→        db.close()
+   989→
+   990→
+   991→@app.post("/api/cleanup")
+   992→def cleanup_old_data(_key: str = Depends(verify_api_key)):
+   993→    """Cancel stale open bets and refund their stakes (ladder-aware)."""
+   994→    db = get_db_session()
+   995→    try:
+   996→        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+   997→        _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
+   998→        stale_analyses = (
+   999→            db.query(Analysis)
+  1000→            .filter(Analysis.should_bet.is_(True), Analysis.analyzed_at < _today_start)
+  1001→            .delete(synchronize_session=False)
+  1002→        )
+  1003→        stale_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.placed_at < _today_start).all()
+  1004→        cancelled = 0
+  1005→        for bet in stale_bets:
+  1006→            bet.status = "cancelled"
+  1007→            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+  1008→
+  1009→            # Calculate the actual debited amount — for ladder bets only
+  1010→            # filled rungs were debited; for flat bets the full amount.
+  1011→            from utils.accounting import credit_sale
+  1012→
+  1013→            ladder = _safe_parse_ladder(bet.ladder_data)
+  1014→            if ladder:
+  1015→                filled_amount = sum(float(rung.get("amount", 0)) for rung in ladder if rung.get("status") == "filled")
+  1016→                refund_amount = filled_amount if filled_amount > 0 else float(bet.amount or 0)
+  1017→            else:
+  1018→                refund_amount = float(bet.amount or 0)
+  1019→
+  1020→            credit_sale(db, refund_amount, f"cleanup_refund:bet_{bet.id}")
+  1021→            cancelled += 1
+  1022→        db.commit()
+  1023→        return {"deleted_analyses": stale_analyses, "cancelled_bets": cancelled}
+  1024→    finally:
+  1025→        db.close()
+  1026→
+  1027→
+  1028→@app.post("/api/start")
+  1029→async def start_bot(_key: str = Depends(verify_api_key)):
+  1030→    """Start the scan-and-bet and settlement background loops."""
+  1031→    async with state.start_stop_lock:
+  1032→        if state.is_running:
+  1033→            return {"status": "already_running"}
+  1034→        state.is_running = True
+  1035→        state.locked = False
+  1036→        state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop(state))
+  1037→        state.tasks["settlement"] = asyncio.create_task(settlement_loop(state))
+  1038→        return {"status": "started"}
+  1039→
+  1040→
+  1041→@app.post("/api/stop")
+  1042→async def stop_bot(_key: str = Depends(verify_api_key)):
+  1043→    """Stop all background loops and cancel pending tasks."""
+  1044→    async with state.start_stop_lock:
+  1045→        state.is_running = False
+  1046→        tasks_to_await = []
+  1047→        for t in list(state.tasks.values()):
+  1048→            if not t.done():
+  1049→                t.cancel()
+  1050→                tasks_to_await.append(t)
+  1051→        if tasks_to_await:
+  1052→            await asyncio.gather(*tasks_to_await, return_exceptions=True)
+  1053→        state.tasks.clear()
+  1054→        return {"status": "stopped"}
+  1055→
+  1056→
+  1057→@app.post("/api/reset")
+  1058→async def reset_bot(_key: str = Depends(verify_api_key)):
+  1059→    """Reset the bot state and clear in-flight DB rows WITHOUT auto-restart."""
+  1060→    await stop_bot()
+  1061→    db = get_db_session()
+  1062→    try:
+  1063→        # Clear all operational data
+  1064→        db.query(Bet).delete()
+  1065→        db.query(Analysis).delete()
+  1066→
+  1067→        # Reset portfolio to exactly 1000
+  1068→        pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
+  1069→        if not pf:
+  1070→            pf = Portfolio(id=1)
+  1071→            db.add(pf)
+  1072→
+  1073→        pf.cash_balance = config.INITIAL_PORTFOLIO
+  1074→        pf.initial_value = config.INITIAL_PORTFOLIO
+  1075→        pf.current_value = config.INITIAL_PORTFOLIO
+  1076→        pf.total_value = config.INITIAL_PORTFOLIO
+  1077→        pf.total_realized_pnl = 0.0
+  1078→        pf.daily_pnl = 0.0
+  1079→        pf.total_won = 0
+  1080→        pf.total_lost = 0
+  1081→
+  1082→        db.commit()
+  1083→
+  1084→        # Reset in-memory state
+  1085→        state.total_signals = 0
+  1086→        state.total_bets = 0
+  1087→        state.last_scan = None
+  1088→
+  1089→        return {
+  1090→            "status": "reset",
+  1091→            "message": "Sistem sifirlandi. Lutfen manuel olarak baslatin.",
+  1092→            "portfolio": {
+  1093→                "current": config.INITIAL_PORTFOLIO,
+  1094→                "exposure": 0.0,
+  1095→                "realized_pnl": 0.0,
+  1096→                "unrealized_pnl": 0.0,
+  1097→            },
+  1098→        }
+  1099→    except Exception as e:
+  1100→        db.rollback()
+  1101→        logger.error(f"Reset error: {e}")
+  1102→        return {"error": str(e)}
+  1103→    finally:
+  1104→        db.close()
+  1105→
+  1106→
+  1107→@app.get("/api/health-check")
+  1108→def get_health_check():
+  1109→    """Comprehensive health check for bot performance evaluation."""
+  1110→    from datetime import timedelta
+  1111→
+  1112→    db = get_db_session()
+  1113→    try:
+  1114→        now = datetime.now(timezone.utc).replace(tzinfo=None)
+  1115→        h24 = now - timedelta(hours=48)
+  1116→
+  1117→        # 1. Activity in last 24h
+  1118→        bets_opened_24h = (
+  1119→            db.query(Bet)
+  1120→            .filter(
+  1121→                Bet.placed_at >= h24,
+  1122→                Bet.status.in_(OPEN_BET_STATUSES),
+  1123→            )
+  1124→            .count()
+  1125→        )
+  1126→
+  1127→        # 2. PASS reasons
+  1128→        pass_analyses = (
+  1129→            db.query(Analysis)
+  1130→            .filter(
+  1131→                Analysis.analyzed_at >= h24,
+  1132→                Analysis.should_bet.is_(False),
+  1133→            )
+  1134→            .order_by(Analysis.analyzed_at.desc())
+  1135→            .limit(20)
+  1136→            .all()
+  1137→        )
+  1138→
+  1139→        pass_reasons = []
+  1140→        for a in pass_analyses:
+  1141→            pass_reasons.append(
+  1142→                {
+  1143→                    "market_id": a.market_id,
+  1144→                    "edge_pct": round((a.edge or 0) * 100, 2),
+  1145→                    "reason": a.reason or "Bilinmeyen neden",
+  1146→                    "time": a.analyzed_at.isoformat() if a.analyzed_at else None,
+  1147→                }
+  1148→            )
+  1149→
+  1150→        # 3. Edge distribution for all closed bets (settled + closed_early)
+  1151→        settled_bet_statuses = ["won", "lost", "settled", "closed_early"]
+  1152→        settled_for_edge = db.query(Bet).filter(Bet.status.in_(settled_bet_statuses)).all()
+  1153→
+  1154→        # Batch-load analyses for all bets (N+1 fix)
+  1155→        analysis_ids = [b.analysis_id for b in settled_for_edge if b.analysis_id]
+  1156→        analyses_by_id = {}
+  1157→        if analysis_ids:
+  1158→            for a in db.query(Analysis).filter(Analysis.id.in_(analysis_ids)).all():
+  1159→                analyses_by_id[a.id] = a
+  1160→
+  1161→        edge_values = []
+  1162→        for b in settled_for_edge:
+  1163→            if b.analysis_id:
+  1164→                analysis = analyses_by_id.get(b.analysis_id)
+  1165→                if analysis:
+  1166→                    edge_values.append(
+  1167→                        {
+  1168→                            "bet_id": b.id,
+  1169→                            "raw_edge_pct": (round((analysis.raw_edge or 0) * 100, 2) if analysis.raw_edge else None),
+  1170→                            "net_edge_pct": (round((analysis.edge or 0) * 100, 2) if analysis.edge else None),
+  1171→                            "slippage_pct": (
+  1172→                                round((analysis.slippage_pct or 0) * 100, 2)
+  1173→                                if hasattr(analysis, "slippage_pct") and analysis.slippage_pct
+  1174→                                else None
+  1175→                            ),
+  1176→                            "market_id": b.market_id,
+  1177→                            "city": b.city,
+  1178→                            "stake": b.stake_amount,
+  1179→                            "status": b.status,
+  1180→                            "pnl": b.pnl or 0.0,
+  1181→                        }
+  1182→                    )
+  1183→
+  1184→        net_edges = [e["net_edge_pct"] for e in edge_values if e["net_edge_pct"] is not None]
+  1185→        avg_net_edge = sum(net_edges) / len(net_edges) if net_edges else 0
+  1186→        min_net_edge = min(net_edges) if net_edges else 0
+  1187→        max_net_edge = max(net_edges) if net_edges else 0
+  1188→
+  1189→        # 3b. Edge distribution for OPEN bets
+  1190→        open_for_edge = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
+  1191→        open_analysis_ids = [b.analysis_id for b in open_for_edge if b.analysis_id]
+  1192→        open_analyses_by_id = {}
+  1193→        if open_analysis_ids:
+  1194→            for a in db.query(Analysis).filter(Analysis.id.in_(open_analysis_ids)).all():
+  1195→                open_analyses_by_id[a.id] = a
+  1196→
+  1197→        open_edge_values = []
+  1198→        for b in open_for_edge:
+  1199→            if b.analysis_id:
+  1200→                analysis = open_analyses_by_id.get(b.analysis_id)
+  1201→                if analysis:
+  1202→                    open_edge_values.append(
+  1203→                        {
+  1204→                            "bet_id": b.id,
+  1205→                            "raw_edge_pct": (round((analysis.raw_edge or 0) * 100, 2) if analysis.raw_edge else None),
+  1206→                            "net_edge_pct": (round((analysis.edge or 0) * 100, 2) if analysis.edge else None),
+  1207→                            "market_id": b.market_id,
+  1208→                            "city": b.city,
+  1209→                            "amount": b.amount,
+  1210→                            "status": b.status,
+  1211→                        }
+  1212→                    )
+  1213→
+  1214→        open_net_edges = [e["net_edge_pct"] for e in open_edge_values if e["net_edge_pct"] is not None]
+  1215→        open_avg_edge = sum(open_net_edges) / len(open_net_edges) if open_net_edges else 0
+  1216→        open_min_edge = min(open_net_edges) if open_net_edges else 0
+  1217→        open_max_edge = max(open_net_edges) if open_net_edges else 0
+  1218→
+  1219→        # 4. All-Time Closed Bets Summary (settled + closed_early)
+  1220→        settled_all = (
+  1221→            db.query(Bet)
+  1222→            .filter(
+  1223→                Bet.status.in_(("won", "lost", "settled", "closed_early")),
+  1224→            )
+  1225→            .all()
+  1226→        )
+  1227→
+  1228→        total_settled = len(settled_all)
+  1229→        wins_all = sum(1 for b in settled_all if b.pnl and b.pnl > 0)
+  1230→        losses_all = sum(1 for b in settled_all if b.pnl is not None and b.pnl <= 0)
+  1231→        win_rate_all = (wins_all / total_settled * 100) if total_settled > 0 else 0
+  1232→        total_pnl_all_health = sum(b.pnl or 0.0 for b in settled_all)
+  1233→        total_stake_all_health = sum(b.amount or 0.0 for b in settled_all)
+  1234→        roi_all = (total_pnl_all_health / total_stake_all_health * 100) if total_stake_all_health > 0 else 0
+  1235→
+  1236→        # 4b. Exit type breakdown for wins/losses (donut charts)
+  1237→        exit_type_map = {
+  1238→            "take_profit": "TP",
+  1239→            "stop_loss": "SL",
+  1240→            "trailing_stop": "TS",
+  1241→            "time_decay": "TD",
+  1242→        }
+  1243→        wins_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
+  1244→        losses_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
+  1245→        for b in settled_all:
+  1246→            is_win = b.pnl and b.pnl > 0
+  1247→            if b.status == "closed_early" and b.close_reason:
+  1248→                cr = b.close_reason.lower()
+  1249→                code = "ST"
+  1250→                for prefix, c in exit_type_map.items():
+  1251→                    if cr.startswith(prefix):
+  1252→                        code = c
+  1253→                        break
+  1254→            else:
+  1255→                code = "ST"
+  1256→            if is_win:
+  1257→                wins_by_exit[code] = wins_by_exit.get(code, 0) + 1
+  1258→            else:
+  1259→                losses_by_exit[code] = losses_by_exit.get(code, 0) + 1
+  1260→
+  1261→        # 5. Red Flags — son 48 saatlik verilere göre
+  1262→        red_flags = []
+  1263→
+  1264→        # Son 48 saatteki kayıpları say
+  1265→        recent_losses = sum(
+  1266→            1
+  1267→            for b in settled_all
+  1268→            if b.pnl is not None
+  1269→            and b.pnl <= 0
+  1270→            and ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
+  1271→        )
+  1272→        recent_total = sum(
+  1273→            1 for b in settled_all if ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
+  1274→        )
+  1275→        recent_win_rate = (wins_all / total_settled * 100) if total_settled > 0 else 0
+  1276→
+  1277→        if recent_total >= 10 and recent_losses >= 7:
+  1278→            red_flags.append(
+  1279→                {
+  1280→                    "severity": "critical",
+  1281→                    "message": (
+  1282→                        f"Son 48 saatte {recent_losses} kayıp "
+  1283→                        f"(toplam {recent_total} sonuçlanan). "
+  1284→                        f"Calibration bozuk olabilir."
+  1285→                    ),
+  1286→                    "action": "Botu durdur ve kalibrasyonu kontrol et.",
+  1287→                }
+  1288→            )
+  1289→
+  1290→        if state.is_running and bets_opened_24h == 0:
+  1291→            any_analyses = db.query(Analysis).filter(Analysis.analyzed_at >= h24).count()
+  1292→            if any_analyses > 0:
+  1293→                red_flags.append(
+  1294→                    {
+  1295→                        "severity": "warning",
+  1296→                        "message": (
+  1297→                            f"Son 24 saatte {any_analyses} analiz yapıldı"
+  1298→                            f" ama hiç bet açılmadı."
+  1299→                            f" Edge threshold çok yüksek olabilir."
+  1300→                        ),
+  1301→                        "action": "min_edge'i düşür veya marketleri kontrol et.",
+  1302→                    }
+  1303→                )
+  1304→            else:
+  1305→                red_flags.append(
+  1306→                    {
+  1307→                        "severity": "info",
+  1308→                        "message": ("Son 24 saatte hiç analiz yapılmadı. Market taraması çalışıyor mu?"),
+  1309→                        "action": "Market taramasını kontrol et.",
+  1310→                    }
+  1311→                )
+  1312→
+  1313→        if net_edges and all(e < 2.5 for e in net_edges):
+  1314→            red_flags.append(
+  1315→                {
+  1316→                    "severity": "critical",
+  1317→                    "message": (
+  1318→                        f"Tüm net edge'ler %2.5 altında (ortalama: %{avg_net_edge:.1f}). Maliyeti karşılamıyor."
+  1319→                    ),
+  1320→                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarını gözden geçir."),
+  1321→                }
+  1322→            )
+  1323→
+  1324→        if recent_total >= 5 and recent_win_rate < 50:
+  1325→            red_flags.append(
+  1326→                {
+  1327→                    "severity": "critical",
+  1328→                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez."),
+  1329→                    "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
+  1330→                }
+  1331→            )
+  1332→
+  1333→        open_total = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).count()
+  1334→        if bets_opened_24h > 50 or open_total > 50:
+  1335→            red_flags.append(
+  1336→                {
+  1337→                    "severity": "warning",
+  1338→                    "message": (
+  1339→                        f"Aşırı bahis: 24s'de {bets_opened_24h} açılan, {open_total} açık. Risk yönetimi aşılıyor."
+  1340→                    ),
+  1341→                    "action": "min_edge'i yükselt, Kelly fraction'ı düşür.",
+  1342→                }
+  1343→            )
+  1344→
+  1345→        recent_pnl = sum(
+  1346→            b.pnl or 0.0
+  1347→            for b in settled_all
+  1348→            if ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
+  1349→        )
+  1350→        if recent_pnl < 0 and recent_total >= 5:
+  1351→            red_flags.append(
+  1352→                {
+  1353→                    "severity": "warning",
+  1354→                    "message": (f"Son 48 saatte PnL negatif: ${recent_pnl:.2f}. Zarar trendi devam ediyor."),
+  1355→                    "action": "Botu izlemeye devam et. 3 gün sonunda karar ver.",
+  1356→                }
+  1357→            )
+  1358→
+  1359→        # 6. Daily PnL Timeline (last 7 days)
+  1360→        from sqlalchemy import or_
+  1361→
+  1362→        daily_pnl = []
+  1363→        for i in range(7):
+  1364→            day_start = (now - timedelta(days=i + 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+  1365→            day_end = (now - timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
+  1366→            day_bets = (
+  1367→                db.query(Bet)
+  1368→                .filter(
+  1369→                    or_(
+  1370→                        Bet.settled_at >= day_start,
+  1371→                        Bet.closed_at >= day_start,
+  1372→                    ),
+  1373→                    or_(
+  1374→                        Bet.settled_at < day_end,
+  1375→                        Bet.closed_at < day_end,
+  1376→                    ),
+  1377→                    Bet.status.in_(("won", "lost", "settled", "closed_early")),
+  1378→                )
+  1379→                .all()
+  1380→            )
+  1381→            day_pnl = sum(b.pnl or 0.0 for b in day_bets)
+  1382→            day_wins = sum(1 for b in day_bets if b.pnl and b.pnl > 0)
+  1383→            day_losses = sum(1 for b in day_bets if b.pnl is not None and b.pnl <= 0)
+  1384→            daily_pnl.append(
+  1385→                {
+  1386→                    "date": day_start.strftime("%m/%d"),
+  1387→                    "pnl": round(day_pnl, 2),
+  1388→                    "wins": day_wins,
+  1389→                    "losses": day_losses,
+  1390→                    "total": day_wins + day_losses,
+  1391→                }
+  1392→            )
+  1393→        daily_pnl.reverse()
+  1394→
+  1395→        # 7. Overall verdict
+  1396→        if not red_flags or all(f["severity"] == "info" for f in red_flags):
+  1397→            verdict = "healthy"
+  1398→        elif any(f["severity"] == "critical" for f in red_flags):
+  1399→            verdict = "critical"
+  1400→        else:
+  1401→            verdict = "warning"
+  1402→
+  1403→        return {
+  1404→            "verdict": verdict,
+  1405→            "is_running": state.is_running,
+  1406→            "activity_24h": {
+  1407→                "bets_opened": bets_opened_24h,
+  1408→                "pass_reasons": pass_reasons,
+  1409→                "total_analyses": db.query(Analysis).filter(Analysis.analyzed_at >= h24).count(),
+  1410→            },
+  1411→            "edge_distribution": {
+  1412→                "values": edge_values,
+  1413→                "avg_net_edge_pct": round(avg_net_edge, 2),
+  1414→                "min_net_edge_pct": round(min_net_edge, 2),
+  1415→                "max_net_edge_pct": round(max_net_edge, 2),
+  1416→                "count": len(edge_values),
+  1417→            },
+  1418→            "open_edge_distribution": {
+  1419→                "values": open_edge_values,
+  1420→                "avg_net_edge_pct": round(open_avg_edge, 2),
+  1421→                "min_net_edge_pct": round(open_min_edge, 2),
+  1422→                "max_net_edge_pct": round(open_max_edge, 2),
+  1423→                "count": len(open_edge_values),
+  1424→            },
+  1425→            "summary_all": {
+  1426→                "total_settled": total_settled,
+  1427→                "wins": wins_all,
+  1428→                "losses": losses_all,
+  1429→                "win_rate_pct": round(win_rate_all, 1),
+  1430→                "total_pnl": round(total_pnl_all_health, 2),
+  1431→                "total_stake": round(total_stake_all_health, 2),
+  1432→                "roi_pct": round(roi_all, 2),
+  1433→                "avg_net_edge_pct": round(avg_net_edge, 2),
+  1434→                "wins_by_exit": wins_by_exit,
+  1435→                "losses_by_exit": losses_by_exit,
+  1436→            },
+  1437→            "red_flags": red_flags,
+  1438→            "daily_pnl_timeline": daily_pnl,
+  1439→        }
+  1440→    except Exception as e:
+  1441→        logger.error("Health check error: %s", e)
+  1442→        return {"error": str(e), "verdict": "error"}
+  1443→    finally:
+  1444→        db.close()
+  1445→
+  1446→
+  1447→@app.websocket("/ws")
+  1448→async def websocket_endpoint(websocket: WebSocket):
+  1449→    await websocket.accept()
+  1450→    state.websocket_clients.append(websocket)
+  1451→    try:
+  1452→        while True:
+  1453→            await websocket.receive_text()
+  1454→    except WebSocketDisconnect:
+  1455→        if websocket in state.websocket_clients:
+  1456→            state.websocket_clients.remove(websocket)
+  1457→
+  1458→
+  1459→# Re-export loop functions from bot_loop module so existing
+  1460→# callers (e.g. bot_lifespan in main.py) can import from here.
+  1461→from bot_loop import scan_and_bet_loop, settlement_loop  # noqa: E402, F401
+  1462→

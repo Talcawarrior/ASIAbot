@@ -1,0 +1,2002 @@
+     1→{
+     2→  "CYUL": {
+     3→    "city_name": "Montreal",
+     4→    "metrics": {
+     5→      "temperature_max": {
+     6→        "cma_grapes_global": {
+     7→          "mae": 1.81,
+     8→          "mbe": 0.412,
+     9→          "sample_count": 90
+    10→        },
+    11→        "gem_global": {
+    12→          "mae": 2.384,
+    13→          "mbe": 2.307,
+    14→          "sample_count": 90
+    15→        },
+    16→        "gfs_seamless": {
+    17→          "mae": 1.851,
+    18→          "mbe": 1.669,
+    19→          "sample_count": 90
+    20→        },
+    21→        "icon_global": {
+    22→          "mae": 1.212,
+    23→          "mbe": 0.843,
+    24→          "sample_count": 90
+    25→        },
+    26→        "jma_seamless": {
+    27→          "mae": 1.247,
+    28→          "mbe": 1.04,
+    29→          "sample_count": 90
+    30→        },
+    31→        "meteofrance_seamless": {
+    32→          "mae": 0.978,
+    33→          "mbe": -0.38,
+    34→          "sample_count": 90
+    35→        },
+    36→        "ukmo_seamless": {
+    37→          "mae": 1.6,
+    38→          "mbe": 1.531,
+    39→          "sample_count": 90
+    40→        }
+    41→      },
+    42→      "temperature_min": {
+    43→        "cma_grapes_global": {
+    44→          "mae": 2.809,
+    45→          "mbe": -2.784,
+    46→          "sample_count": 90
+    47→        },
+    48→        "gem_global": {
+    49→          "mae": 1.904,
+    50→          "mbe": -1.664,
+    51→          "sample_count": 90
+    52→        },
+    53→        "gfs_seamless": {
+    54→          "mae": 1.011,
+    55→          "mbe": -0.264,
+    56→          "sample_count": 90
+    57→        },
+    58→        "icon_global": {
+    59→          "mae": 0.614,
+    60→          "mbe": -0.014,
+    61→          "sample_count": 90
+    62→        },
+    63→        "jma_seamless": {
+    64→          "mae": 1.308,
+    65→          "mbe": 1.088,
+    66→          "sample_count": 90
+    67→        },
+    68→        "meteofrance_seamless": {
+    69→          "mae": 1.163,
+    70→          "mbe": -0.901,
+    71→          "sample_count": 90
+    72→        },
+    73→        "ukmo_seamless": {
+    74→          "mae": 0.939,
+    75→          "mbe": 0.688,
+    76→          "sample_count": 90
+    77→        }
+    78→      }
+    79→    }
+    80→  },
+    81→  "CYVR": {
+    82→    "city_name": "Vancouver",
+    83→    "metrics": {
+    84→      "temperature_max": {
+    85→        "cma_grapes_global": {
+    86→          "mae": 1.89,
+    87→          "mbe": -1.75,
+    88→          "sample_count": 90
+    89→        },
+    90→        "gem_global": {
+    91→          "mae": 1.262,
+    92→          "mbe": -0.838,
+    93→          "sample_count": 90
+    94→        },
+    95→        "gfs_seamless": {
+    96→          "mae": 0.731,
+    97→          "mbe": -0.033,
+    98→          "sample_count": 90
+    99→        },
+   100→        "icon_global": {
+   101→          "mae": 1.957,
+   102→          "mbe": -0.701,
+   103→          "sample_count": 90
+   104→        },
+   105→        "jma_seamless": {
+   106→          "mae": 2.39,
+   107→          "mbe": -2.363,
+   108→          "sample_count": 90
+   109→        },
+   110→        "meteofrance_seamless": {
+   111→          "mae": 1.529,
+   112→          "mbe": -1.476,
+   113→          "sample_count": 90
+   114→        },
+   115→        "ukmo_seamless": {
+   116→          "mae": 1.243,
+   117→          "mbe": 1.141,
+   118→          "sample_count": 90
+   119→        }
+   120→      },
+   121→      "temperature_min": {
+   122→        "cma_grapes_global": {
+   123→          "mae": 4.632,
+   124→          "mbe": -4.632,
+   125→          "sample_count": 90
+   126→        },
+   127→        "gem_global": {
+   128→          "mae": 1.834,
+   129→          "mbe": -1.697,
+   130→          "sample_count": 90
+   131→        },
+   132→        "gfs_seamless": {
+   133→          "mae": 1.548,
+   134→          "mbe": -1.492,
+   135→          "sample_count": 90
+   136→        },
+   137→        "icon_global": {
+   138→          "mae": 1.35,
+   139→          "mbe": 0.988,
+   140→          "sample_count": 90
+   141→        },
+   142→        "jma_seamless": {
+   143→          "mae": 1.11,
+   144→          "mbe": -0.026,
+   145→          "sample_count": 90
+   146→        },
+   147→        "meteofrance_seamless": {
+   148→          "mae": 0.859,
+   149→          "mbe": 0.574,
+   150→          "sample_count": 90
+   151→        },
+   152→        "ukmo_seamless": {
+   153→          "mae": 1.179,
+   154→          "mbe": 1.134,
+   155→          "sample_count": 90
+   156→        }
+   157→      }
+   158→    }
+   159→  },
+   160→  "CYYZ": {
+   161→    "city_name": "Toronto",
+   162→    "metrics": {
+   163→      "temperature_max": {
+   164→        "cma_grapes_global": {
+   165→          "mae": 1.549,
+   166→          "mbe": -0.229,
+   167→          "sample_count": 90
+   168→        },
+   169→        "gem_global": {
+   170→          "mae": 1.12,
+   171→          "mbe": 0.598,
+   172→          "sample_count": 90
+   173→        },
+   174→        "gfs_seamless": {
+   175→          "mae": 1.073,
+   176→          "mbe": -0.587,
+   177→          "sample_count": 90
+   178→        },
+   179→        "icon_global": {
+   180→          "mae": 1.2,
+   181→          "mbe": -0.816,
+   182→          "sample_count": 90
+   183→        },
+   184→        "jma_seamless": {
+   185→          "mae": 3.828,
+   186→          "mbe": -3.686,
+   187→          "sample_count": 90
+   188→        },
+   189→        "meteofrance_seamless": {
+   190→          "mae": 1.437,
+   191→          "mbe": -0.983,
+   192→          "sample_count": 90
+   193→        },
+   194→        "ukmo_seamless": {
+   195→          "mae": 0.897,
+   196→          "mbe": -0.219,
+   197→          "sample_count": 90
+   198→        }
+   199→      },
+   200→      "temperature_min": {
+   201→        "cma_grapes_global": {
+   202→          "mae": 1.472,
+   203→          "mbe": 0.628,
+   204→          "sample_count": 90
+   205→        },
+   206→        "gem_global": {
+   207→          "mae": 1.452,
+   208→          "mbe": -1.17,
+   209→          "sample_count": 90
+   210→        },
+   211→        "gfs_seamless": {
+   212→          "mae": 0.802,
+   213→          "mbe": -0.047,
+   214→          "sample_count": 90
+   215→        },
+   216→        "icon_global": {
+   217→          "mae": 0.933,
+   218→          "mbe": 0.36,
+   219→          "sample_count": 90
+   220→        },
+   221→        "jma_seamless": {
+   222→          "mae": 1.951,
+   223→          "mbe": 1.227,
+   224→          "sample_count": 90
+   225→        },
+   226→        "meteofrance_seamless": {
+   227→          "mae": 0.957,
+   228→          "mbe": -0.399,
+   229→          "sample_count": 90
+   230→        },
+   231→        "ukmo_seamless": {
+   232→          "mae": 1.386,
+   233→          "mbe": 1.026,
+   234→          "sample_count": 90
+   235→        }
+   236→      }
+   237→    }
+   238→  },
+   239→  "EDDF": {
+   240→    "city_name": "Frankfurt",
+   241→    "metrics": {
+   242→      "temperature_max": {
+   243→        "cma_grapes_global": {
+   244→          "mae": 1.389,
+   245→          "mbe": -1.14,
+   246→          "sample_count": 90
+   247→        },
+   248→        "gem_global": {
+   249→          "mae": 1.248,
+   250→          "mbe": -1.21,
+   251→          "sample_count": 90
+   252→        },
+   253→        "gfs_seamless": {
+   254→          "mae": 0.768,
+   255→          "mbe": 0.177,
+   256→          "sample_count": 90
+   257→        },
+   258→        "icon_global": {
+   259→          "mae": 0.949,
+   260→          "mbe": 0.878,
+   261→          "sample_count": 90
+   262→        },
+   263→        "jma_seamless": {
+   264→          "mae": 1.072,
+   265→          "mbe": -0.928,
+   266→          "sample_count": 90
+   267→        },
+   268→        "meteofrance_seamless": {
+   269→          "mae": 1.072,
+   270→          "mbe": 1.019,
+   271→          "sample_count": 90
+   272→        },
+   273→        "ukmo_seamless": {
+   274→          "mae": 0.78,
+   275→          "mbe": 0.591,
+   276→          "sample_count": 90
+   277→        }
+   278→      },
+   279→      "temperature_min": {
+   280→        "cma_grapes_global": {
+   281→          "mae": 1.303,
+   282→          "mbe": 0.361,
+   283→          "sample_count": 90
+   284→        },
+   285→        "gem_global": {
+   286→          "mae": 0.686,
+   287→          "mbe": 0.023,
+   288→          "sample_count": 90
+   289→        },
+   290→        "gfs_seamless": {
+   291→          "mae": 1.648,
+   292→          "mbe": 1.55,
+   293→          "sample_count": 90
+   294→        },
+   295→        "icon_global": {
+   296→          "mae": 0.779,
+   297→          "mbe": 0.348,
+   298→          "sample_count": 90
+   299→        },
+   300→        "jma_seamless": {
+   301→          "mae": 1.64,
+   302→          "mbe": 1.558,
+   303→          "sample_count": 90
+   304→        },
+   305→        "meteofrance_seamless": {
+   306→          "mae": 0.904,
+   307→          "mbe": -0.307,
+   308→          "sample_count": 90
+   309→        },
+   310→        "ukmo_seamless": {
+   311→          "mae": 2.731,
+   312→          "mbe": 2.731,
+   313→          "sample_count": 90
+   314→        }
+   315→      }
+   316→    }
+   317→  },
+   318→  "EDDM": {
+   319→    "city_name": "Munich",
+   320→    "metrics": {
+   321→      "temperature_max": {
+   322→        "cma_grapes_global": {
+   323→          "mae": 0.731,
+   324→          "mbe": -0.271,
+   325→          "sample_count": 90
+   326→        },
+   327→        "gem_global": {
+   328→          "mae": 1.097,
+   329→          "mbe": 0.981,
+   330→          "sample_count": 90
+   331→        },
+   332→        "gfs_seamless": {
+   333→          "mae": 0.781,
+   334→          "mbe": -0.621,
+   335→          "sample_count": 90
+   336→        },
+   337→        "icon_global": {
+   338→          "mae": 1.191,
+   339→          "mbe": 1.011,
+   340→          "sample_count": 90
+   341→        },
+   342→        "jma_seamless": {
+   343→          "mae": 1.238,
+   344→          "mbe": -0.942,
+   345→          "sample_count": 90
+   346→        },
+   347→        "meteofrance_seamless": {
+   348→          "mae": 1.663,
+   349→          "mbe": 1.614,
+   350→          "sample_count": 90
+   351→        },
+   352→        "ukmo_seamless": {
+   353→          "mae": 0.608,
+   354→          "mbe": 0.248,
+   355→          "sample_count": 90
+   356→        }
+   357→      },
+   358→      "temperature_min": {
+   359→        "cma_grapes_global": {
+   360→          "mae": 1.38,
+   361→          "mbe": 0.482,
+   362→          "sample_count": 90
+   363→        },
+   364→        "gem_global": {
+   365→          "mae": 0.722,
+   366→          "mbe": -0.216,
+   367→          "sample_count": 90
+   368→        },
+   369→        "gfs_seamless": {
+   370→          "mae": 1.04,
+   371→          "mbe": -0.353,
+   372→          "sample_count": 90
+   373→        },
+   374→        "icon_global": {
+   375→          "mae": 1.818,
+   376→          "mbe": -1.624,
+   377→          "sample_count": 90
+   378→        },
+   379→        "jma_seamless": {
+   380→          "mae": 1.681,
+   381→          "mbe": 1.579,
+   382→          "sample_count": 90
+   383→        },
+   384→        "meteofrance_seamless": {
+   385→          "mae": 1.456,
+   386→          "mbe": -1.162,
+   387→          "sample_count": 90
+   388→        },
+   389→        "ukmo_seamless": {
+   390→          "mae": 1.232,
+   391→          "mbe": -1.001,
+   392→          "sample_count": 90
+   393→        }
+   394→      }
+   395→    }
+   396→  },
+   397→  "EDDT": {
+   398→    "city_name": "Berlin",
+   399→    "metrics": {
+   400→      "temperature_max": {
+   401→        "cma_grapes_global": {
+   402→          "mae": 1.207,
+   403→          "mbe": -0.907,
+   404→          "sample_count": 90
+   405→        },
+   406→        "gem_global": {
+   407→          "mae": 0.704,
+   408→          "mbe": -0.298,
+   409→          "sample_count": 90
+   410→        },
+   411→        "gfs_seamless": {
+   412→          "mae": 0.689,
+   413→          "mbe": 0.293,
+   414→          "sample_count": 90
+   415→        },
+   416→        "icon_global": {
+   417→          "mae": 0.569,
+   418→          "mbe": -0.118,
+   419→          "sample_count": 90
+   420→        },
+   421→        "jma_seamless": {
+   422→          "mae": 0.706,
+   423→          "mbe": -0.243,
+   424→          "sample_count": 90
+   425→        },
+   426→        "meteofrance_seamless": {
+   427→          "mae": 0.832,
+   428→          "mbe": 0.577,
+   429→          "sample_count": 90
+   430→        },
+   431→        "ukmo_seamless": {
+   432→          "mae": 0.727,
+   433→          "mbe": -0.267,
+   434→          "sample_count": 90
+   435→        }
+   436→      },
+   437→      "temperature_min": {
+   438→        "cma_grapes_global": {
+   439→          "mae": 1.32,
+   440→          "mbe": -0.06,
+   441→          "sample_count": 90
+   442→        },
+   443→        "gem_global": {
+   444→          "mae": 0.833,
+   445→          "mbe": 0.102,
+   446→          "sample_count": 90
+   447→        },
+   448→        "gfs_seamless": {
+   449→          "mae": 0.992,
+   450→          "mbe": 0.359,
+   451→          "sample_count": 90
+   452→        },
+   453→        "icon_global": {
+   454→          "mae": 0.857,
+   455→          "mbe": -0.597,
+   456→          "sample_count": 90
+   457→        },
+   458→        "jma_seamless": {
+   459→          "mae": 1.419,
+   460→          "mbe": 1.361,
+   461→          "sample_count": 90
+   462→        },
+   463→        "meteofrance_seamless": {
+   464→          "mae": 0.727,
+   465→          "mbe": -0.32,
+   466→          "sample_count": 90
+   467→        },
+   468→        "ukmo_seamless": {
+   469→          "mae": 0.696,
+   470→          "mbe": 0.482,
+   471→          "sample_count": 90
+   472→        }
+   473→      }
+   474→    }
+   475→  },
+   476→  "EFHK": {
+   477→    "city_name": "Helsinki",
+   478→    "metrics": {
+   479→      "temperature_max": {
+   480→        "cma_grapes_global": {
+   481→          "mae": 1.417,
+   482→          "mbe": -1.123,
+   483→          "sample_count": 90
+   484→        },
+   485→        "gem_global": {
+   486→          "mae": 0.917,
+   487→          "mbe": -0.683,
+   488→          "sample_count": 90
+   489→        },
+   490→        "gfs_seamless": {
+   491→          "mae": 0.934,
+   492→          "mbe": -0.361,
+   493→          "sample_count": 90
+   494→        },
+   495→        "icon_global": {
+   496→          "mae": 0.72,
+   497→          "mbe": -0.571,
+   498→          "sample_count": 90
+   499→        },
+   500→        "jma_seamless": {
+   501→          "mae": 1.022,
+   502→          "mbe": -0.722,
+   503→          "sample_count": 90
+   504→        },
+   505→        "meteofrance_seamless": {
+   506→          "mae": 1.152,
+   507→          "mbe": -1.05,
+   508→          "sample_count": 90
+   509→        },
+   510→        "ukmo_seamless": {
+   511→          "mae": 0.831,
+   512→          "mbe": -0.644,
+   513→          "sample_count": 90
+   514→        }
+   515→      },
+   516→      "temperature_min": {
+   517→        "cma_grapes_global": {
+   518→          "mae": 2.05,
+   519→          "mbe": -1.912,
+   520→          "sample_count": 90
+   521→        },
+   522→        "gem_global": {
+   523→          "mae": 0.813,
+   524→          "mbe": 0.484,
+   525→          "sample_count": 90
+   526→        },
+   527→        "gfs_seamless": {
+   528→          "mae": 1.106,
+   529→          "mbe": 0.239,
+   530→          "sample_count": 90
+   531→        },
+   532→        "icon_global": {
+   533→          "mae": 0.992,
+   534→          "mbe": 0.877,
+   535→          "sample_count": 90
+   536→        },
+   537→        "jma_seamless": {
+   538→          "mae": 1.62,
+   539→          "mbe": 1.573,
+   540→          "sample_count": 90
+   541→        },
+   542→        "meteofrance_seamless": {
+   543→          "mae": 0.687,
+   544→          "mbe": 0.24,
+   545→          "sample_count": 90
+   546→        },
+   547→        "ukmo_seamless": {
+   548→          "mae": 1.15,
+   549→          "mbe": 1.074,
+   550→          "sample_count": 90
+   551→        }
+   552→      }
+   553→    }
+   554→  },
+   555→  "EGLL": {
+   556→    "city_name": "London",
+   557→    "metrics": {
+   558→      "temperature_max": {
+   559→        "cma_grapes_global": {
+   560→          "mae": 1.92,
+   561→          "mbe": -1.9,
+   562→          "sample_count": 90
+   563→        },
+   564→        "gem_global": {
+   565→          "mae": 0.652,
+   566→          "mbe": -0.317,
+   567→          "sample_count": 90
+   568→        },
+   569→        "gfs_seamless": {
+   570→          "mae": 0.698,
+   571→          "mbe": -0.351,
+   572→          "sample_count": 90
+   573→        },
+   574→        "icon_global": {
+   575→          "mae": 0.48,
+   576→          "mbe": -0.142,
+   577→          "sample_count": 90
+   578→        },
+   579→        "jma_seamless": {
+   580→          "mae": 1.737,
+   581→          "mbe": -1.712,
+   582→          "sample_count": 90
+   583→        },
+   584→        "meteofrance_seamless": {
+   585→          "mae": 0.781,
+   586→          "mbe": 0.499,
+   587→          "sample_count": 90
+   588→        },
+   589→        "ukmo_seamless": {
+   590→          "mae": 0.513,
+   591→          "mbe": -0.056,
+   592→          "sample_count": 90
+   593→        }
+   594→      },
+   595→      "temperature_min": {
+   596→        "cma_grapes_global": {
+   597→          "mae": 1.36,
+   598→          "mbe": -0.976,
+   599→          "sample_count": 90
+   600→        },
+   601→        "gem_global": {
+   602→          "mae": 1.036,
+   603→          "mbe": -0.844,
+   604→          "sample_count": 90
+   605→        },
+   606→        "gfs_seamless": {
+   607→          "mae": 0.771,
+   608→          "mbe": -0.273,
+   609→          "sample_count": 90
+   610→        },
+   611→        "icon_global": {
+   612→          "mae": 0.632,
+   613→          "mbe": -0.063,
+   614→          "sample_count": 90
+   615→        },
+   616→        "jma_seamless": {
+   617→          "mae": 1.004,
+   618→          "mbe": 0.782,
+   619→          "sample_count": 90
+   620→        },
+   621→        "meteofrance_seamless": {
+   622→          "mae": 0.844,
+   623→          "mbe": -0.604,
+   624→          "sample_count": 90
+   625→        },
+   626→        "ukmo_seamless": {
+   627→          "mae": 0.578,
+   628→          "mbe": 0.076,
+   629→          "sample_count": 90
+   630→        }
+   631→      }
+   632→    }
+   633→  },
+   634→  "EHAM": {
+   635→    "city_name": "Amsterdam",
+   636→    "metrics": {
+   637→      "temperature_max": {
+   638→        "cma_grapes_global": {
+   639→          "mae": 0.693,
+   640→          "mbe": -0.324,
+   641→          "sample_count": 90
+   642→        },
+   643→        "gem_global": {
+   644→          "mae": 0.807,
+   645→          "mbe": 0.564,
+   646→          "sample_count": 90
+   647→        },
+   648→        "gfs_seamless": {
+   649→          "mae": 1.1,
+   650→          "mbe": 0.947,
+   651→          "sample_count": 90
+   652→        },
+   653→        "icon_global": {
+   654→          "mae": 0.71,
+   655→          "mbe": 0.603,
+   656→          "sample_count": 90
+   657→        },
+   658→        "jma_seamless": {
+   659→          "mae": 1.681,
+   660→          "mbe": -1.619,
+   661→          "sample_count": 90
+   662→        },
+   663→        "meteofrance_seamless": {
+   664→          "mae": 1.05,
+   665→          "mbe": 0.952,
+   666→          "sample_count": 90
+   667→        },
+   668→        "ukmo_seamless": {
+   669→          "mae": 0.768,
+   670→          "mbe": 0.561,
+   671→          "sample_count": 90
+   672→        }
+   673→      },
+   674→      "temperature_min": {
+   675→        "cma_grapes_global": {
+   676→          "mae": 1.084,
+   677→          "mbe": -0.638,
+   678→          "sample_count": 90
+   679→        },
+   680→        "gem_global": {
+   681→          "mae": 1.122,
+   682→          "mbe": -0.58,
+   683→          "sample_count": 90
+   684→        },
+   685→        "gfs_seamless": {
+   686→          "mae": 0.692,
+   687→          "mbe": 0.403,
+   688→          "sample_count": 90
+   689→        },
+   690→        "icon_global": {
+   691→          "mae": 0.688,
+   692→          "mbe": 0.097,
+   693→          "sample_count": 90
+   694→        },
+   695→        "jma_seamless": {
+   696→          "mae": 1.154,
+   697→          "mbe": 0.639,
+   698→          "sample_count": 90
+   699→        },
+   700→        "meteofrance_seamless": {
+   701→          "mae": 1.137,
+   702→          "mbe": -0.746,
+   703→          "sample_count": 90
+   704→        },
+   705→        "ukmo_seamless": {
+   706→          "mae": 1.122,
+   707→          "mbe": 1.076,
+   708→          "sample_count": 90
+   709→        }
+   710→      }
+   711→    }
+   712→  },
+   713→  "EPWA": {
+   714→    "city_name": "Warsaw",
+   715→    "metrics": {
+   716→      "temperature_max": {
+   717→        "cma_grapes_global": {
+   718→          "mae": 1.241,
+   719→          "mbe": -0.923,
+   720→          "sample_count": 90
+   721→        },
+   722→        "gem_global": {
+   723→          "mae": 0.776,
+   724→          "mbe": 0.46,
+   725→          "sample_count": 90
+   726→        },
+   727→        "gfs_seamless": {
+   728→          "mae": 0.778,
+   729→          "mbe": 0.109,
+   730→          "sample_count": 90
+   731→        },
+   732→        "icon_global": {
+   733→          "mae": 0.546,
+   734→          "mbe": -0.063,
+   735→          "sample_count": 90
+   736→        },
+   737→        "jma_seamless": {
+   738→          "mae": 1.476,
+   739→          "mbe": -1.253,
+   740→          "sample_count": 90
+   741→        },
+   742→        "meteofrance_seamless": {
+   743→          "mae": 0.779,
+   744→          "mbe": -0.134,
+   745→          "sample_count": 90
+   746→        },
+   747→        "ukmo_seamless": {
+   748→          "mae": 0.671,
+   749→          "mbe": -0.007,
+   750→          "sample_count": 90
+   751→        }
+   752→      },
+   753→      "temperature_min": {
+   754→        "cma_grapes_global": {
+   755→          "mae": 1.384,
+   756→          "mbe": 0.187,
+   757→          "sample_count": 90
+   758→        },
+   759→        "gem_global": {
+   760→          "mae": 1.337,
+   761→          "mbe": -0.886,
+   762→          "sample_count": 90
+   763→        },
+   764→        "gfs_seamless": {
+   765→          "mae": 1.116,
+   766→          "mbe": 0.864,
+   767→          "sample_count": 90
+   768→        },
+   769→        "icon_global": {
+   770→          "mae": 0.624,
+   771→          "mbe": 0.244,
+   772→          "sample_count": 90
+   773→        },
+   774→        "jma_seamless": {
+   775→          "mae": 1.693,
+   776→          "mbe": 1.42,
+   777→          "sample_count": 90
+   778→        },
+   779→        "meteofrance_seamless": {
+   780→          "mae": 0.733,
+   781→          "mbe": 0.216,
+   782→          "sample_count": 90
+   783→        },
+   784→        "ukmo_seamless": {
+   785→          "mae": 1.176,
+   786→          "mbe": 1.109,
+   787→          "sample_count": 90
+   788→        }
+   789→      }
+   790→    }
+   791→  },
+   792→  "ESSA": {
+   793→    "city_name": "Stockholm",
+   794→    "metrics": {
+   795→      "temperature_max": {
+   796→        "cma_grapes_global": {
+   797→          "mae": 0.779,
+   798→          "mbe": 0.497,
+   799→          "sample_count": 90
+   800→        },
+   801→        "gem_global": {
+   802→          "mae": 0.92,
+   803→          "mbe": 0.771,
+   804→          "sample_count": 90
+   805→        },
+   806→        "gfs_seamless": {
+   807→          "mae": 0.744,
+   808→          "mbe": 0.338,
+   809→          "sample_count": 90
+   810→        },
+   811→        "icon_global": {
+   812→          "mae": 0.592,
+   813→          "mbe": 0.166,
+   814→          "sample_count": 90
+   815→        },
+   816→        "jma_seamless": {
+   817→          "mae": 1.096,
+   818→          "mbe": -0.856,
+   819→          "sample_count": 90
+   820→        },
+   821→        "meteofrance_seamless": {
+   822→          "mae": 0.98,
+   823→          "mbe": -0.644,
+   824→          "sample_count": 90
+   825→        },
+   826→        "ukmo_seamless": {
+   827→          "mae": 0.469,
+   828→          "mbe": -0.273,
+   829→          "sample_count": 90
+   830→        }
+   831→      },
+   832→      "temperature_min": {
+   833→        "cma_grapes_global": {
+   834→          "mae": 2.262,
+   835→          "mbe": -2.236,
+   836→          "sample_count": 90
+   837→        },
+   838→        "gem_global": {
+   839→          "mae": 0.921,
+   840→          "mbe": 0.508,
+   841→          "sample_count": 90
+   842→        },
+   843→        "gfs_seamless": {
+   844→          "mae": 1.267,
+   845→          "mbe": -0.34,
+   846→          "sample_count": 90
+   847→        },
+   848→        "icon_global": {
+   849→          "mae": 0.516,
+   850→          "mbe": -0.102,
+   851→          "sample_count": 90
+   852→        },
+   853→        "jma_seamless": {
+   854→          "mae": 1.831,
+   855→          "mbe": 1.82,
+   856→          "sample_count": 90
+   857→        },
+   858→        "meteofrance_seamless": {
+   859→          "mae": 0.699,
+   860→          "mbe": 0.406,
+   861→          "sample_count": 90
+   862→        },
+   863→        "ukmo_seamless": {
+   864→          "mae": 0.601,
+   865→          "mbe": 0.052,
+   866→          "sample_count": 90
+   867→        }
+   868→      }
+   869→    }
+   870→  },
+   871→  "FACT": {
+   872→    "city_name": "Cape Town",
+   873→    "metrics": {
+   874→      "temperature_max": {
+   875→        "cma_grapes_global": {
+   876→          "mae": 0.928,
+   877→          "mbe": -0.101,
+   878→          "sample_count": 90
+   879→        },
+   880→        "gem_global": {
+   881→          "mae": 1.204,
+   882→          "mbe": 0.638,
+   883→          "sample_count": 90
+   884→        },
+   885→        "gfs_seamless": {
+   886→          "mae": 0.969,
+   887→          "mbe": 0.733,
+   888→          "sample_count": 90
+   889→        },
+   890→        "icon_global": {
+   891→          "mae": 0.757,
+   892→          "mbe": -0.01,
+   893→          "sample_count": 90
+   894→        },
+   895→        "jma_seamless": {
+   896→          "mae": 1.457,
+   897→          "mbe": -1.272,
+   898→          "sample_count": 90
+   899→        },
+   900→        "meteofrance_seamless": {
+   901→          "mae": 1.043,
+   902→          "mbe": -0.488,
+   903→          "sample_count": 90
+   904→        },
+   905→        "ukmo_seamless": {
+   906→          "mae": 0.803,
+   907→          "mbe": -0.028,
+   908→          "sample_count": 90
+   909→        }
+   910→      },
+   911→      "temperature_min": {
+   912→        "cma_grapes_global": {
+   913→          "mae": 2.077,
+   914→          "mbe": 1.879,
+   915→          "sample_count": 90
+   916→        },
+   917→        "gem_global": {
+   918→          "mae": 1.734,
+   919→          "mbe": -1.557,
+   920→          "sample_count": 90
+   921→        },
+   922→        "gfs_seamless": {
+   923→          "mae": 2.259,
+   924→          "mbe": 2.186,
+   925→          "sample_count": 90
+   926→        },
+   927→        "icon_global": {
+   928→          "mae": 1.461,
+   929→          "mbe": 1.11,
+   930→          "sample_count": 90
+   931→        },
+   932→        "jma_seamless": {
+   933→          "mae": 3.052,
+   934→          "mbe": 3.043,
+   935→          "sample_count": 90
+   936→        },
+   937→        "meteofrance_seamless": {
+   938→          "mae": 1.934,
+   939→          "mbe": 1.928,
+   940→          "sample_count": 90
+   941→        },
+   942→        "ukmo_seamless": {
+   943→          "mae": 1.422,
+   944→          "mbe": 1.269,
+   945→          "sample_count": 90
+   946→        }
+   947→      }
+   948→    }
+   949→  },
+   950→  "HECA": {
+   951→    "city_name": "Cairo",
+   952→    "metrics": {
+   953→      "temperature_max": {
+   954→        "cma_grapes_global": {
+   955→          "mae": 1.104,
+   956→          "mbe": -1.058,
+   957→          "sample_count": 90
+   958→        },
+   959→        "gem_global": {
+   960→          "mae": 0.693,
+   961→          "mbe": -0.469,
+   962→          "sample_count": 90
+   963→        },
+   964→        "gfs_seamless": {
+   965→          "mae": 0.508,
+   966→          "mbe": -0.161,
+   967→          "sample_count": 90
+   968→        },
+   969→        "icon_global": {
+   970→          "mae": 0.821,
+   971→          "mbe": -0.772,
+   972→          "sample_count": 90
+   973→        },
+   974→        "jma_seamless": {
+   975→          "mae": 1.188,
+   976→          "mbe": -1.121,
+   977→          "sample_count": 90
+   978→        },
+   979→        "meteofrance_seamless": {
+   980→          "mae": 0.494,
+   981→          "mbe": -0.11,
+   982→          "sample_count": 90
+   983→        },
+   984→        "ukmo_seamless": {
+   985→          "mae": 0.976,
+   986→          "mbe": -0.907,
+   987→          "sample_count": 90
+   988→        }
+   989→      },
+   990→      "temperature_min": {
+   991→        "cma_grapes_global": {
+   992→          "mae": 2.032,
+   993→          "mbe": 1.97,
+   994→          "sample_count": 90
+   995→        },
+   996→        "gem_global": {
+   997→          "mae": 3.06,
+   998→          "mbe": -3.031,
+   999→          "sample_count": 90
+  1000→        },
+  1001→        "gfs_seamless": {
+  1002→          "mae": 1.458,
+  1003→          "mbe": 1.427,
+  1004→          "sample_count": 90
+  1005→        },
+  1006→        "icon_global": {
+  1007→          "mae": 0.713,
+  1008→          "mbe": 0.6,
+  1009→          "sample_count": 90
+  1010→        },
+  1011→        "jma_seamless": {
+  1012→          "mae": 1.252,
+  1013→          "mbe": 1.208,
+  1014→          "sample_count": 90
+  1015→        },
+  1016→        "meteofrance_seamless": {
+  1017→          "mae": 1.939,
+  1018→          "mbe": 1.932,
+  1019→          "sample_count": 90
+  1020→        },
+  1021→        "ukmo_seamless": {
+  1022→          "mae": 0.796,
+  1023→          "mbe": 0.684,
+  1024→          "sample_count": 90
+  1025→        }
+  1026→      }
+  1027→    }
+  1028→  },
+  1029→  "KATL": {
+  1030→    "city_name": "Atlanta",
+  1031→    "metrics": {
+  1032→      "temperature_max": {
+  1033→        "cma_grapes_global": {
+  1034→          "mae": 1.447,
+  1035→          "mbe": -0.751,
+  1036→          "sample_count": 90
+  1037→        },
+  1038→        "gem_global": {
+  1039→          "mae": 0.992,
+  1040→          "mbe": -0.797,
+  1041→          "sample_count": 90
+  1042→        },
+  1043→        "gfs_seamless": {
+  1044→          "mae": 0.726,
+  1045→          "mbe": 0.272,
+  1046→          "sample_count": 90
+  1047→        },
+  1048→        "icon_global": {
+  1049→          "mae": 0.706,
+  1050→          "mbe": -0.268,
+  1051→          "sample_count": 90
+  1052→        },
+  1053→        "jma_seamless": {
+  1054→          "mae": 1.274,
+  1055→          "mbe": -0.979,
+  1056→          "sample_count": 90
+  1057→        },
+  1058→        "meteofrance_seamless": {
+  1059→          "mae": 0.924,
+  1060→          "mbe": -0.013,
+  1061→          "sample_count": 90
+  1062→        },
+  1063→        "ukmo_seamless": {
+  1064→          "mae": 0.95,
+  1065→          "mbe": -0.31,
+  1066→          "sample_count": 90
+  1067→        }
+  1068→      },
+  1069→      "temperature_min": {
+  1070→        "cma_grapes_global": {
+  1071→          "mae": 0.901,
+  1072→          "mbe": 0.592,
+  1073→          "sample_count": 90
+  1074→        },
+  1075→        "gem_global": {
+  1076→          "mae": 0.759,
+  1077→          "mbe": -0.248,
+  1078→          "sample_count": 90
+  1079→        },
+  1080→        "gfs_seamless": {
+  1081→          "mae": 0.553,
+  1082→          "mbe": 0.167,
+  1083→          "sample_count": 90
+  1084→        },
+  1085→        "icon_global": {
+  1086→          "mae": 0.563,
+  1087→          "mbe": 0.346,
+  1088→          "sample_count": 90
+  1089→        },
+  1090→        "jma_seamless": {
+  1091→          "mae": 1.022,
+  1092→          "mbe": 0.967,
+  1093→          "sample_count": 90
+  1094→        },
+  1095→        "meteofrance_seamless": {
+  1096→          "mae": 0.742,
+  1097→          "mbe": 0.611,
+  1098→          "sample_count": 90
+  1099→        },
+  1100→        "ukmo_seamless": {
+  1101→          "mae": 0.927,
+  1102→          "mbe": 0.836,
+  1103→          "sample_count": 90
+  1104→        }
+  1105→      }
+  1106→    }
+  1107→  },
+  1108→  "KBOS": {
+  1109→    "city_name": "Boston",
+  1110→    "metrics": {
+  1111→      "temperature_max": {
+  1112→        "cma_grapes_global": {
+  1113→          "mae": 1.278,
+  1114→          "mbe": -0.376,
+  1115→          "sample_count": 90
+  1116→        },
+  1117→        "gem_global": {
+  1118→          "mae": 1.273,
+  1119→          "mbe": 0.682,
+  1120→          "sample_count": 90
+  1121→        },
+  1122→        "gfs_seamless": {
+  1123→          "mae": 1.188,
+  1124→          "mbe": -0.383,
+  1125→          "sample_count": 90
+  1126→        },
+  1127→        "icon_global": {
+  1128→          "mae": 1.148,
+  1129→          "mbe": 0.026,
+  1130→          "sample_count": 90
+  1131→        },
+  1132→        "jma_seamless": {
+  1133→          "mae": 1.498,
+  1134→          "mbe": -1.253,
+  1135→          "sample_count": 90
+  1136→        },
+  1137→        "meteofrance_seamless": {
+  1138→          "mae": 1.147,
+  1139→          "mbe": -0.284,
+  1140→          "sample_count": 90
+  1141→        },
+  1142→        "ukmo_seamless": {
+  1143→          "mae": 1.08,
+  1144→          "mbe": -0.38,
+  1145→          "sample_count": 90
+  1146→        }
+  1147→      },
+  1148→      "temperature_min": {
+  1149→        "cma_grapes_global": {
+  1150→          "mae": 1.237,
+  1151→          "mbe": -0.457,
+  1152→          "sample_count": 90
+  1153→        },
+  1154→        "gem_global": {
+  1155→          "mae": 0.911,
+  1156→          "mbe": -0.756,
+  1157→          "sample_count": 90
+  1158→        },
+  1159→        "gfs_seamless": {
+  1160→          "mae": 1.18,
+  1161→          "mbe": -1.12,
+  1162→          "sample_count": 90
+  1163→        },
+  1164→        "icon_global": {
+  1165→          "mae": 0.641,
+  1166→          "mbe": -0.088,
+  1167→          "sample_count": 90
+  1168→        },
+  1169→        "jma_seamless": {
+  1170→          "mae": 0.91,
+  1171→          "mbe": 0.548,
+  1172→          "sample_count": 90
+  1173→        },
+  1174→        "meteofrance_seamless": {
+  1175→          "mae": 0.976,
+  1176→          "mbe": 0.72,
+  1177→          "sample_count": 90
+  1178→        },
+  1179→        "ukmo_seamless": {
+  1180→          "mae": 0.873,
+  1181→          "mbe": 0.622,
+  1182→          "sample_count": 90
+  1183→        }
+  1184→      }
+  1185→    }
+  1186→  },
+  1187→  "KDAL": {
+  1188→    "city_name": "Dallas",
+  1189→    "metrics": {
+  1190→      "temperature_max": {
+  1191→        "cma_grapes_global": {
+  1192→          "mae": 1.619,
+  1193→          "mbe": 1.372,
+  1194→          "sample_count": 90
+  1195→        },
+  1196→        "gem_global": {
+  1197→          "mae": 1.137,
+  1198→          "mbe": 0.721,
+  1199→          "sample_count": 90
+  1200→        },
+  1201→        "gfs_seamless": {
+  1202→          "mae": 1.234,
+  1203→          "mbe": 0.926,
+  1204→          "sample_count": 90
+  1205→        },
+  1206→        "icon_global": {
+  1207→          "mae": 1.141,
+  1208→          "mbe": 0.934,
+  1209→          "sample_count": 90
+  1210→        },
+  1211→        "jma_seamless": {
+  1212→          "mae": 1.278,
+  1213→          "mbe": -0.893,
+  1214→          "sample_count": 90
+  1215→        },
+  1216→        "meteofrance_seamless": {
+  1217→          "mae": 0.862,
+  1218→          "mbe": 0.149,
+  1219→          "sample_count": 90
+  1220→        },
+  1221→        "ukmo_seamless": {
+  1222→          "mae": 1.486,
+  1223→          "mbe": 1.372,
+  1224→          "sample_count": 90
+  1225→        }
+  1226→      },
+  1227→      "temperature_min": {
+  1228→        "cma_grapes_global": {
+  1229→          "mae": 1.47,
+  1230→          "mbe": 1.199,
+  1231→          "sample_count": 90
+  1232→        },
+  1233→        "gem_global": {
+  1234→          "mae": 1.023,
+  1235→          "mbe": 0.272,
+  1236→          "sample_count": 90
+  1237→        },
+  1238→        "gfs_seamless": {
+  1239→          "mae": 0.784,
+  1240→          "mbe": 0.587,
+  1241→          "sample_count": 90
+  1242→        },
+  1243→        "icon_global": {
+  1244→          "mae": 1.104,
+  1245→          "mbe": 1.06,
+  1246→          "sample_count": 90
+  1247→        },
+  1248→        "jma_seamless": {
+  1249→          "mae": 1.526,
+  1250→          "mbe": 1.481,
+  1251→          "sample_count": 90
+  1252→        },
+  1253→        "meteofrance_seamless": {
+  1254→          "mae": 0.876,
+  1255→          "mbe": 0.551,
+  1256→          "sample_count": 90
+  1257→        },
+  1258→        "ukmo_seamless": {
+  1259→          "mae": 1.569,
+  1260→          "mbe": 1.567,
+  1261→          "sample_count": 90
+  1262→        }
+  1263→      }
+  1264→    }
+  1265→  },
+  1266→  "KDCA": {
+  1267→    "city_name": "Washington",
+  1268→    "metrics": {
+  1269→      "temperature_max": {
+  1270→        "cma_grapes_global": {
+  1271→          "mae": 1.676,
+  1272→          "mbe": -1.004,
+  1273→          "sample_count": 90
+  1274→        },
+  1275→        "gem_global": {
+  1276→          "mae": 1.448,
+  1277→          "mbe": -0.908,
+  1278→          "sample_count": 90
+  1279→        },
+  1280→        "gfs_seamless": {
+  1281→          "mae": 0.756,
+  1282→          "mbe": 0.271,
+  1283→          "sample_count": 90
+  1284→        },
+  1285→        "icon_global": {
+  1286→          "mae": 0.758,
+  1287→          "mbe": -0.329,
+  1288→          "sample_count": 90
+  1289→        },
+  1290→        "jma_seamless": {
+  1291→          "mae": 1.571,
+  1292→          "mbe": -1.331,
+  1293→          "sample_count": 90
+  1294→        },
+  1295→        "meteofrance_seamless": {
+  1296→          "mae": 1.104,
+  1297→          "mbe": -0.598,
+  1298→          "sample_count": 90
+  1299→        },
+  1300→        "ukmo_seamless": {
+  1301→          "mae": 0.989,
+  1302→          "mbe": -0.251,
+  1303→          "sample_count": 90
+  1304→        }
+  1305→      },
+  1306→      "temperature_min": {
+  1307→        "cma_grapes_global": {
+  1308→          "mae": 1.424,
+  1309→          "mbe": 0.047,
+  1310→          "sample_count": 90
+  1311→        },
+  1312→        "gem_global": {
+  1313→          "mae": 0.889,
+  1314→          "mbe": 0.036,
+  1315→          "sample_count": 90
+  1316→        },
+  1317→        "gfs_seamless": {
+  1318→          "mae": 0.878,
+  1319→          "mbe": -0.211,
+  1320→          "sample_count": 90
+  1321→        },
+  1322→        "icon_global": {
+  1323→          "mae": 0.812,
+  1324→          "mbe": 0.243,
+  1325→          "sample_count": 90
+  1326→        },
+  1327→        "jma_seamless": {
+  1328→          "mae": 1.783,
+  1329→          "mbe": 1.781,
+  1330→          "sample_count": 90
+  1331→        },
+  1332→        "meteofrance_seamless": {
+  1333→          "mae": 1.514,
+  1334→          "mbe": 1.321,
+  1335→          "sample_count": 90
+  1336→        },
+  1337→        "ukmo_seamless": {
+  1338→          "mae": 1.492,
+  1339→          "mbe": 1.392,
+  1340→          "sample_count": 90
+  1341→        }
+  1342→      }
+  1343→    }
+  1344→  },
+  1345→  "KDEN": {
+  1346→    "city_name": "Denver",
+  1347→    "metrics": {
+  1348→      "temperature_max": {
+  1349→        "cma_grapes_global": {
+  1350→          "mae": 2.432,
+  1351→          "mbe": -2.186,
+  1352→          "sample_count": 90
+  1353→        },
+  1354→        "gem_global": {
+  1355→          "mae": 0.908,
+  1356→          "mbe": -0.506,
+  1357→          "sample_count": 90
+  1358→        },
+  1359→        "gfs_seamless": {
+  1360→          "mae": 0.962,
+  1361→          "mbe": -0.753,
+  1362→          "sample_count": 90
+  1363→        },
+  1364→        "icon_global": {
+  1365→          "mae": 0.959,
+  1366→          "mbe": -0.712,
+  1367→          "sample_count": 90
+  1368→        },
+  1369→        "jma_seamless": {
+  1370→          "mae": 2.629,
+  1371→          "mbe": -2.58,
+  1372→          "sample_count": 90
+  1373→        },
+  1374→        "meteofrance_seamless": {
+  1375→          "mae": 0.94,
+  1376→          "mbe": 0.231,
+  1377→          "sample_count": 90
+  1378→        },
+  1379→        "ukmo_seamless": {
+  1380→          "mae": 0.95,
+  1381→          "mbe": -0.297,
+  1382→          "sample_count": 90
+  1383→        }
+  1384→      },
+  1385→      "temperature_min": {
+  1386→        "cma_grapes_global": {
+  1387→          "mae": 1.53,
+  1388→          "mbe": 0.681,
+  1389→          "sample_count": 90
+  1390→        },
+  1391→        "gem_global": {
+  1392→          "mae": 1.95,
+  1393→          "mbe": -1.863,
+  1394→          "sample_count": 90
+  1395→        },
+  1396→        "gfs_seamless": {
+  1397→          "mae": 1.08,
+  1398→          "mbe": -0.538,
+  1399→          "sample_count": 90
+  1400→        },
+  1401→        "icon_global": {
+  1402→          "mae": 1.001,
+  1403→          "mbe": -0.292,
+  1404→          "sample_count": 90
+  1405→        },
+  1406→        "jma_seamless": {
+  1407→          "mae": 2.242,
+  1408→          "mbe": 2.176,
+  1409→          "sample_count": 90
+  1410→        },
+  1411→        "meteofrance_seamless": {
+  1412→          "mae": 1.088,
+  1413→          "mbe": 0.934,
+  1414→          "sample_count": 90
+  1415→        },
+  1416→        "ukmo_seamless": {
+  1417→          "mae": 1.329,
+  1418→          "mbe": -0.933,
+  1419→          "sample_count": 90
+  1420→        }
+  1421→      }
+  1422→    }
+  1423→  },
+  1424→  "KIAH": {
+  1425→    "city_name": "Houston",
+  1426→    "metrics": {
+  1427→      "temperature_max": {
+  1428→        "cma_grapes_global": {
+  1429→          "mae": 1.357,
+  1430→          "mbe": 0.95,
+  1431→          "sample_count": 90
+  1432→        },
+  1433→        "gem_global": {
+  1434→          "mae": 1.114,
+  1435→          "mbe": 0.41,
+  1436→          "sample_count": 90
+  1437→        },
+  1438→        "gfs_seamless": {
+  1439→          "mae": 0.867,
+  1440→          "mbe": 0.176,
+  1441→          "sample_count": 90
+  1442→        },
+  1443→        "icon_global": {
+  1444→          "mae": 0.9,
+  1445→          "mbe": 0.44,
+  1446→          "sample_count": 90
+  1447→        },
+  1448→        "jma_seamless": {
+  1449→          "mae": 1.013,
+  1450→          "mbe": -0.364,
+  1451→          "sample_count": 90
+  1452→        },
+  1453→        "meteofrance_seamless": {
+  1454→          "mae": 1.002,
+  1455→          "mbe": -0.458,
+  1456→          "sample_count": 90
+  1457→        },
+  1458→        "ukmo_seamless": {
+  1459→          "mae": 1.027,
+  1460→          "mbe": 0.451,
+  1461→          "sample_count": 90
+  1462→        }
+  1463→      },
+  1464→      "temperature_min": {
+  1465→        "cma_grapes_global": {
+  1466→          "mae": 1.34,
+  1467→          "mbe": 0.9,
+  1468→          "sample_count": 90
+  1469→        },
+  1470→        "gem_global": {
+  1471→          "mae": 0.768,
+  1472→          "mbe": 0.317,
+  1473→          "sample_count": 90
+  1474→        },
+  1475→        "gfs_seamless": {
+  1476→          "mae": 0.666,
+  1477→          "mbe": 0.517,
+  1478→          "sample_count": 90
+  1479→        },
+  1480→        "icon_global": {
+  1481→          "mae": 0.719,
+  1482→          "mbe": 0.559,
+  1483→          "sample_count": 90
+  1484→        },
+  1485→        "jma_seamless": {
+  1486→          "mae": 1.292,
+  1487→          "mbe": 1.214,
+  1488→          "sample_count": 90
+  1489→        },
+  1490→        "meteofrance_seamless": {
+  1491→          "mae": 0.914,
+  1492→          "mbe": 0.812,
+  1493→          "sample_count": 90
+  1494→        },
+  1495→        "ukmo_seamless": {
+  1496→          "mae": 0.736,
+  1497→          "mbe": 0.54,
+  1498→          "sample_count": 90
+  1499→        }
+  1500→      }
+  1501→    }
+  1502→  },
+  1503→  "KLAS": {
+  1504→    "city_name": "Las Vegas",
+  1505→    "metrics": {
+  1506→      "temperature_max": {
+  1507→        "cma_grapes_global": {
+  1508→          "mae": 1.994,
+  1509→          "mbe": -1.981,
+  1510→          "sample_count": 90
+  1511→        },
+  1512→        "gem_global": {
+  1513→          "mae": 0.654,
+  1514→          "mbe": -0.428,
+  1515→          "sample_count": 90
+  1516→        },
+  1517→        "gfs_seamless": {
+  1518→          "mae": 0.643,
+  1519→          "mbe": -0.632,
+  1520→          "sample_count": 90
+  1521→        },
+  1522→        "icon_global": {
+  1523→          "mae": 0.974,
+  1524→          "mbe": -0.89,
+  1525→          "sample_count": 90
+  1526→        },
+  1527→        "jma_seamless": {
+  1528→          "mae": 1.586,
+  1529→          "mbe": -1.566,
+  1530→          "sample_count": 90
+  1531→        },
+  1532→        "meteofrance_seamless": {
+  1533→          "mae": 0.348,
+  1534→          "mbe": 0.121,
+  1535→          "sample_count": 90
+  1536→        },
+  1537→        "ukmo_seamless": {
+  1538→          "mae": 0.683,
+  1539→          "mbe": -0.499,
+  1540→          "sample_count": 90
+  1541→        }
+  1542→      },
+  1543→      "temperature_min": {
+  1544→        "cma_grapes_global": {
+  1545→          "mae": 1.711,
+  1546→          "mbe": -1.378,
+  1547→          "sample_count": 90
+  1548→        },
+  1549→        "gem_global": {
+  1550→          "mae": 5.854,
+  1551→          "mbe": -5.797,
+  1552→          "sample_count": 90
+  1553→        },
+  1554→        "gfs_seamless": {
+  1555→          "mae": 0.624,
+  1556→          "mbe": 0.298,
+  1557→          "sample_count": 90
+  1558→        },
+  1559→        "icon_global": {
+  1560→          "mae": 0.887,
+  1561→          "mbe": 0.262,
+  1562→          "sample_count": 90
+  1563→        },
+  1564→        "jma_seamless": {
+  1565→          "mae": 1.306,
+  1566→          "mbe": 0.19,
+  1567→          "sample_count": 90
+  1568→        },
+  1569→        "meteofrance_seamless": {
+  1570→          "mae": 2.09,
+  1571→          "mbe": 2.09,
+  1572→          "sample_count": 90
+  1573→        },
+  1574→        "ukmo_seamless": {
+  1575→          "mae": 0.8,
+  1576→          "mbe": 0.289,
+  1577→          "sample_count": 90
+  1578→        }
+  1579→      }
+  1580→    }
+  1581→  },
+  1582→  "KLAX": {
+  1583→    "city_name": "Los Angeles",
+  1584→    "metrics": {
+  1585→      "temperature_max": {
+  1586→        "cma_grapes_global": {
+  1587→          "mae": 0.966,
+  1588→          "mbe": 0.177,
+  1589→          "sample_count": 90
+  1590→        },
+  1591→        "gem_global": {
+  1592→          "mae": 1.863,
+  1593→          "mbe": 1.854,
+  1594→          "sample_count": 90
+  1595→        },
+  1596→        "gfs_seamless": {
+  1597→          "mae": 0.856,
+  1598→          "mbe": 0.449,
+  1599→          "sample_count": 90
+  1600→        },
+  1601→        "icon_global": {
+  1602→          "mae": 1.462,
+  1603→          "mbe": 0.573,
+  1604→          "sample_count": 90
+  1605→        },
+  1606→        "jma_seamless": {
+  1607→          "mae": 1.153,
+  1608→          "mbe": -0.051,
+  1609→          "sample_count": 90
+  1610→        },
+  1611→        "meteofrance_seamless": {
+  1612→          "mae": 1.174,
+  1613→          "mbe": -0.89,
+  1614→          "sample_count": 90
+  1615→        },
+  1616→        "ukmo_seamless": {
+  1617→          "mae": 0.734,
+  1618→          "mbe": 0.119,
+  1619→          "sample_count": 90
+  1620→        }
+  1621→      },
+  1622→      "temperature_min": {
+  1623→        "cma_grapes_global": {
+  1624→          "mae": 1.301,
+  1625→          "mbe": -1.243,
+  1626→          "sample_count": 90
+  1627→        },
+  1628→        "gem_global": {
+  1629→          "mae": 4.209,
+  1630→          "mbe": -4.209,
+  1631→          "sample_count": 90
+  1632→        },
+  1633→        "gfs_seamless": {
+  1634→          "mae": 0.849,
+  1635→          "mbe": -0.691,
+  1636→          "sample_count": 90
+  1637→        },
+  1638→        "icon_global": {
+  1639→          "mae": 0.706,
+  1640→          "mbe": 0.166,
+  1641→          "sample_count": 90
+  1642→        },
+  1643→        "jma_seamless": {
+  1644→          "mae": 1.146,
+  1645→          "mbe": 0.943,
+  1646→          "sample_count": 90
+  1647→        },
+  1648→        "meteofrance_seamless": {
+  1649→          "mae": 0.67,
+  1650→          "mbe": -0.026,
+  1651→          "sample_count": 90
+  1652→        },
+  1653→        "ukmo_seamless": {
+  1654→          "mae": 0.642,
+  1655→          "mbe": 0.3,
+  1656→          "sample_count": 90
+  1657→        }
+  1658→      }
+  1659→    }
+  1660→  },
+  1661→  "KLGA": {
+  1662→    "city_name": "New York",
+  1663→    "metrics": {
+  1664→      "temperature_max": {
+  1665→        "cma_grapes_global": {
+  1666→          "mae": 2.274,
+  1667→          "mbe": -1.974,
+  1668→          "sample_count": 90
+  1669→        },
+  1670→        "gem_global": {
+  1671→          "mae": 1.633,
+  1672→          "mbe": -1.482,
+  1673→          "sample_count": 90
+  1674→        },
+  1675→        "gfs_seamless": {
+  1676→          "mae": 0.827,
+  1677→          "mbe": -0.202,
+  1678→          "sample_count": 90
+  1679→        },
+  1680→        "icon_global": {
+  1681→          "mae": 1.179,
+  1682→          "mbe": -0.997,
+  1683→          "sample_count": 90
+  1684→        },
+  1685→        "jma_seamless": {
+  1686→          "mae": 1.158,
+  1687→          "mbe": -0.676,
+  1688→          "sample_count": 90
+  1689→        },
+  1690→        "meteofrance_seamless": {
+  1691→          "mae": 1.567,
+  1692→          "mbe": -1.402,
+  1693→          "sample_count": 90
+  1694→        },
+  1695→        "ukmo_seamless": {
+  1696→          "mae": 1.097,
+  1697→          "mbe": -0.723,
+  1698→          "sample_count": 90
+  1699→        }
+  1700→      },
+  1701→      "temperature_min": {
+  1702→        "cma_grapes_global": {
+  1703→          "mae": 1.688,
+  1704→          "mbe": -1.339,
+  1705→          "sample_count": 90
+  1706→        },
+  1707→        "gem_global": {
+  1708→          "mae": 1.101,
+  1709→          "mbe": -0.966,
+  1710→          "sample_count": 90
+  1711→        },
+  1712→        "gfs_seamless": {
+  1713→          "mae": 0.871,
+  1714→          "mbe": -0.669,
+  1715→          "sample_count": 90
+  1716→        },
+  1717→        "icon_global": {
+  1718→          "mae": 0.82,
+  1719→          "mbe": 0.496,
+  1720→          "sample_count": 90
+  1721→        },
+  1722→        "jma_seamless": {
+  1723→          "mae": 1.027,
+  1724→          "mbe": 0.844,
+  1725→          "sample_count": 90
+  1726→        },
+  1727→        "meteofrance_seamless": {
+  1728→          "mae": 0.957,
+  1729→          "mbe": -0.381,
+  1730→          "sample_count": 90
+  1731→        },
+  1732→        "ukmo_seamless": {
+  1733→          "mae": 0.617,
+  1734→          "mbe": 0.232,
+  1735→          "sample_count": 90
+  1736→        }
+  1737→      }
+  1738→    }
+  1739→  },
+  1740→  "KMCO": {
+  1741→    "city_name": "Orlando",
+  1742→    "metrics": {
+  1743→      "temperature_max": {
+  1744→        "cma_grapes_global": {
+  1745→          "mae": 1.163,
+  1746→          "mbe": 0.27,
+  1747→          "sample_count": 90
+  1748→        },
+  1749→        "gem_global": {
+  1750→          "mae": 1.418,
+  1751→          "mbe": 1.358,
+  1752→          "sample_count": 90
+  1753→        },
+  1754→        "gfs_seamless": {
+  1755→          "mae": 1.393,
+  1756→          "mbe": 1.351,
+  1757→          "sample_count": 90
+  1758→        },
+  1759→        "icon_global": {
+  1760→          "mae": 0.953,
+  1761→          "mbe": 0.776,
+  1762→          "sample_count": 90
+  1763→        },
+  1764→        "jma_seamless": {
+  1765→          "mae": 1.053,
+  1766→          "mbe": -0.838,
+  1767→          "sample_count": 90
+  1768→        },
+  1769→        "meteofrance_seamless": {
+  1770→          "mae": 1.14,
+  1771→          "mbe": -0.138,
+  1772→          "sample_count": 90
+  1773→        },
+  1774→        "ukmo_seamless": {
+  1775→          "mae": 0.951,
+  1776→          "mbe": 0.304,
+  1777→          "sample_count": 90
+  1778→        }
+  1779→      },
+  1780→      "temperature_min": {
+  1781→        "cma_grapes_global": {
+  1782→          "mae": 0.773,
+  1783→          "mbe": 0.656,
+  1784→          "sample_count": 90
+  1785→        },
+  1786→        "gem_global": {
+  1787→          "mae": 0.973,
+  1788→          "mbe": -0.791,
+  1789→          "sample_count": 90
+  1790→        },
+  1791→        "gfs_seamless": {
+  1792→          "mae": 0.657,
+  1793→          "mbe": -0.328,
+  1794→          "sample_count": 90
+  1795→        },
+  1796→        "icon_global": {
+  1797→          "mae": 1.192,
+  1798→          "mbe": 1.188,
+  1799→          "sample_count": 90
+  1800→        },
+  1801→        "jma_seamless": {
+  1802→          "mae": 1.137,
+  1803→          "mbe": 1.119,
+  1804→          "sample_count": 90
+  1805→        },
+  1806→        "meteofrance_seamless": {
+  1807→          "mae": 0.701,
+  1808→          "mbe": 0.426,
+  1809→          "sample_count": 90
+  1810→        },
+  1811→        "ukmo_seamless": {
+  1812→          "mae": 0.976,
+  1813→          "mbe": -0.518,
+  1814→          "sample_count": 90
+  1815→        }
+  1816→      }
+  1817→    }
+  1818→  },
+  1819→  "KMIA": {
+  1820→    "city_name": "Miami",
+  1821→    "metrics": {
+  1822→      "temperature_max": {
+  1823→        "cma_grapes_global": {
+  1824→          "mae": 1.541,
+  1825→          "mbe": -1.483,
+  1826→          "sample_count": 90
+  1827→        },
+  1828→        "gem_global": {
+  1829→          "mae": 0.967,
+  1830→          "mbe": 0.509,
+  1831→          "sample_count": 90
+  1832→        },
+  1833→        "gfs_seamless": {
+  1834→          "mae": 0.644,
+  1835→          "mbe": 0.251,
+  1836→          "sample_count": 90
+  1837→        },
+  1838→        "icon_global": {
+  1839→          "mae": 0.713,
+  1840→          "mbe": 0.056,
+  1841→          "sample_count": 90
+  1842→        },
+  1843→        "jma_seamless": {
+  1844→          "mae": 1.036,
+  1845→          "mbe": -0.016,
+  1846→          "sample_count": 90
+  1847→        },
+  1848→        "meteofrance_seamless": {
+  1849→          "mae": 0.843,
+  1850→          "mbe": -0.07,
+  1851→          "sample_count": 90
+  1852→        },
+  1853→        "ukmo_seamless": {
+  1854→          "mae": 0.718,
+  1855→          "mbe": -0.051,
+  1856→          "sample_count": 90
+  1857→        }
+  1858→      },
+  1859→      "temperature_min": {
+  1860→        "cma_grapes_global": {
+  1861→          "mae": 0.8,
+  1862→          "mbe": 0.596,
+  1863→          "sample_count": 90
+  1864→        },
+  1865→        "gem_global": {
+  1866→          "mae": 1.04,
+  1867→          "mbe": -0.718,
+  1868→          "sample_count": 90
+  1869→        },
+  1870→        "gfs_seamless": {
+  1871→          "mae": 0.737,
+  1872→          "mbe": 0.252,
+  1873→          "sample_count": 90
+  1874→        },
+  1875→        "icon_global": {
+  1876→          "mae": 0.848,
+  1877→          "mbe": 0.732,
+  1878→          "sample_count": 90
+  1879→        },
+  1880→        "jma_seamless": {
+  1881→          "mae": 0.717,
+  1882→          "mbe": 0.054,
+  1883→          "sample_count": 90
+  1884→        },
+  1885→        "meteofrance_seamless": {
+  1886→          "mae": 0.888,
+  1887→          "mbe": 0.839,
+  1888→          "sample_count": 90
+  1889→        },
+  1890→        "ukmo_seamless": {
+  1891→          "mae": 1.393,
+  1892→          "mbe": 1.387,
+  1893→          "sample_count": 90
+  1894→        }
+  1895→      }
+  1896→    }
+  1897→  },
+  1898→  "KORD": {
+  1899→    "city_name": "Chicago",
+  1900→    "metrics": {
+  1901→      "temperature_max": {
+  1902→        "cma_grapes_global": {
+  1903→          "mae": 1.327,
+  1904→          "mbe": -0.436,
+  1905→          "sample_count": 90
+  1906→        },
+  1907→        "gem_global": {
+  1908→          "mae": 1.066,
+  1909→          "mbe": 0.586,
+  1910→          "sample_count": 90
+  1911→        },
+  1912→        "gfs_seamless": {
+  1913→          "mae": 0.997,
+  1914→          "mbe": 0.334,
+  1915→          "sample_count": 90
+  1916→        },
+  1917→        "icon_global": {
+  1918→          "mae": 0.936,
+  1919→          "mbe": -0.16,
+  1920→          "sample_count": 90
+  1921→        },
+  1922→        "jma_seamless": {
+  1923→          "mae": 1.342,
+  1924→          "mbe": -0.191,
+  1925→          "sample_count": 90
+  1926→        },
+  1927→        "meteofrance_seamless": {
+  1928→          "mae": 0.971,
+  1929→          "mbe": -0.384,
+  1930→          "sample_count": 90
+  1931→        },
+  1932→        "ukmo_seamless": {
+  1933→          "mae": 1.177,
+  1934→          "mbe": -0.112,
+  1935→          "sample_count": 90
+  1936→        }
+  1937→      },
+  1938→      "temperature_min": {
+  1939→        "cma_grapes_global": {
+  1940→          "mae": 1.794,
+  1941→          "mbe": 1.27,
+  1942→          "sample_count": 90
+  1943→        },
+  1944→        "gem_global": {
+  1945→          "mae": 1.552,
+  1946→          "mbe": -1.354,
+  1947→          "sample_count": 90
+  1948→        },
+  1949→        "gfs_seamless": {
+  1950→          "mae": 0.949,
+  1951→          "mbe": -0.06,
+  1952→          "sample_count": 90
+  1953→        },
+  1954→        "icon_global": {
+  1955→          "mae": 0.779,
+  1956→          "mbe": 0.07,
+  1957→          "sample_count": 90
+  1958→        },
+  1959→        "jma_seamless": {
+  1960→          "mae": 1.913,
+  1961→          "mbe": 1.793,
+  1962→          "sample_count": 90
+  1963→        },
+  1964→        "meteofrance_seamless": {
+  1965→          "mae": 0.83,
+  1966→          "mbe": 0.026,
+  1967→          "sample_count": 90
+  1968→        },
+  1969→        "ukmo_seamless": {
+  1970→          "mae": 1.223,
+  1971→          "mbe": 1.099,
+  1972→          "sample_count": 90
+  1973→        }
+  1974→      }
+  1975→    }
+  1976→  },
+  1977→  "KPHX": {
+  1978→    "city_name": "Phoenix",
+  1979→    "metrics": {
+  1980→      "temperature_max": {
+  1981→        "cma_grapes_global": {
+  1982→          "mae": 1.301,
+  1983→          "mbe": -1.281,
+  1984→          "sample_count": 90
+  1985→        },
+  1986→        "gem_global": {
+  1987→          "mae": 0.743,
+  1988→          "mbe": -0.663,
+  1989→          "sample_count": 90
+  1990→        },
+  1991→        "gfs_seamless": {
+  1992→          "mae": 0.337,
+  1993→          "mbe": -0.026,
+  1994→          "sample_count": 90
+  1995→        },
+  1996→        "icon_global": {
+  1997→          "mae": 0.467,
+  1998→          "mbe": -0.151,
+  1999→          "sample_count": 90
+  2000→        },
+
+[showing lines 1-2000 of 6322; use offset=2001 with limit to continue reading]

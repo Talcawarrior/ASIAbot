@@ -1,0 +1,602 @@
+   100→   100→   100→  return `${sign}$${Math.abs(v).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+   101→   101→   101→}
+   102→   102→   102→
+   103→   103→   103→// Turkish number format without sign (for prices)
+   104→   104→   104→function fmtPrice(v: number) {
+   105→   105→   105→  return v.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+   106→   106→   106→}
+   107→   107→   107→
+   108→   108→   108→// Turkish format for general numbers (percentages, ratios)
+   109→   109→   109→function fmtNum(v: number, decimals = 2) {
+   110→   110→   110→  return v.toLocaleString("tr-TR", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+   111→   111→   111→}
+   112→   112→   112→
+   113→   113→   113→// Turkish format for integers (thousands separator, no decimals)
+   114→   114→   114→function fmtInt(v: number) {
+   115→   115→   115→  return v.toLocaleString("tr-TR", { maximumFractionDigits: 0 });
+   116→   116→   116→}
+   117→   117→   117→
+   118→   118→   118→// ---- Loading skeleton ----
+   119→   119→   119→function Skeleton({ className = "" }: { className?: string }) {
+   120→   120→   120→  return <div className={`animate-pulse rounded-md bg-gray-200 dark:bg-gray-700 ${className}`} />;
+   121→   121→   121→}
+   122→   122→   122→function MetricSkeleton() {
+   123→   123→   123→  return <Card className="py-4 gap-2 shadow-sm"><CardContent className="px-4 pb-0 pt-0 space-y-2"><Skeleton className="h-3 w-16" /><Skeleton className="h-5 w-24" /></CardContent></Card>;
+   124→   124→   124→}
+   125→   125→   125→function MiniMetricSkeleton() {
+   126→   126→   126→  return <Card className="py-2 gap-0 shadow-sm"><CardContent className="px-3 pb-0 pt-0 space-y-1.5"><Skeleton className="h-2.5 w-14" /><Skeleton className="h-4 w-20" /></CardContent></Card>;
+   127→   127→   127→}
+   128→   128→   128→function ChartSkeleton({ height }: { height?: number }) {
+   129→   129→   129→  return <div className="flex items-center justify-center w-full" style={{ height: height ?? 260 }}><Skeleton className="w-full h-full rounded-lg" /></div>;
+   130→   130→   130→}
+   131→   131→   131→
+   132→   132→   132→// ---- Client-only chart wrapper (skeleton until hydrated) ----
+   133→   133→   133→function ChartWrapper({ children, height, width }: { children: React.ReactNode; height?: number; width?: number }) {
+   134→   134→   134→  const [mounted, setMounted] = useState(false);
+   135→   135→   135→  useEffect(() => { setMounted(true); }, []);
+   136→   136→   136→  if (!mounted) return <ChartSkeleton height={height} />;
+   137→   137→   137→  return <div className="w-full" style={{ height: height ?? 260, width: width ?? "100%" }}>{children}</div>;
+   138→   138→   138→}
+   139→   139→   139→
+   140→   140→   140→// ---- Tab type ----
+   141→   141→   141→type TabId = "overview" | "trades" | "models" | "health";
+   142→   142→   142→
+   143→   143→   143→const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
+   144→   144→   144→  { id: "overview", label: "Genel Bakış", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+   145→   145→   145→  { id: "trades", label: "İşlem Geçmişi", icon: <History className="h-3.5 w-3.5" /> },
+   146→   146→   146→  { id: "models", label: "Model Performansı", icon: <Brain className="h-3.5 w-3.5" /> },
+   147→   147→   147→  { id: "health", label: "Sağlık", icon: <HeartPulse className="h-3.5 w-3.5" /> },
+   148→   148→   148→];
+   149→   149→   149→
+   150→   150→   150→// ==========================================
+   151→   151→   151→// Tooltip Components
+   152→   152→   152→// ==========================================
+   153→   153→   153→function PortfolioTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+   154→   154→   154→  if (!active || !payload?.length) return null;
+   155→   155→   155→  return (
+   156→   156→   156→    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+   157→   157→   157→      <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">{label}</p>
+   158→   158→   158→      <p className="font-mono font-semibold" style={{ color: TEAL }}>
+   159→   159→   159→        ${payload[0].value.toLocaleString("tr-TR", { minimumFractionDigits: 0 })}
+   160→   160→   160→      </p>
+   161→   161→   161→    </div>
+   162→   162→   162→  );
+   163→   163→   163→}
+   164→   164→   164→
+   165→   165→   165→function EdgeTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number }>; label?: string }) {
+   166→   166→   166→  if (!active || !payload?.length) return null;
+   167→   167→   167→  return (
+   168→   168→   168→    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 shadow-lg text-xs">
+   169→   169→   169→      <p className="font-medium text-gray-500 dark:text-gray-400 mb-1">Edge: {label}</p>
+   170→   170→   170→      <p className="font-mono font-semibold" style={{ color: GREEN }}>{payload[0].value} trade</p>
+   171→   171→   171→    </div>
+   172→   172→   172→  );
+   173→   173→   173→}
+   174→   174→   174→
+   175→   175→   175→// Metric info tooltip
+   176→   176→   176→function MetricTooltip({ children, title, description, formula, example }: { 
+   177→   177→   177→  children: React.ReactNode; 
+   178→   178→   178→  title: string; 
+   179→   179→   179→  description: string; 
+   180→   180→   180→  formula?: string; 
+   181→   181→   181→  example?: string; 
+   182→   182→   182→}) {
+   183→   183→   183→  const [show, setShow] = useState(false);
+   184→   184→   184→  return (
+   185→   185→   185→    <div className="relative inline-flex" onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+   186→   186→   186→      {children}
+   187→   187→   187→      {show && (
+   188→   188→   188→        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-80 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 shadow-lg text-xs z-50">
+   189→   189→   189→          <div className="flex items-center gap-1.5 mb-1.5">
+   190→   190→   190→            <HelpCircle className="h-3.5 w-3.5" style={{ color: TEAL }} />
+   191→   191→   191→            <p className="font-semibold text-gray-900 dark:text-gray-100">{title}</p>
+   192→   192→   192→          </div>
+   193→   193→   193→          <p className="text-gray-600 dark:text-gray-400 mb-2 text-[11px] leading-relaxed">{description}</p>
+   194→   194→   194→          {formula && (
+   195→   195→   195→            <div className="mb-2 p-2 rounded bg-gray-50 dark:bg-gray-700 font-mono text-[10px] text-gray-700 dark:text-gray-300">
+   196→   196→   196→              <span className="font-medium">Formül:</span> {formula}
+   197→   197→   197→            </div>
+   198→   198→   198→          )}
+   199→   199→   199→          {example && (
+   200→   200→   200→            <div className="p-2 rounded bg-teal-50 font-mono text-[10px] text-teal-800">
+   201→   201→   201→              <span className="font-medium">Örnek:</span> {example}
+   202→   202→   202→            </div>
+   203→   203→   203→          )}
+   204→   204→   204→          <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-200" />
+   205→   205→   205→        </div>
+   206→   206→   206→      )}
+   207→   207→   207→    </div>
+   208→   208→   208→  );
+   209→   209→   209→}
+   210→   210→   210→
+   211→   211→   211→// ==========================================
+   212→   212→   212→// OVERVIEW TAB
+   213→   213→   213→// ==========================================
+   214→   214→   214→function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edgeDistribution, openEdgeDistribution, isLoading }: {
+   215→   215→   215→  kpiData: KpiData;
+   216→   216→   216→  portfolioData: PortfolioPoint[];
+   217→   217→   217→  openPositions: OpenPosition[];
+   218→   218→   218→  activityFeed: ActivityItem[];
+   219→   219→   219→  edgeDistribution: EdgeBucket[];
+   220→   220→   220→  openEdgeDistribution: EdgeBucket[];
+   221→   221→   221→  isLoading?: boolean;
+   222→   222→   222→}) {
+   223→   223→   223→  const winLossData = [
+   224→   224→   224→    { name: "Kazanan", value: kpiData.wins, color: TEAL },
+   225→   225→   225→    { name: "Kaybeden", value: kpiData.losses, color: RED },
+   226→   226→   226→  ];
+   227→   227→   227→
+   228→   228→   228→  return (
+   229→   229→   229→    <div className="space-y-6">
+   230→   230→   230→      {/* KPI Cards — skeleton while loading */}
+   231→   231→   231→      {isLoading ? (
+   232→   232→   232→        <>
+   233→   233→   233→          <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   234→   234→   234→            {Array.from({ length: 4 }).map((_, i) => <MetricSkeleton key={i} />)}
+   235→   235→   235→          </section>
+   236→   236→   236→          <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+   237→   237→   237→            {Array.from({ length: 6 }).map((_, i) => <MiniMetricSkeleton key={i} />)}
+   238→   238→   238→          </section>
+   239→   239→   239→        </>
+   240→   240→   240→      ) : (
+   241→   241→   241→        <>
+   242→   242→   242→          {/* Unified Metric Cards - first row */}
+   243→   243→   243→          <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   244→   244→   244→            {[
+   245→   245→   245→              { 
+   246→   246→   246→                label: "Portföy Değeri", 
+   247→   247→   247→                value: `$${kpiData.portfolioValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`, 
+   248→   248→   248→                icon: <Wallet className="h-4 w-4" />, 
+   249→   249→   249→                color: TEAL, 
+   250→   250→   250→                sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}`,
+   251→   251→   251→                tooltip: "Nakit + açık pozisyon PnL = güncel portföy değeri"
+   252→   252→   252→              },
+   253→   253→   253→              { 
+   254→   254→   254→                label: "Bugünkü PnL", 
+   255→   255→   255→                value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, 
+   256→   256→   256→                icon: <TrendingUp className="h-4 w-4" />, 
+   257→   257→   257→                color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, 
+   258→   258→   258→                sub: "",
+   259→   259→   259→                tooltip: "Son 24 saatteki gerçekleşen + iri PnL"
+   260→   260→   260→              },
+   261→   261→   261→              { 
+   262→   262→   262→                label: "Açık Bahisler", 
+   263→   263→   263→                value: fmtInt(kpiData.openPositions), 
+   264→   264→   264→                icon: <Activity className="h-4 w-4" />, 
+   265→   265→   265→                color: TEXT_PRIMARY, 
+   266→   266→   266→                sub: "",
+   267→   267→   267→                tooltip: "Henüz çözülmemiş (open/pending) bahis sayısı"
+   268→   268→   268→              },
+   269→   269→   269→              { 
+   270→   270→   270→                label: "Win Rate", 
+   271→   271→   271→                value: `%${fmtNum(kpiData.winRate, 1)}`, 
+   272→   272→   272→                icon: <Target className="h-4 w-4" />, 
+   273→   273→   273→                color: TEXT_PRIMARY, 
+   274→   274→   274→                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
+   275→   275→   275→                tooltip: "Kapanan bahislerde kazanan oranı (closed_early dahil). Örn: 30W/20L = %60"
+   276→   276→   276→              }, 
+   277→   277→   277→            ].map((kpi) => (
+   278→   278→   278→              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+   279→   279→   279→                <CardContent className="px-3 pb-0 pt-0">
+   280→   280→   280→                  <div className="flex items-start justify-between gap-2">
+   281→   281→   281→                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
+   282→   282→   282→                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
+   283→   283→   283→                  </div>
+   284→   284→   284→                  <div className="flex items-center gap-2 mt-1">
+   285→   285→   285→                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+   286→   286→   286→                  </div>
+   287→   287→   287→                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
+   288→   288→   288→                </CardContent>
+   289→   289→   289→              </Card>
+   290→   290→   290→            ))}
+   291→   291→   291→          </section>
+   292→   292→   292→
+   293→   293→   293→          {/* Summary row - single row with all 4 cards */}
+   294→   294→   294→          <section className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
+   295→   295→   295→            <Card className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+   296→   296→   296→              <CardContent className="px-3 pb-0 pt-0">
+   297→   297→   297→                <div className="flex items-start justify-between gap-2">
+   298→   298→   298→                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title="Tüm açık pozisyonların toplam stake tutarı (toplam kilitli nakit)">Açık Bet Toplam Değeri</p>
+   299→   299→   299→                  <span style={{ color: TEAL }}><Activity className="h-4 w-4" /></span>
+   300→   300→   300→                </div>
+   301→   301→   301→                <div className="flex items-center gap-2 mt-1">
+   302→   302→   302→                  <span className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>{fmtUsd(kpiData.openPositionsValue)}</span>
+   303→   303→   303→                </div>
+   304→   304→   304→                <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>Max: {fmtUsd(kpiData.maxOpenableUsd)}</p>
+   305→   305→   305→              </CardContent>
+   306→   306→   306→            </Card>
+   307→   307→   307→            {/* Total PnL — custom card with breakdown */}
+   308→   308→   308→            <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   309→   309→   309→              <CardContent className="px-4 pb-0 pt-0">
+   310→   310→   310→                <div className="flex items-start justify-between gap-2">
+   311→   311→   311→                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }}>Toplam PnL</p>
+   312→   312→   312→                  <span style={{ color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED }}><TrendingUp className="h-4 w-4" /></span>
+   313→   313→   313→                </div>
+   314→   314→   314→                <p className="text-lg font-bold tabular-nums" style={{ color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED }}>
+   315→   315→   315→                  {fmtUsd(kpiData.totalPnlValue)}
+   316→   316→   316→                </p>
+   317→   317→   317→                <div className="flex flex-col gap-0.5 mt-1 text-[10px] tabular-nums">
+   318→   318→   318→                  <div className="flex justify-between">
+   319→   319→   319→                    <span style={{ color: TEXT_MUTED }}>Kapalı (Realized)</span>
+   320→   320→   320→                    <span style={{ color: kpiData.realizedPnl >= 0 ? TEAL : RED }}>
+   321→   321→   321→                      {fmtUsd(kpiData.realizedPnl)}
+   322→   322→   322→                    </span>
+   323→   323→   323→                  </div>
+   324→   324→   324→                  <div className="flex justify-between">
+   325→   325→   325→                    <span style={{ color: TEXT_MUTED }}>Açık (Unrealized)</span>
+   326→   326→   326→                    <span style={{ color: kpiData.unrealizedPnl >= 0 ? TEAL : RED }}>
+   327→   327→   327→                      {fmtUsd(kpiData.unrealizedPnl)}
+   328→   328→   328→                    </span>
+   329→   329→   329→                  </div>
+   330→   330→   330→                </div>
+   331→   331→   331→              </CardContent>
+   332→   332→   332→            </Card>
+   333→   333→   333→            {[
+   334→   334→   334→              { 
+   335→   335→   335→                label: "Total ROI", 
+   336→   336→   336→                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${fmtNum(kpiData.totalRoi)}%`, 
+   337→   337→   337→                icon: <TrendingUp className="h-4 w-4" />, 
+   338→   338→   338→                color: kpiData.totalRoi >= 0 ? TEAL : RED, 
+   339→   339→   339→                sub: "",
+   340→   340→   340→                tooltip: "Toplam yatırıma oranlı getiri. Formül: Total PnL / Toplam Stake × 100. Örn: +36.31% = her $100 için $36 kar"
+   341→   341→   341→              },
+   342→   342→   342→              { 
+   343→   343→   343→                label: "Kapalı Bahis", 
+   344→   344→   344→                value: fmtInt(kpiData.closedBets), 
+   345→   345→   345→                icon: <BarChart3 className="h-4 w-4" />, 
+   346→   346→   346→                color: TEXT_PRIMARY, 
+   347→   347→   347→                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
+   348→   348→   348→                tooltip: "Sonuçlanan toplam bahis (won+lost+closed_early). 50 = 30 kazanan + 20 kaybeden"
+   349→   349→   349→              },
+   350→   350→   350→            ].map((kpi) => (
+   351→   351→   351→              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+   352→   352→   352→                <CardContent className="px-3 pb-0 pt-0">
+   353→   353→   353→                  <div className="flex items-start justify-between gap-2">
+   354→   354→   354→                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
+   355→   355→   355→                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
+   356→   356→   356→                  </div>
+   357→   357→   357→                  <div className="flex items-center gap-2 mt-1">
+   358→   358→   358→                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+   359→   359→   359→                  </div>
+   360→   360→   360→                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
+   361→   361→   361→                </CardContent>
+   362→   362→   362→              </Card>
+   363→   363→   363→            ))}
+   364→   364→   364→          </section>
+   365→   365→   365→        </>
+   366→   366→   366→      )}
+   367→   367→   367→
+   368→   368→   368→      {/* Open Positions + Activity Feed */}
+   369→   369→   369→      <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+   370→   370→   370→        <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   371→   371→   371→          <CardHeader className="pb-0 pt-0 px-5">
+   372→   372→   372→            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Açık Pozisyonlar</CardTitle>
+   373→   373→   373→          </CardHeader>
+   374→   374→   374→          <CardContent className="px-3">
+   375→   375→   375→            <div className="max-h-[380px] overflow-y-auto custom-scroll">
+   376→   376→   376→              {openPositions.length === 0 ? (
+   377→   377→   377→                <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>Açık pozisyon yok</div>
+   378→   378→   378→              ) : (
+   379→   379→   379→                <Table>
+   380→   380→   380→                  <TableHeader>
+   381→   381→   381→                    <TableRow className="hover:bg-transparent">
+   382→   382→   382→                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
+   383→   383→   383→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center" style={{ color: TEXT_MUTED }}>H/L</TableHead>
+   384→   384→   384→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>°C</TableHead>
+   385→   385→   385→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Açılış</TableHead>
+   386→   386→   386→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Yön</TableHead>
+   387→   387→   387→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
+   388→   388→   388→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Güncel</TableHead>
+   389→   389→   389→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Edge</TableHead>
+   390→   390→   390→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Bet</TableHead>
+   391→   391→   391→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>PnL</TableHead>
+   392→   392→   392→                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
+   393→   393→   393→                    </TableRow>
+   394→   394→   394→                  </TableHeader>
+   395→   395→   395→                  <TableBody>
+   396→   396→   396→                    {openPositions.map((pos) => (
+   397→   397→   397→                      <TableRow key={pos.id}>
+   398→   398→   398→                        <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{pos.city}</TableCell>
+   399→   399→   399→                        <TableCell className="text-center">
+   400→   400→   400→                          {pos.metric ? (
+   401→   401→   401→                            <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{
+   402→   402→   402→                              backgroundColor: pos.metric === "temperature_max" ? "#FEF3C7" : "#DBEAFE",
+   403→   403→   403→                              color: pos.metric === "temperature_max" ? "#D97706" : "#2563EB",
+   404→   404→   404→                              border: `1px solid ${pos.metric === "temperature_max" ? "#F59E0B40" : "#3B82F640"}`
+   405→   405→   405→                            }}>{pos.metric === "temperature_max" ? "H" : "L"}</Badge>
+   406→   406→   406→                          ) : <span style={{ color: TEXT_MUTED }}>—</span>}
+   407→   407→   407→                        </TableCell>
+   408→   408→   408→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>
+   409→   409→   409→                          {pos.threshold != null ? `${pos.threshold}°` : "—"}
+   410→   410→   410→                        </TableCell>
+   411→   411→   411→                        <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.openedAt}</TableCell>
+   412→   412→   412→                        <TableCell>
+   413→   413→   413→                          <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: pos.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: pos.side === "YES" ? TEAL : RED, border: `1px solid ${pos.side === "YES" ? TEAL : RED}33` }}>{pos.side}</Badge>
+   414→   414→   414→                        </TableCell>
+   415→   415→   415→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.entryPrice)}</TableCell>
+   416→   416→   416→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.currentPrice)}</TableCell>
+   417→   417→   417→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
+   418→   418→   418→                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtUsd(pos.amount)}</TableCell>
+   419→   419→   419→                        <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
+   420→   420→   420→                        <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
+   421→   421→   421→                      </TableRow>
+   422→   422→   422→                    ))}
+   423→   423→   423→                  </TableBody>
+   424→   424→   424→                </Table>
+   425→   425→   425→              )}
+   426→   426→   426→            </div>
+   427→   427→   427→          </CardContent>
+   428→   428→   428→        </Card>
+   429→   429→   429→
+   430→   430→   430→        <Card className="lg:col-span-2 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   431→   431→   431→          <CardHeader className="pb-0 pt-0 px-5">
+   432→   432→   432→            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Aktivite Akışı</CardTitle>
+   433→   433→   433→          </CardHeader>
+   434→   434→   434→          <CardContent className="px-4">
+   435→   435→   435→            <div className="space-y-0 max-h-[380px] overflow-y-auto pr-1 custom-scroll">
+   436→   436→   436→              {activityFeed.length === 0 ? (
+   437→   437→   437→                <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>Henüz aktivite yok</div>
+   438→   438→   438→              ) : (
+   439→   439→   439→                activityFeed.map((item) => (
+   440→   440→   440→                  <div key={item.id} className="flex gap-3 py-2.5 border-b last:border-0" style={{ borderColor: `${BORDER}80` }}>
+   441→   441→   441→                    <div className="flex flex-col items-center gap-1 pt-1 shrink-0">
+   442→   442→   442→                      <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: dotColorMap[item.color] }} />
+   443→   443→   443→                    </div>
+   444→   444→   444→                    <div className="flex-1 min-w-0">
+   445→   445→   445→                      <p className="text-xs leading-relaxed" style={{ color: TEXT_PRIMARY }}>{item.message}</p>
+   446→   446→   446→                    </div>
+   447→   447→   447→                    <span className="text-[10px] tabular-nums shrink-0 pt-0.5" style={{ color: TEXT_MUTED }}>{item.time}</span>
+   448→   448→   448→                  </div>
+   449→   449→   449→                ))
+   450→   450→   450→              )}
+   451→   451→   451→            </div>
+   452→   452→   452→          </CardContent>
+   453→   453→   453→        </Card>
+   454→   454→   454→      </section>
+   455→   455→   455→
+   456→   456→   456→      {/* Portfolio Chart + Win/Loss Donut */}
+   457→   457→   457→      <section className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+   458→   458→   458→        <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   459→   459→   459→          <CardHeader className="pb-0 pt-0 px-5">
+   460→   460→   460→            <div className="flex items-center gap-2">
+   461→   461→   461→              <BarChart3 className="h-4 w-4" style={{ color: TEXT_MUTED }} />
+   462→   462→   462→              <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Portföy Değeri (30 Gün)</CardTitle>
+   463→   463→   463→            </div>
+   464→   464→   464→          </CardHeader>
+   465→   465→   465→          <CardContent className="px-4">
+   466→   466→   466→            <ChartWrapper height={280}>
+   467→   467→   467→              <ResponsiveContainer width="100%" height="100%">
+   468→   468→   468→                <AreaChart data={portfolioData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   469→   469→   469→                  <defs>
+   470→   470→   470→                    <linearGradient id="portfolioGradient" x1="0" y1="0" x2="0" y2="1">
+   471→   471→   471→                      <stop offset="5%" stopColor={TEAL} stopOpacity={0.25} />
+   472→   472→   472→                      <stop offset="95%" stopColor={TEAL} stopOpacity={0.02} />
+   473→   473→   473→                    </linearGradient>
+   474→   474→   474→                  </defs>
+   475→   475→   475→                  <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   476→   476→   476→                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   477→   477→   477→                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${(v / 1000).toFixed(1)}k`} width={45} />
+   478→   478→   478→                  <Tooltip content={<PortfolioTooltip />} />
+   479→   479→   479→                  <Area type="monotone" dataKey="value" stroke={TEAL} strokeWidth={2} fill="url(#portfolioGradient)" dot={false} activeDot={{ r: 4, stroke: TEAL, strokeWidth: 2, fill: "#fff" }} />
+   480→   480→   480→                </AreaChart>
+   481→   481→   481→              </ResponsiveContainer>
+   482→   482→   482→            </ChartWrapper>
+   483→   483→   483→          </CardContent>
+   484→   484→   484→        </Card>
+   485→   485→   485→
+   486→   486→   486→        {/* Win/Loss Donut */}
+   487→   487→   487→        <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   488→   488→   488→          <CardHeader className="pb-0 pt-0 px-5">
+   489→   489→   489→            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Win / Loss</CardTitle>
+   490→   490→   490→          </CardHeader>
+   491→   491→   491→          <CardContent className="px-4 flex flex-col items-center justify-center">
+   492→   492→   492→            <ChartWrapper height={180} width={180}>
+   493→   493→   493→              <ResponsiveContainer width="100%" height="100%">
+   494→   494→   494→                <PieChart>
+   495→   495→   495→                  <Pie data={winLossData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value" strokeWidth={0}>
+   496→   496→   496→                    {winLossData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+   497→   497→   497→                  </Pie>
+   498→   498→   498→                  <Tooltip />
+   499→   499→   499→                </PieChart>
+   500→   500→   500→              </ResponsiveContainer>
+   501→   501→   501→            </ChartWrapper>
+   502→   502→   502→            <div className="flex gap-6 mt-3 text-xs">
+   503→   503→   503→              <div className="flex items-center gap-1.5">
+   504→   504→   504→                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: TEAL }} />
+   505→   505→   505→                <span style={{ color: TEXT_MUTED }}>Kazanan: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.wins)}</b></span>
+   506→   506→   506→              </div>
+   507→   507→   507→              <div className="flex items-center gap-1.5">
+   508→   508→   508→                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: RED }} />
+   509→   509→   509→                <span style={{ color: TEXT_MUTED }}>Kaybeden: <b style={{ color: TEXT_PRIMARY }}>{fmtInt(kpiData.losses)}</b></span>
+   510→   510→   510→              </div>
+   511→   511→   511→            </div>
+   512→   512→   512→          </CardContent>
+   513→   513→   513→        </Card>
+   514→   514→   514→      </section>
+   515→   515→   515→
+   516→   516→   516→      {/* Edge Distribution - Closed Bets */}
+   517→   517→   517→      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   518→   518→   518→        <CardHeader className="pb-0 pt-0 px-5">
+   519→   519→   519→          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Kapalı Bahisler</CardTitle>
+   520→   520→   520→        </CardHeader>
+   521→   521→   521→        <CardContent className="px-4">
+   522→   522→   522→          <ChartWrapper height={220}>
+   523→   523→   523→            <ResponsiveContainer width="100%" height="100%">
+   524→   524→   524→              <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   525→   525→   525→                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   526→   526→   526→                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   527→   527→   527→                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+   528→   528→   528→                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+   529→   529→   529→                <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
+   530→   530→   530→              </BarChart>
+   531→   531→   531→            </ResponsiveContainer>
+   532→   532→   532→          </ChartWrapper>
+   533→   533→   533→        </CardContent>
+   534→   534→   534→      </Card>
+   535→   535→   535→
+   536→   536→   536→      {/* Edge Distribution - Open Positions */}
+   537→   537→   537→      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+   538→   538→   538→        <CardHeader className="pb-0 pt-0 px-5">
+   539→   539→   539→          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Açık Pozisyonlar</CardTitle>
+   540→   540→   540→        </CardHeader>
+   541→   541→   541→        <CardContent className="px-4">
+   542→   542→   542→          <ChartWrapper height={220}>
+   543→   543→   543→            <ResponsiveContainer width="100%" height="100%">
+   544→   544→   544→              <BarChart data={openEdgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+   545→   545→   545→                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+   546→   546→   546→                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+   547→   547→   547→                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+   548→   548→   548→                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+   549→   549→   549→                <Bar dataKey="count" fill={TEAL} radius={[4, 4, 0, 0]} barSize={40} />
+   550→   550→   550→              </BarChart>
+   551→   551→   551→            </ResponsiveContainer>
+   552→   552→   552→          </ChartWrapper>
+   553→   553→   553→        </CardContent>
+   554→   554→   554→      </Card>
+   555→   555→   555→    </div>
+   556→   556→   556→  );
+   557→   557→   557→}
+   558→   558→   558→
+   559→   559→   559→// ==========================================
+   560→   560→   560→// TRADE HISTORY TAB
+   561→   561→   561→// ==========================================
+   562→   562→   562→function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null; totalPnl: number }) {
+   563→   563→   563→  const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS">("ALL");
+   564→   564→   564→  const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
+   565→   565→   565→  const [filterExit, setFilterExit] = useState<"ALL" | "ST" | "TP" | "SL" | "TS" | "TD">("ALL");
+   566→   566→   566→  const [filterDate, setFilterDate] = useState<string>("");
+   567→   567→   567→  const dateInputRef = useRef<HTMLInputElement>(null);
+   568→   568→   568→  const [search, setSearch] = useState("");
+   569→   569→   569→  const [sortBy, setSortBy] = useState<"date" | "pnl" | "edge">("date");
+   570→   570→   570→  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+   571→   571→   571→
+   572→   572→   572→  const filtered = useMemo(() => {
+   573→   573→   573→    let data = [...tradeHistory];
+   574→   574→   574→    // Varsayılan olarak son 10 günün kapananlarını göster
+   575→   575→   575→    const tenDaysAgo = new Date();
+   576→   576→   576→    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
+   577→   577→   577→    data = data.filter((t) => {
+   578→   578→   578→      if (!t.closedAtISO) return false;
+   579→   579→   579→      return new Date(t.closedAtISO) >= tenDaysAgo;
+   580→   580→   580→    });
+   581→   581→   581→    if (filterResult !== "ALL") data = data.filter((t) => t.result === filterResult);
+   582→   582→   582→    if (filterSide !== "ALL") data = data.filter((t) => t.side === filterSide);
+   583→   583→   583→    if (filterExit !== "ALL") data = data.filter((t) => t.exitType === filterExit);
+   584→   584→   584→    if (filterDate) {
+   585→   585→   585→      data = data.filter((t) => {
+   586→   586→   586→        if (!t.closedAtISO) return false;
+   587→   587→   587→        const iso = t.closedAtISO.slice(0, 10);
+   588→   588→   588→        return iso === filterDate;
+   589→   589→   589→      });
+   590→   590→   590→    }
+   591→   591→   591→    if (search) data = data.filter((t) => t.city.toLowerCase().includes(search.toLowerCase()) || t.strategy.toLowerCase().includes(search.toLowerCase()));
+   592→   592→   592→    data.sort((a, b) => {
+   593→   593→   593→      let cmp = 0;
+   594→   594→   594→      if (sortBy === "date") cmp = 0;
+   595→   595→   595→      else if (sortBy === "pnl") cmp = a.pnl - b.pnl;
+   596→   596→   596→      else if (sortBy === "edge") cmp = a.edge - b.edge;
+   597→   597→   597→      return sortDir === "desc" ? -cmp : cmp;
+   598→   598→   598→    });
+   599→   599→   599→    return data;
+   600→   600→   600→  }, [tradeHistory, filterResult, filterSide, filterExit, filterDate, search, sortBy, sortDir]);
+   601→   601→   601→
+   602→   602→   602→  // Summary stats from API (all settled bets, not just the 50 displayed)
+   603→   603→   603→  const hs = historyStats;
+   604→   604→   604→  const totalSettledBets = (hs?.total_won ?? 0) + (hs?.total_lost ?? 0);
+   605→   605→   605→  const totalSettledWinRate = totalSettledBets > 0 ? ((hs?.total_won ?? 0) / totalSettledBets) * 100 : 0;
+   606→   606→   606→  // Filtered stats for the displayed subset
+   607→   607→   607→  const filteredPnl = filtered.reduce((s, t) => s + t.pnl, 0);
+   608→   608→   608→  const winCount = filtered.filter((t) => t.result === "WIN").length;
+   609→   609→   609→
+   610→   610→   610→  function toggleSort(col: "date" | "pnl" | "edge") {
+   611→   611→   611→    if (sortBy === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+   612→   612→   612→    else { setSortBy(col); setSortDir("desc"); }
+   613→   613→   613→  }
+   614→   614→   614→
+   615→   615→   615→  // FIX: SortIcon moved outside TradesTab (was react-hooks/static-components warning).
+   616→   616→   616→  // Defining a component inside render creates a new reference each render,
+   617→   617→   617→  // causing React to unmount/remount the subtree. Now it's a pure function
+   618→   618→   618→  // called inline, not a component definition.
+   619→   619→   619→  const renderSortIcon = (col: "date" | "pnl" | "edge") => {
+   620→   620→   620→    if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
+   621→   621→   621→    return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
+   622→   622→   622→  };
+   623→   623→   623→
+   624→   624→   624→  return (
+   625→   625→   625→    <div className="space-y-4">
+   626→   626→   626→      {/* Summary cards — show ALL settled bets from API, not just filtered */}
+   627→   627→   627→      <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+   628→   628→   628→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   629→   629→   629→          <CardContent className="px-4 pb-0 pt-0">
+   630→   630→   630→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam İşlem</p>
+   631→   631→   631→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtInt(totalSettledBets)}</p>
+   632→   632→   632→          </CardContent>
+   633→   633→   633→        </Card>
+   634→   634→   634→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   635→   635→   635→          <CardContent className="px-4 pb-0 pt-0">
+   636→   636→   636→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Toplam PnL</p>
+   637→   637→   637→            <p className="text-lg font-bold tabular-nums" style={{ color: totalPnl >= 0 ? TEAL : RED }}>{fmtUsd(totalPnl)}</p>
+   638→   638→   638→          </CardContent>
+   639→   639→   639→        </Card>
+   640→   640→   640→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   641→   641→   641→          <CardContent className="px-4 pb-0 pt-0">
+   642→   642→   642→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Win Oranı</p>
+   643→   643→   643→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{totalSettledBets > 0 ? fmtNum(totalSettledWinRate, 1) : 0}%</p>
+   644→   644→   644→          </CardContent>
+   645→   645→   645→        </Card>
+   646→   646→   646→        <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+   647→   647→   647→          <CardContent className="px-4 pb-0 pt-0">
+   648→   648→   648→            <p className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Ort. Edge</p>
+   649→   649→   649→            <p className="text-lg font-bold tabular-nums" style={{ color: TEXT_PRIMARY }}>{hs?.avg_edge != null ? fmtNum(hs.avg_edge, 1) : "—"}%</p>
+   650→   650→   650→          </CardContent>
+   651→   651→   651→        </Card>
+   652→   652→   652→      </section>
+   653→   653→   653→
+   654→   654→   654→      {/* Filters */}
+   655→   655→   655→      <Card className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
+   656→   656→   656→        <CardContent className="px-4 pt-0">
+   657→   657→   657→          <div className="flex flex-wrap items-center gap-3">
+   658→   658→   658→            <div className="relative flex-1 min-w-[180px] max-w-xs">
+   659→   659→   659→              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400 dark:text-gray-500" />
+   660→   660→   660→              <input
+   661→   661→   661→                type="text"
+   662→   662→   662→                placeholder="Şehir veya strateji ara..."
+   663→   663→   663→                value={search}
+   664→   664→   664→                onChange={(e) => setSearch(e.target.value)}
+   665→   665→   665→                className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white dark:bg-gray-800 focus:outline-none focus:ring-1 focus:ring-teal-300"
+   666→   666→   666→                style={{ borderColor: BORDER, color: TEXT_PRIMARY }}
+   667→   667→   667→              />
+   668→   668→   668→            </div>
+   669→   669→   669→            <div className="flex items-center gap-1.5">
+   670→   670→   670→              <Filter className="h-3.5 w-3.5" style={{ color: TEXT_MUTED }} />
+   671→   671→   671→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Sonuç:</span>
+   672→   672→   672→              {(["ALL", "WIN", "LOSS"] as const).map((v) => (
+   673→   673→   673→                <button key={v} onClick={() => setFilterResult(v)}
+   674→   674→   674→                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+   675→   675→   675→                  style={{
+   676→   676→   676→                    borderColor: filterResult === v ? TEAL : BORDER,
+   677→   677→   677→                    backgroundColor: filterResult === v ? TEAL_LIGHT : "transparent",
+   678→   678→   678→                    color: filterResult === v ? TEAL : TEXT_MUTED,
+   679→   679→   679→                  }}>
+   680→   680→   680→                  {v === "ALL" ? "Tümü" : v === "WIN" ? "Kazanan" : "Kaybeden"}
+   681→   681→   681→                </button>
+   682→   682→   682→              ))}
+   683→   683→   683→            </div>
+   684→   684→   684→            <div className="flex items-center gap-1.5">
+   685→   685→   685→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Taraf:</span>
+   686→   686→   686→              {(["ALL", "YES", "NO"] as const).map((v) => (
+   687→   687→   687→                <button key={v} onClick={() => setFilterSide(v)}
+   688→   688→   688→                  className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
+   689→   689→   689→                  style={{
+   690→   690→   690→                    borderColor: filterSide === v ? TEAL : BORDER,
+   691→   691→   691→                    backgroundColor: filterSide === v ? TEAL_LIGHT : "transparent",
+   692→   692→   692→                    color: filterSide === v ? TEAL : TEXT_MUTED,
+   693→   693→   693→                  }}>
+   694→   694→   694→                  {v === "ALL" ? "Tümü" : v}
+   695→   695→   695→                </button>
+   696→   696→   696→              ))}
+   697→   697→   697→            </div>
+   698→   698→   698→            <div className="flex items-center gap-1.5">
+   699→   699→   699→              <span className="text-[11px] font-medium" style={{ color: TEXT_MUTED }}>Neden:</span>
+
+[showing lines 100-699 of 1469; use offset=700 with limit to continue reading]

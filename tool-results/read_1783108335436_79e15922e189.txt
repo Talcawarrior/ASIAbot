@@ -1,0 +1,694 @@
+     1→     1→"""ASIAbot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
+     2→     2→
+     3→     3→import os
+     4→     4→from dataclasses import dataclass
+     5→     5→
+     6→     6→from dotenv import load_dotenv
+     7→     7→
+     8→     8→# Compute repo root (parent of config/)
+     9→     9→BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    10→    10→
+    11→    11→# Load .env from repo root
+    12→    12→load_dotenv(os.path.join(BASE_DIR, ".env"))
+    13→    13→
+    14→    14→
+    15→    15→def _resolve_path(path_value: str, default_relative: str) -> str:
+    16→    16→    """Resolve relative paths to absolute from repo root."""
+    17→    17→    raw = path_value or default_relative
+    18→    18→    if os.path.isabs(raw):
+    19→    19→        return raw
+    20→    20→    return os.path.join(BASE_DIR, raw)
+    21→    21→
+    22→    22→
+    23→    23→@dataclass
+    24→    24→class PolymarketConfig:
+    25→    25→    """Polymarket specific configurations."""
+    26→    26→
+    27→    27→    api_url: str = "https://clob.polymarket.com"
+    28→    28→    gamma_url: str = "https://gamma-api.polymarket.com"
+    29→    29→    private_key: str = os.getenv("POLY_PRIVATE_KEY", "")
+    30→    30→    api_key: str = os.getenv("POLY_API_KEY", "")
+    31→    31→    api_secret: str = os.getenv("POLY_API_SECRET", "")
+    32→    32→    api_passphrase: str = os.getenv("POLY_API_PASSPHRASE", "")
+    33→    33→    weather_keywords: list = None  # type: ignore[assignment]
+    34→    34→
+    35→    35→    def __post_init__(self):
+    36→    36→        self.weather_keywords = [
+    37→    37→            "temperature",
+    38→    38→            "heat",
+    39→    39→            "cold",
+    40→    40→            "snow",
+    41→    41→            "rain",
+    42→    42→            "hurricane",
+    43→    43→            "storm",
+    44→    44→            "weather",
+    45→    45→            "°F",
+    46→    46→            "°C",
+    47→    47→            "celsius",
+    48→    48→            "fahrenheit",
+    49→    49→            "precipitation",
+    50→    50→            "highest",
+    51→    51→        ]
+    52→    52→
+    53→    53→
+    54→    54→@dataclass
+    55→    55→class MeteoConfig:
+    56→    56→    """Weather service API configurations."""
+    57→    57→
+    58→    58→    openmeteo_url: str = "https://api.open-meteo.com/v1/forecast"
+    59→    59→    weatherapi_key: str = os.getenv("WEATHERAPI_KEY", "")
+    60→    60→    weatherapi_url: str = "https://api.weatherapi.com/v1"
+    61→    61→
+    62→    62→
+    63→    63→@dataclass
+    64→    64→class StrategyConfig:
+    65→    65→    """Strategy & bankroll metrics."""
+    66→    66→
+    67→    67→    # Polymarket temperature markets in /public-search almost never
+    68→    68→    # produce 5%+ edge because the market price already discounts the
+    69→    69→    # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
+    70→    70→    # vig + a thin profit margin in paper mode.  Can be lowered once a
+    71→    71→    # private weather feed (e.g. ECMWF-direct) gives a structural edge.
+    72→    72→    min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
+    73→    73→    max_bet_amount: float = 6.0  # Maximum $6 per bet (0.6% of $1,000)
+    74→    74→    # FIX: Was 0.006 (0.6%), .env.example uses 0.03 (3%). The 10x divergence
+    75→    75→    # meant local dev (no .env) capped bets at $6 on a $1000 portfolio,
+    76→    76→    # completely nullifying Kelly sizing. Align with .env.example.
+    77→    77→    max_bet_pct: float = 0.03  # Max bet as % of portfolio (3%, aligned with .env.example)
+    78→    78→    min_bet_size: float = 1.0  # Minimum bet size in USD
+    79→    79→    total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
+    80→    80→    min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
+    81→    81→    # markets don't expose a `liquidity` field reliably
+    82→    82→    # (it's always 0). The current_price already reflects
+    83→    83→    # real market depth.
+    84→    84→    # ── Orderbook depth filter ───────────────────────────────────────
+    85→    85→    # Minimum USD depth (at our fill price ±2 ticks) required to place a bet.
+    86→    86→    # 0.0 = disabled (current default, relies on entry price filter).
+    87→    87→    # Recommended: 50.0 (require $50 of depth near our fill).
+    88→    88→    # The depth is checked from the live orderbook via ResolvedMarkets API.
+    89→    89→    # If the API call fails, the filter is skipped (graceful degradation).
+    90→    90→    min_depth_usd: float = 0.0
+    91→    91→    kelly_fraction: float = 0.15  # Quarter/Fractional Kelly (aligned with ASIAbot 15%)
+    92→    92→    # Time-to-close edge escalation. As a market approaches its
+    93→    93→    # resolution time, Polymarket prices move fast on the public
+    94→    94→    # weather consensus and forecast uncertainty is already low.
+    95→    95→    # We demand a stronger edge in the last N hours before close
+    96→    96→    # so the bot is less willing to take a late bet at a thin edge.
+    97→    97→    # Linear ramp: 1x min_edge at edge_escalation_hours, then
+    98→    98→    # ramps to edge_escalation_multiplier * min_edge at 0h.
+    99→    99→    edge_escalation_hours: int = 24
+   100→   100→    edge_escalation_multiplier: float = 2.0
+   101→   101→    min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
+   102→   102→    fee_drag: float = 0.05  # Polymarket taker fee %5
+   103→   103→    # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
+   104→   104→    # Tightened from 14 to 2 so the bot only trades near-term markets
+   105→   105→    # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
+   106→   106→    # calibrated. Forecasts degrade past 3 days.
+   107→   107→    max_days_ahead: int = 2
+   108→   108→
+   109→   109→    # ── Karpathy-search-discovered levers (asymmetric-payoff fix) ────────
+   110→   110→    # These were tuned by `scripts/karpathy_search.py` against 90 days /
+   111→   111→    # 15 cities of historical_calibrations data. The defaults below are
+   112→   112→    # deliberately permissive (min_entry_price=0.01 = accept anything,
+   113→   113→    # inefficiency_min=-1.0 = accept anything) so the unit tests that
+   114→   114→    # exercise the calculator with low-price markets still work.
+   115→   115→    #
+   116→   116→    # In production, the tuned values (min_entry_price≈0.35,
+   117→   117→    # inefficiency_min≈-0.124) are loaded from data/strategy_params.json
+   118→   118→    # by `apply_persisted_strategy_params()` at import time. That file is
+   119→   119→    # written by the Karpathy search script.
+   120→   120→    #
+   121→   121→    # Background: a naive Kelly bot wins ~94% of its trades but loses
+   122→   122→    # money overall because the 6% losing trades are at low prices
+   123→   123→    # (long-shot bets) where a single loss wipes out dozens of small
+   124→   124→    # wins. Setting MIN_ENTRY_PRICE higher filters out the long shots;
+   125→   125→    # INEFFICIENCY_MIN only takes trades where the market price looks
+   126→   126→    # mispriced in our favour by at least that much.
+   127→   127→    min_entry_price: float = 0.01
+   128→   128→    inefficiency_min: float = -1.0  # negative = gate disabled (accept all)
+   129→   129→
+   130→   130→    # ── YES probability floor ──────────────────────────────────────────
+   131→   131→    # Model probability on YES bets must be at least this high to take the
+   132→   132→    # trade.  Low-probability YES bets (e.g. fv=0.10 with entry=0.05) are
+   133→   133→    # edge-positive but lose 90% of the time — psychologically painful and
+   134→   134→    # high-variance.  Setting this to ~0.15 filters the riskiest long-shot
+   135→   135→    # YES bets while still allowing high-conviction NO bets on the same
+   136→   136→    # markets.  0.15 = 15% model probability floor.
+   137→   137→    min_yes_prob: float = 0.15
+   138→   138→
+   139→   139→    # ── Slippage model ────────────────────────────────────────────────
+   140→   140→    # "flat"   — fixed slippage_pct from strategy_params.json
+   141→   141→    # "tiered" — 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
+   142→   142→    # "orderbook" — live depth-based (future, falls back to tiered)
+   143→   143→    slippage_model: str = "orderbook"
+   144→   144→    slippage_pct: float = 0.005  # used when slippage_model="flat"
+   145→   145→    gas_cost_usd: float = 0.10  # Polygon gas per round-trip
+   146→   146→
+   147→   147→    # ── Flat bet override & Daily loss limit (synced from Config) ─────────
+   148→   148→    flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
+   149→   149→    daily_loss_limit: float = 0.20  # 20% daily max loss
+   150→   150→
+   151→   151→
+   152→   152→@dataclass
+   153→   153→class RiskConfig:
+   154→   154→    """Active risk management: position-level stop-loss, take-profit, time decay, rebalance."""
+   155→   155→
+   156→   156→    # Position-level limits
+   157→   157→    stop_loss_pct: float = 0.20  # %20 kayıpta otomatik kapat
+   158→   158→    take_profit_pct: float = 1.0  # %100 karda otomatik kapat
+   159→   159→    trailing_stop_pct: float = 0.15  # %15 trailing stop (tepeden düşüşte)
+   160→   160→
+   161→   161→    # Time-based exits
+   162→   162→    time_decay_hours: int = 24  # Settlement'a bu kadar saat kala
+   163→   163→    time_decay_threshold: float = -0.10  # %10 zarardaysa kapat
+   164→   164→
+   165→   165→    # Rebalancing
+   166→   166→    min_rebalance_edge_ratio: float = 2.0  # Yeni edge en az 2x eski edge
+   167→   167→    rebalance_min_loss: float = -0.15  # Rebalance için min zarar eşiği
+   168→   168→
+   169→   169→    # Risk management loop interval (seconds)
+   170→   170→
+   171→   171→
+   172→   172→# ── Large constant dicts (module-level, shared by all) ────────────────────
+   173→   173→_ICAO_COORDS = {
+   174→   174→    # Turkey (4)
+   175→   175→    "LTAC": (39.9891, 32.8236),
+   176→   176→    "LTFM": (41.2753, 28.7519),
+   177→   177→    "LTBJ": (38.2924, 27.1569),
+   178→   178→    "LTAI": (36.8987, 30.8005),
+   179→   179→    # USA (15)
+   180→   180→    "KDAL": (32.8471, -96.8517),
+   181→   181→    "KMIA": (25.7959, -80.2870),
+   182→   182→    "KORD": (41.9742, -87.9073),
+   183→   183→    "KLGA": (40.7769, -73.8740),
+   184→   184→    "KLAX": (33.9416, -118.4085),
+   185→   185→    "KLAS": (36.0840, -115.1537),
+   186→   186→    "KPHX": (33.4343, -112.0080),
+   187→   187→    "KIAH": (29.9844, -95.3414),
+   188→   188→    "KATL": (33.6407, -84.4277),
+   189→   189→    "KBOS": (42.3656, -71.0096),
+   190→   190→    "KSEA": (47.4502, -122.3088),
+   191→   191→    "KDEN": (39.8617, -104.6732),
+   192→   192→    "KDCA": (38.8521, -77.0377),
+   193→   193→    "KSFO": (37.6188, -122.3750),
+   194→   194→    "KMCO": (28.4294, -81.3089),
+   195→   195→    # Canada / Mexico (5)
+   196→   196→    "CYYZ": (43.6777, -79.6308),
+   197→   197→    "CYVR": (49.1947, -123.1792),
+   198→   198→    "CYUL": (45.4706, -73.7408),
+   199→   199→    "MMMX": (19.4363, -99.0721),
+   200→   200→    "MMGL": (20.5218, -103.3112),
+   201→   201→    # South America (5)
+   202→   202→    "SBGR": (-23.4356, -46.4731),
+   203→   203→    "SBGL": (-22.8089, -43.2436),
+   204→   204→    "SAEZ": (-34.8222, -58.5358),
+   205→   205→    "SCEL": (-33.3930, -70.7858),
+   206→   206→    "SPJC": (-12.0219, -77.1143),
+   207→   207→    # Europe (15)
+   208→   208→    "EGLL": (51.4700, -0.4543),
+   209→   209→    "LFPG": (49.0099, 2.5479),
+   210→   210→    "EDDT": (52.5597, 13.2877),
+   211→   211→    "UUEE": (55.9726, 37.4146),
+   212→   212→    "EDDF": (50.0379, 8.5622),
+   213→   213→    "EHAM": (52.3105, 4.7683),
+   214→   214→    "LEMD": (40.4983, -3.5676),
+   215→   215→    "LIRF": (41.8003, 12.2389),
+   216→   216→    "LEBL": (41.2974, 2.0833),
+   217→   217→    "EDDM": (48.3538, 11.7861),
+   218→   218→    "LSZH": (47.4581, 8.5480),
+   219→   219→    "LOWW": (48.1103, 16.5697),
+   220→   220→    "ESSA": (59.6498, 17.9294),
+   221→   221→    "LGAV": (37.9364, 23.9472),
+   222→   222→    "LPPT": (38.7750, -9.1354),
+   223→   223→    "LIMC": (45.6306, 8.7281),
+   224→   224→    "EFHK": (60.3172, 24.9633),
+   225→   225→    "EPWA": (52.1657, 20.9671),
+   226→   226→    # Middle East (4)
+   227→   227→    "OMDB": (25.2532, 55.3657),
+   228→   228→    "LLBG": (32.0114, 34.8867),
+   229→   229→    "OTHH": (25.2731, 51.6081),
+   230→   230→    "OEJN": (21.6796, 39.1565),
+   231→   231→    # Asia (22)
+   232→   232→    "RJTT": (35.5533, 139.7811),
+   233→   233→    "RJOO": (34.7882, 135.4381),
+   234→   234→    "ZSPD": (31.1434, 121.8052),
+   235→   235→    "ZBAA": (40.0799, 116.6031),
+   236→   236→    "RKSS": (37.4602, 126.4407),
+   237→   237→    "VHHH": (22.3080, 113.9185),
+   238→   238→    "RCTP": (25.0764, 121.2338),
+   239→   239→    "ZGSZ": (22.6393, 113.8108),
+   240→   240→    "WSSS": (1.3592, 103.9894),
+   241→   241→    "VTBS": (13.6926, 100.7501),
+   242→   242→    "WIII": (-6.1256, 106.6559),
+   243→   243→    "VABB": (19.0887, 72.8679),
+   244→   244→    "VIDP": (28.5562, 77.1000),
+   245→   245→    "RPLL": (14.5086, 121.0194),
+   246→   246→    "WMKK": (2.7456, 101.7072),
+   247→   247→    "OPKC": (24.9065, 67.1605),
+   248→   248→    "VILK": (26.7606, 80.8893),
+   249→   249→    "RKPK": (35.1795, 128.9382),
+   250→   250→    "ZUUU": (30.5785, 103.9471),
+   251→   251→    "ZUCK": (29.7192, 106.6417),
+   252→   252→    "ZGGG": (23.3924, 113.2988),
+   253→   253→    "ZSQD": (36.3661, 120.3744),
+   254→   254→    "ZHHH": (30.7838, 114.2081),
+   255→   255→    # Oceania (4)
+   256→   256→    "YSSY": (-33.9399, 151.1753),
+   257→   257→    "YMML": (-37.6690, 144.8410),
+   258→   258→    "NZAA": (-37.0082, 174.7918),
+   259→   259→    "NZWN": (-41.3272, 174.8053),
+   260→   260→    # Africa (2)
+   261→   261→    "HECA": (30.1219, 31.4056),
+   262→   262→    "FACT": (-33.9694, 18.5972),
+   263→   263→}
+   264→   264→
+   265→   265→_CITY_ICAO_MAP = {
+   266→   266→    # Turkey
+   267→   267→    "ankara": "LTAC",
+   268→   268→    "istanbul": "LTFM",
+   269→   269→    "izmir": "LTBJ",
+   270→   270→    "antalya": "LTAI",
+   271→   271→    # US
+   272→   272→    "dallas": "KDAL",
+   273→   273→    "miami": "KMIA",
+   274→   274→    "chicago": "KORD",
+   275→   275→    "new york": "KLGA",
+   276→   276→    "newyork": "KLGA",
+   277→   277→    "nyc": "KLGA",
+   278→   278→    "los angeles": "KLAX",
+   279→   279→    "las vegas": "KLAS",
+   280→   280→    "phoenix": "KPHX",
+   281→   281→    "houston": "KIAH",
+   282→   282→    "atlanta": "KATL",
+   283→   283→    "boston": "KBOS",
+   284→   284→    "seattle": "KSEA",
+   285→   285→    "denver": "KDEN",
+   286→   286→    "washington": "KDCA",
+   287→   287→    "san francisco": "KSFO",
+   288→   288→    "orlando": "KMCO",
+   289→   289→    # Canada
+   290→   290→    "toronto": "CYYZ",
+   291→   291→    "vancouver": "CYVR",
+   292→   292→    "montreal": "CYUL",
+   293→   293→    # Latin America
+   294→   294→    "mexico city": "MMMX",
+   295→   295→    "guadalajara": "MMGL",
+   296→   296→    "sao paulo": "SBGR",
+   297→   297→    "rio de janeiro": "SBGL",
+   298→   298→    "buenos aires": "SAEZ",
+   299→   299→    "santiago": "SCEL",
+   300→   300→    "lima": "SPJC",
+   301→   301→    # Europe
+   302→   302→    "london": "EGLL",
+   303→   303→    "paris": "LFPG",
+   304→   304→    "berlin": "EDDT",
+   305→   305→    "moscow": "UUEE",
+   306→   306→    "frankfurt": "EDDF",
+   307→   307→    "amsterdam": "EHAM",
+   308→   308→    "madrid": "LEMD",
+   309→   309→    "rome": "LIRF",
+   310→   310→    "barcelona": "LEBL",
+   311→   311→    "munich": "EDDM",
+   312→   312→    "zurich": "LSZH",
+   313→   313→    "vienna": "LOWW",
+   314→   314→    "stockholm": "ESSA",
+   315→   315→    "athens": "LGAV",
+   316→   316→    "lisbon": "LPPT",
+   317→   317→    "milan": "LIMC",
+   318→   318→    "helsinki": "EFHK",
+   319→   319→    "warsaw": "EPWA",
+   320→   320→    # Middle East
+   321→   321→    "dubai": "OMDB",
+   322→   322→    "tel aviv": "LLBG",
+   323→   323→    "doha": "OTHH",
+   324→   324→    "jeddah": "OEJN",
+   325→   325→    # Asia
+   326→   326→    "tokyo": "RJTT",
+   327→   327→    "osaka": "RJOO",
+   328→   328→    "shanghai": "ZSPD",
+   329→   329→    "beijing": "ZBAA",
+   330→   330→    "seoul": "RKSS",
+   331→   331→    "hong kong": "VHHH",
+   332→   332→    "taipei": "RCTP",
+   333→   333→    "shenzhen": "ZGSZ",
+   334→   334→    "singapore": "WSSS",
+   335→   335→    "bangkok": "VTBS",
+   336→   336→    "jakarta": "WIII",
+   337→   337→    "mumbai": "VABB",
+   338→   338→    "delhi": "VIDP",
+   339→   339→    "manila": "RPLL",
+   340→   340→    "kuala lumpur": "WMKK",
+   341→   341→    "karachi": "OPKC",
+   342→   342→    "lucknow": "VILK",
+   343→   343→    "busan": "RKPK",
+   344→   344→    "chengdu": "ZUUU",
+   345→   345→    "chongqing": "ZUCK",
+   346→   346→    "guangzhou": "ZGGG",
+   347→   347→    "qingdao": "ZSQD",
+   348→   348→    "wuhan": "ZHHH",
+   349→   349→    # Oceania
+   350→   350→    "sydney": "YSSY",
+   351→   351→    "melbourne": "YMML",
+   352→   352→    "auckland": "NZAA",
+   353→   353→    "wellington": "NZWN",
+   354→   354→    # Africa
+   355→   355→    "cairo": "HECA",
+   356→   356→    "cape town": "FACT",
+   357→   357→}
+   358→   358→
+   359→   359→
+   360→   360→@dataclass
+   361→   361→class BotConfig:
+   362→   362→    """Combined configurations — single source of truth for ALL config."""
+   363→   363→
+   364→   364→    # ── Portfolio ──────────────────────────────────────────────────
+   365→   365→    initial_portfolio: float = 1000.0
+   366→   366→    max_exposure_pct: float = 0.25
+   367→   367→    city_cap: int = 4
+   368→   368→    weather_fee_rate: float = 0.05
+   369→   369→
+   370→   370→    # ── Intervals ──────────────────────────────────────────────────
+   371→   371→    scan_interval: int = 300
+   372→   372→    settlement_interval: int = 120
+   373→   373→    sia_interval: int = 86400
+   374→   374→    # Midnight scan: after 00:00, scan every N seconds for the first
+   375→   375→    # MIDNIGHT_SCAN_WINDOW minutes to catch 2-day-ahead markets early
+   376→   376→    # (earlier = cheaper prices on Polymarket).
+   377→   377→    midnight_scan_interval: int = 60  # seconds between scans after midnight
+   378→   378→    midnight_scan_window: int = 60  # minutes after midnight to use fast scan
+   379→   379→
+   380→   380→    # ── API URLs ───────────────────────────────────────────────────
+   381→   381→    polymarket_gamma_api: str = "https://gamma-api.polymarket.com"
+   382→   382→    polymarket_clob_api: str = "https://clob.polymarket.com"
+   383→   383→    open_meteo_api: str = "https://api.open-meteo.com/v1"
+   384→   384→
+   385→   385→    # ── Database ───────────────────────────────────────────────────
+   386→   386→    db_path: str = ""  # set from .env in __post_init__
+   387→   387→    db_echo: bool = False
+   388→   388→
+   389→   389→    # ── Logging ────────────────────────────────────────────────────
+   390→   390→    log_level: str = "INFO"
+   391→   391→    log_file: str = ""  # set from .env in __post_init__
+   392→   392→    log_format: str = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
+   393→   393→
+   394→   394→    # ── Runtime ────────────────────────────────────────────────────
+   395→   395→    dry_run: bool = True
+   396→   396→    temp_unit: str = "celsius"
+   397→   397→    host: str = "127.0.0.1"
+   398→   398→    port: int = 8091
+   399→   399→
+   400→   400→    # ── Model weights ──────────────────────────────────────────────
+   401→   401→    model_weights: dict = None  # type: ignore[assignment]
+   402→   402→
+   403→   403→    # ── Constants ──────────────────────────────────────────────────
+   404→   404→    icao_coords: dict = None  # type: ignore[assignment]
+   405→   405→    city_icao_map: dict = None  # type: ignore[assignment]
+   406→   406→
+   407→   407→    # ── Nested configs ─────────────────────────────────────────────
+   408→   408→    polymarket: PolymarketConfig = None  # type: ignore[assignment]
+   409→   409→    meteo: MeteoConfig = None  # type: ignore[assignment]
+   410→   410→    strategy: StrategyConfig = None  # type: ignore[assignment]
+   411→   411→    risk: RiskConfig = None  # type: ignore[assignment]
+   412→   412→
+   413→   413→    def __post_init__(self):
+   414→   414→        self.polymarket = self.polymarket or PolymarketConfig()
+   415→   415→        self.meteo = self.meteo or MeteoConfig()
+   416→   416→        self.strategy = self.strategy or StrategyConfig()
+   417→   417→        self.risk = self.risk or RiskConfig()
+   418→   418→
+   419→   419→        # ── Override from .env (single source: .env > dataclass defaults) ──
+   420→   420→        self.initial_portfolio = float(os.getenv("INITIAL_PORTFOLIO", str(self.initial_portfolio)))
+   421→   421→        self.max_exposure_pct = float(os.getenv("MAX_EXPOSURE_PCT", str(self.max_exposure_pct)))
+   422→   422→        self.city_cap = int(os.getenv("CITY_CAP", str(self.city_cap)))
+   423→   423→        self.weather_fee_rate = float(os.getenv("WEATHER_FEE_RATE", str(self.weather_fee_rate)))
+   424→   424→        self.scan_interval = int(os.getenv("SCAN_INTERVAL", str(self.scan_interval)))
+   425→   425→        self.settlement_interval = int(os.getenv("SETTLEMENT_INTERVAL", str(self.settlement_interval)))
+   426→   426→        self.sia_interval = int(os.getenv("SIA_INTERVAL", str(self.sia_interval)))
+   427→   427→        self.midnight_scan_interval = int(os.getenv("MIDNIGHT_SCAN_INTERVAL", str(self.midnight_scan_interval)))
+   428→   428→        self.midnight_scan_window = int(os.getenv("MIDNIGHT_SCAN_WINDOW", str(self.midnight_scan_window)))
+   429→   429→        self.host = os.getenv("HOST", self.host)
+   430→   430→        self.port = int(os.getenv("PORT", str(self.port)))
+   431→   431→        self.dry_run = os.getenv("DRY_RUN", "true").lower() == "true"
+   432→   432→        self.log_level = os.getenv("LOG_LEVEL", self.log_level)
+   433→   433→        self.db_echo = os.getenv("DB_ECHO", "false").lower() == "true"
+   434→   434→
+   435→   435→        # Resolve paths
+   436→   436→        self.db_path = _resolve_path(os.getenv("DB_PATH") or "", "data/bot.db")
+   437→   437→        self.log_file = _resolve_path(os.getenv("LOG_FILE") or "", "logs/bot.log")
+   438→   438→
+   439→   439→        # ── Constants (large dicts) ───────────────────────────────
+   440→   440→        if self.model_weights is None:
+   441→   441→            self.model_weights = {
+   442→   442→                "gfs_seamless": 0.30,
+   443→   443→                "ecmwf_ifs025": 0.25,
+   444→   444→                "gem_global": 0.15,
+   445→   445→                "icon_global": 0.10,
+   446→   446→                "jma_seamless": 0.08,
+   447→   447→                "cma_grapes_global": 0.05,
+   448→   448→                "ukmo_seamless": 0.04,
+   449→   449→                "meteofrance_seamless": 0.03,
+   450→   450→            }
+   451→   451→        if self.icao_coords is None:
+   452→   452→            self.icao_coords = _ICAO_COORDS
+   453→   453→        if self.city_icao_map is None:
+   454→   454→            self.city_icao_map = _CITY_ICAO_MAP
+   455→   455→
+   456→   456→        # ── Strategy: override from .env ───────────────────────────
+   457→   457→        s = self.strategy
+   458→   458→        s.max_bet_pct = float(os.getenv("MAX_BET_PCT", str(s.max_bet_pct)))
+   459→   459→        s.min_bet_size = float(os.getenv("MIN_BET_SIZE", str(s.min_bet_size)))
+   460→   460→        s.kelly_fraction = float(os.getenv("KELLY_FRACTION", str(s.kelly_fraction)))
+   461→   461→        s.daily_loss_limit = float(os.getenv("DAILY_LOSS_LIMIT", str(s.daily_loss_limit)))
+   462→   462→        s.min_entry_price = float(os.getenv("MIN_ENTRY_PRICE", str(s.min_entry_price)))
+   463→   463→        s.min_yes_prob = float(os.getenv("MIN_YES_PROB", str(s.min_yes_prob)))
+   464→   464→        s.flat_bet_usd = float(os.getenv("FLAT_BET_USD", str(s.flat_bet_usd)))
+   465→   465→
+   466→   466→
+   467→   467→# ── Config backward-compatibility proxy ────────────────────────────────────
+   468→   468→# All reads/writes go through bot_config (single source of truth).
+   469→   469→# This eliminates the dual Config / bot_config drift problem.
+   470→   470→
+   471→   471→
+   472→   472→class _ConfigProxy:
+   473→   473→    """Backward-compatible proxy. Delegates all attribute access to bot_config.
+   474→   474→
+   475→   475→    Usage: ``Config.MAX_BET_PCT`` reads ``bot_config.strategy.max_bet_pct``.
+   476→   476→    Assignment: ``Config.MAX_BET_PCT = 0.01`` writes back to ``bot_config``.
+   477→   477→    """
+   478→   478→
+   479→   479→    _MAP: dict[str, tuple[str, str]] = {
+   480→   480→        # root-level BotConfig fields
+   481→   481→        "INITIAL_PORTFOLIO": ("root", "initial_portfolio"),
+   482→   482→        "MAX_EXPOSURE_PCT": ("root", "max_exposure_pct"),
+   483→   483→        "CITY_CAP": ("root", "city_cap"),
+   484→   484→        "WEATHER_FEE_RATE": ("root", "weather_fee_rate"),
+   485→   485→        "SCAN_INTERVAL": ("root", "scan_interval"),
+   486→   486→        "SETTLEMENT_INTERVAL": ("root", "settlement_interval"),
+   487→   487→        "SIA_INTERVAL": ("root", "sia_interval"),
+   488→   488→        "MIDNIGHT_SCAN_INTERVAL": ("root", "midnight_scan_interval"),
+   489→   489→        "MIDNIGHT_SCAN_WINDOW": ("root", "midnight_scan_window"),
+   490→   490→        "POLYMARKET_GAMMA_API": ("root", "polymarket_gamma_api"),
+   491→   491→        "POLYMARKET_CLOB_API": ("root", "polymarket_clob_api"),
+   492→   492→        "OPEN_METEO_API": ("root", "open_meteo_api"),
+   493→   493→        "OPEN_METEO_BASE": ("root", "open_meteo_api"),
+   494→   494→        "MODEL_WEIGHTS": ("root", "model_weights"),
+   495→   495→        "LOG_LEVEL": ("root", "log_level"),
+   496→   496→        "LOG_FILE": ("root", "log_file"),
+   497→   497→        "LOG_FORMAT": ("root", "log_format"),
+   498→   498→        "DB_PATH": ("root", "db_path"),
+   499→   499→        "DB_ECHO": ("root", "db_echo"),
+   500→   500→        "TEMP_UNIT": ("root", "temp_unit"),
+   501→   501→        "DRY_RUN": ("root", "dry_run"),
+   502→   502→        "HOST": ("root", "host"),
+   503→   503→        "PORT": ("root", "port"),
+   504→   504→        "ICAO_COORDS": ("root", "icao_coords"),
+   505→   505→        "CITY_ICAO_MAP": ("root", "city_icao_map"),
+   506→   506→        # strategy-level fields
+   507→   507→        "MAX_BET_PCT": ("strategy", "max_bet_pct"),
+   508→   508→        "MIN_BET_SIZE": ("strategy", "min_bet_size"),
+   509→   509→        "KELLY_FRACTION": ("strategy", "kelly_fraction"),
+   510→   510→        "MIN_ENTRY_PRICE": ("strategy", "min_entry_price"),
+   511→   511→        "FLAT_BET_USD": ("strategy", "flat_bet_usd"),
+   512→   512→        "DAILY_LOSS_LIMIT": ("strategy", "daily_loss_limit"),
+   513→   513→        "FEE_DRAG": ("strategy", "fee_drag"),
+   514→   514→        "TOTAL_EXPOSURE_PCT": ("strategy", "total_exposure_pct"),
+   515→   515→    }
+   516→   516→
+   517→   517→    def _resolve(self, name: str):
+   518→   518→        """Return ``(target_obj, attr_name)`` for a Config attribute."""
+   519→   519→        if name in self._MAP:
+   520→   520→            section, attr = self._MAP[name]
+   521→   521→            target = bot_config.strategy if section == "strategy" else bot_config
+   522→   522→            return target, attr
+   523→   523→        return None, name
+   524→   524→
+   525→   525→    def __getattr__(self, name: str):
+   526→   526→        if name.startswith("_"):
+   527→   527→            raise AttributeError(name)
+   528→   528→        target, attr = self._resolve(name)
+   529→   529→        if target is not None and hasattr(target, attr):
+   530→   530→            return getattr(target, attr)
+   531→   531→        raise AttributeError(f"'Config' has no attribute '{name}'")
+   532→   532→
+   533→   533→    def __setattr__(self, name: str, value):
+   534→   534→        if name.startswith("_"):
+   535→   535→            object.__setattr__(self, name, value)
+   536→   536→            return
+   537→   537→        target, attr = self._resolve(name)
+   538→   538→        if target is not None:
+   539→   539→            setattr(target, attr, value)
+   540→   540→        else:
+   541→   541→            object.__setattr__(self, name, value)
+   542→   542→
+   543→   543→    # ── Convenience methods ────────────────────────────────────────────
+   544→   544→
+   545→   545→    @property
+   546→   546→    def daily_loss_limit_amount(self) -> float:
+   547→   547→        """Return absolute daily loss limit amount."""
+   548→   548→        return bot_config.initial_portfolio * bot_config.strategy.daily_loss_limit
+   549→   549→
+   550→   550→    @classmethod
+   551→   551→    def get_model_weight(cls, model_name: str) -> float:
+   552→   552→        return bot_config.model_weights.get(model_name, 0.0)
+   553→   553→
+   554→   554→    @classmethod
+   555→   555→    def get_normalized_weights(cls) -> dict:
+   556→   556→        return bot_config.model_weights
+   557→   557→
+   558→   558→    @classmethod
+   559→   559→    def get_max_exposure_amount(cls, portfolio_value: float) -> float:
+   560→   560→        return portfolio_value * bot_config.max_exposure_pct
+   561→   561→
+   562→   562→    @classmethod
+   563→   563→    def get_daily_loss_limit(cls, portfolio_value: float) -> float:
+   564→   564→        return portfolio_value * bot_config.strategy.daily_loss_limit
+   565→   565→
+   566→   566→
+   567→   567→# ── Singleton instances (bot_config FIRST, then Config proxy) ──────────────
+   568→   568→bot_config = BotConfig()
+   569→   569→Config = _ConfigProxy()
+   570→   570→config = Config  # alias used by older modules
+   571→   571→
+   572→   572→
+   573→   573→def apply_persisted_strategy_params() -> dict:
+   574→   574→    """Overlay any persisted strategy params from data/strategy_params.json
+   575→   575→    onto the in-memory bot_config (single source of truth).
+   576→   576→
+   577→   577→    Returns the params dict that was applied (empty dict if no file found).
+   578→   578→
+   579→   579→    SAFETY CLAMPS:
+   580→   580→      - min_edge: floor at 0.05 (breakeven ~1.74% after 5% Polymarket fee +
+   581→   581→        ~1% slippage + gas; 5% gives safety margin). Values < 0.05 are
+   582→   582→        clamped, never below.
+   583→   583→      - kelly_fraction: clamped to [0.05, 0.25]. Below 0.05 = no meaningful
+   584→   584→        sizing; above 0.25 = too aggressive (quarter-Kelly is the ceiling).
+   585→   585→      - min_entry_price: floor at 0.05 (long-shot markets bleed asymmetrically).
+   586→   586→      - inefficiency_min: floor at -0.20 (anything more negative = noise).
+   587→   587→    """
+   588→   588→    try:
+   589→   589→        from utils.weights_store import load_strategy_params
+   590→   590→    except Exception:
+   591→   591→        return {}
+   592→   592→
+   593→   593→    persisted = load_strategy_params()
+   594→   594→    if not persisted:
+   595→   595→        return {}
+   596→   596→
+   597→   597→    applied = {}
+   598→   598→    s = bot_config.strategy
+   599→   599→
+   600→   600→    # Safety constants — these are HARD limits that cannot be overridden
+   601→   601→    # by the SIA loop / Karpathy search / strategy_params.json.
+   602→   602→    MIN_EDGE_FLOOR = 0.05  # 5% — below this = negative-EV after fees
+   603→   603→    KELLY_FRACTION_MIN = 0.05  # 5% — below this = Kelly sizing is meaningless
+   604→   604→    KELLY_FRACTION_MAX = 0.25  # 25% — above this = too aggressive
+   605→   605→    MIN_ENTRY_PRICE_FLOOR = 0.05  # 5% — long-shot markets bleed
+   606→   606→    INEFFICIENCY_MIN_FLOOR = -0.20  # -20% — anything more negative = noise
+   607→   607→
+   608→   608→    if "min_edge" in persisted:
+   609→   609→        try:
+   610→   610→            raw = float(persisted["min_edge"])
+   611→   611→            # CLAMP: never allow min_edge below 0.05 (breakeven after fees)
+   612→   612→            clamped = max(raw, MIN_EDGE_FLOOR)
+   613→   613→            if clamped != raw:
+   614→   614→                import logging
+   615→   615→
+   616→   616→                logging.getLogger(__name__).warning(
+   617→   617→                    "strategy_params.json min_edge=%.4f clamped to floor %.4f "
+   618→   618→                    "(below breakeven after 5%% fee + slippage)",
+   619→   619→                    raw,
+   620→   620→                    clamped,
+   621→   621→                )
+   622→   622→            s.min_edge = clamped
+   623→   623→            applied["min_edge"] = s.min_edge
+   624→   624→        except (TypeError, ValueError):
+   625→   625→            pass
+   626→   626→    if "kelly_fraction" in persisted:
+   627→   627→        try:
+   628→   628→            raw = float(persisted["kelly_fraction"])
+   629→   629→            # CLAMP: keep kelly_fraction in [0.05, 0.25]
+   630→   630→            clamped = min(max(raw, KELLY_FRACTION_MIN), KELLY_FRACTION_MAX)
+   631→   631→            if clamped != raw:
+   632→   632→                import logging
+   633→   633→
+   634→   634→                logging.getLogger(__name__).warning(
+   635→   635→                    "strategy_params.json kelly_fraction=%.4f clamped to [%.2f, %.2f] -> %.4f",
+   636→   636→                    raw,
+   637→   637→                    KELLY_FRACTION_MIN,
+   638→   638→                    KELLY_FRACTION_MAX,
+   639→   639→                    clamped,
+   640→   640→                )
+   641→   641→            s.kelly_fraction = clamped
+   642→   642→            applied["kelly_fraction"] = s.kelly_fraction
+   643→   643→        except (TypeError, ValueError):
+   644→   644→            pass
+   645→   645→    # NOTE: max_bet_pct is intentionally NOT loaded from strategy_params.json.
+   646→   646→    # It MUST come ONLY from .env so that calculator.py, bet_placer.py, and
+   647→   647→    # utils/kelly.py all use the same cap via max_bet_cap().
+   648→   648→    if "min_entry_price" in persisted:
+   649→   649→        try:
+   650→   650→            raw = float(persisted["min_entry_price"])
+   651→   651→            clamped = max(raw, MIN_ENTRY_PRICE_FLOOR)
+   652→   652→            if clamped != raw:
+   653→   653→                import logging
+   654→   654→
+   655→   655→                logging.getLogger(__name__).warning(
+   656→   656→                    "strategy_params.json min_entry_price=%.4f clamped to floor %.4f", raw, clamped
+   657→   657→                )
+   658→   658→            s.min_entry_price = clamped
+   659→   659→            applied["min_entry_price"] = s.min_entry_price
+   660→   660→        except (TypeError, ValueError):
+   661→   661→            pass
+   662→   662→    if "inefficiency_min" in persisted:
+   663→   663→        try:
+   664→   664→            raw = float(persisted["inefficiency_min"])
+   665→   665→            clamped = max(raw, INEFFICIENCY_MIN_FLOOR)
+   666→   666→            if clamped != raw:
+   667→   667→                import logging
+   668→   668→
+   669→   669→                logging.getLogger(__name__).warning(
+   670→   670→                    "strategy_params.json inefficiency_min=%.4f clamped to floor %.4f", raw, clamped
+   671→   671→                )
+   672→   672→            s.inefficiency_min = clamped
+   673→   673→            applied["inefficiency_min"] = s.inefficiency_min
+   674→   674→        except (TypeError, ValueError):
+   675→   675→            pass
+   676→   676→
+   677→   677→    return applied
+   678→   678→
+   679→   679→
+   680→   680→# Apply persisted Karpathy-search winners at import time.
+   681→   681→try:
+   682→   682→    _applied_params = apply_persisted_strategy_params()
+   683→   683→    if _applied_params:
+   684→   684→        import logging
+   685→   685→
+   686→   686→        logging.getLogger("CONFIG").info(
+   687→   687→            "Applied Karpathy-search strategy params from disk: %s",
+   688→   688→            ", ".join(f"{k}={v}" for k, v in _applied_params.items()),
+   689→   689→        )
+   690→   690→except Exception as _e:
+   691→   691→    import logging
+   692→   692→
+   693→   693→    logging.getLogger("CONFIG").warning("Could not apply persisted strategy params: %s", _e)
+   694→   694→
