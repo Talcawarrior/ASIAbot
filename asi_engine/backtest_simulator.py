@@ -109,8 +109,8 @@ class BacktestSimulator:
                     sim_edge = no_edge
                     entry_price = no_price
 
-                # Check if edge exceeds proposed min_edge (plus 2% fee_drag)
-                ev = sim_edge - 0.02
+                # Check if edge exceeds proposed min_edge (plus 5% Polymarket fee)
+                ev = sim_edge - 0.05
                 if sim_edge >= min_edge and ev > 0:
                     # Yes, would place a bet!
                     total_bets_opened += 1
@@ -320,7 +320,7 @@ class BacktestSimulator:
                 sim_edge = no_edge
                 entry_price = no_price
 
-            ev = sim_edge - 0.02
+            ev = sim_edge - 0.05
             if sim_edge >= min_edge and ev > 0:
                 total_trades += 1
                 prob_win = prob if sim_side == "YES" else (1.0 - prob)

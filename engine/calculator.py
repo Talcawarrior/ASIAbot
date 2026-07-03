@@ -27,6 +27,11 @@ from utils.slippage import (
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
 
+def _utcnow_naive() -> datetime:
+    """Return naive UTC now. All DB datetimes are naive UTC."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 class Calculator:
     """Calculates forecasting probability, Kelly stake sizes, and analyzes markets."""
 
@@ -320,7 +325,7 @@ class Calculator:
                 inefficiency_ok = True
 
             should_bet = (
-                abs(net_edge) >= effective_min_edge
+                net_edge >= effective_min_edge
                 and inefficiency_ok
                 and len(forecast_values) >= bot_config.strategy.min_sources
                 and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
@@ -329,7 +334,7 @@ class Calculator:
             )
 
             reason_parts = []
-            if abs(net_edge) < effective_min_edge:
+            if net_edge < effective_min_edge:
                 reason_parts.append(
                     f"Net edge düşük: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
                 )

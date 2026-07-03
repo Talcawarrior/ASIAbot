@@ -35,6 +35,7 @@ def get_engine():
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA cache_size=10000")
+        cursor.execute("PRAGMA busy_timeout=30000")
         cursor.close()
 
     return eng

@@ -262,7 +262,7 @@ class UnifiedDatastore:
         lookback_days: int | None = None,
         step_days: int | None = None,
         test_days: int | None = None,
-        date_column: str = "target_date",
+        date_column: str | None = None,
         table_name: str = "markets",
     ) -> list[dict[str, Any]]:
         """Build walk-forward OOS splits over a date-indexed table.
@@ -278,7 +278,7 @@ class UnifiedDatastore:
             lookback_days: train window length (default: cfg.default_lookback_days)
             step_days: how far to advance T_N each step (default: cfg.walk_forward_step_days)
             test_days: test window length (default: cfg.walk_forward_test_days)
-            date_column: which column to split on (default 'target_date')
+            date_column: which column to split on (default: 'closed_time', fallback 'target_date')
             table_name: which unified table to split (default 'markets')
         """
         lookback = lookback_days or self.cfg.default_lookback_days
@@ -286,6 +286,15 @@ class UnifiedDatastore:
         test = test_days or self.cfg.walk_forward_test_days
 
         df = self._read(table_name)
+
+        # Auto-select date column: prefer closed_time (no look-ahead bias),
+        # fall back to target_date if closed_time is missing.
+        if date_column is None:
+            if "closed_time" in df.columns and df["closed_time"].notna().any():
+                date_column = "closed_time"
+            else:
+                date_column = "target_date"
+
         if df.empty or date_column not in df.columns:
             logger.warning(
                 "Cannot build splits: table '%s' empty or missing column '%s'",

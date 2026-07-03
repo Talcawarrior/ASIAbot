@@ -38,65 +38,33 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
     and macOS (lsof + kill).  Returns True if a process was killed.
     """
     is_windows = platform.system() == "Windows"
+    my_pid = os.getpid()
 
     try:
         if is_windows:
-            # netstat -ano | findstr LISTENING | findstr :PORT
             raw = subprocess.check_output(
                 ["netstat", "-ano"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
-            pids = set()
-            for line in raw.splitlines():
-                if f":{port}" in line and "LISTENING" in line:
-                    parts = line.split()
-                    if parts:
-                        try:
-                            pids.add(int(parts[-1]))
-                        except ValueError:
-                            pass
-            # Exclude our own PID
-            my_pid = os.getpid()
-            pids.discard(my_pid)
+            pids = {
+                int(line.split()[-1]) for line in raw.splitlines() if f":{port}" in line and "LISTENING" in line
+            } - {my_pid}
             if not pids:
                 return False
             for pid in pids:
                 logger.warning("PORT CONFLICT: killing PID %d that owns port %d", pid, port)
-                subprocess.run(
-                    ["taskkill", "/F", "/PID", str(pid)],
-                    capture_output=True,
-                    text=True,
-                )
-            # Wait until port is free
+                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
             for _ in range(10):
                 time.sleep(0.5)
-                check = subprocess.check_output(
-                    ["netstat", "-ano"],
-                    text=True,
-                    stderr=subprocess.DEVNULL,
-                )
+                check = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
                 if not any(f":{port}" in line and "LISTENING" in line for line in check.splitlines()):
                     return True
             logger.error("Port %d still occupied after killing processes", port)
             return False
         else:
-            # Linux / macOS — lsof -ti :PORT
-            raw = subprocess.check_output(
-                ["lsof", "-ti", f":{port}"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            pids = set()
-            for line in raw.splitlines():
-                line = line.strip()
-                if line:
-                    try:
-                        pids.add(int(line))
-                    except ValueError:
-                        pass
-            my_pid = os.getpid()
-            pids.discard(my_pid)
+            raw = subprocess.check_output(["lsof", "-ti", f":{port}"], text=True, stderr=subprocess.DEVNULL)
+            pids = {int(line.strip()) for line in raw.splitlines() if line.strip()} - {my_pid}
             if not pids:
                 return False
             for pid in pids:
@@ -108,7 +76,6 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
             time.sleep(1)
             return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        # netstat/lsof not available or returned error — assume no conflict
         return False
 
 

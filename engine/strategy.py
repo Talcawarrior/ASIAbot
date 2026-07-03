@@ -124,9 +124,7 @@ class RiskManager:
     def decrement_city_bet(self, city_code: str):
         """Decrement city bet count."""
         if city_code in self.city_bet_counts:
-            self.city_bet_counts[city_code] = max(
-                0, self.city_bet_counts[city_code] - 1
-            )
+            self.city_bet_counts[city_code] = max(0, self.city_bet_counts[city_code] - 1)
 
     def calculate_kelly_bet_size(self, model_prob: float, market_price: float) -> float:
         """Calculate Kelly bet sizing.
@@ -145,9 +143,7 @@ class RiskManager:
             max_bet_pct=self.config.MAX_BET_PCT,
         )
 
-    def check_exposure_cap(
-        self, current_exposure: float, additional_bet: float
-    ) -> bool:
+    def check_exposure_cap(self, current_exposure: float, additional_bet: float) -> bool:
         """Check total exposure cap limit.
 
         Portfolio = initial_capital + realized_pnl (unrealized katilmaz).
@@ -259,14 +255,10 @@ class RiskManager:
         try:
             portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
-                self.portfolio_value = (
-                    portfolio.current_value
-                    or portfolio.initial_value
-                    or self.portfolio_value
-                )
+                self.portfolio_value = portfolio.current_value or portfolio.initial_value or self.portfolio_value
                 self.daily_pnl = portfolio.daily_pnl or 0.0
 
-            active = self.db.query(Bet).filter(Bet.status.in_(["active", "open"])).all()
+            active = self.db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
             self.city_bet_counts = {}
             self.open_bets_count = len(active)
             for bet in active:
@@ -368,11 +360,7 @@ class RiskManager:
         peak = entry
         if bet.result_data:
             try:
-                data = (
-                    json.loads(bet.result_data)
-                    if isinstance(bet.result_data, str)
-                    else {}
-                )
+                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
                 peak = float(data.get("peak_price", entry))
             except Exception:
                 peak = entry
@@ -382,11 +370,7 @@ class RiskManager:
             peak = current_price
             # Güncellenmiş peak değerini kaydet
             try:
-                data = (
-                    json.loads(bet.result_data)
-                    if isinstance(bet.result_data, str)
-                    else {}
-                )
+                data = json.loads(bet.result_data) if isinstance(bet.result_data, str) else {}
                 if not isinstance(data, dict):
                     data = {}
                 data["peak_price"] = peak
@@ -457,9 +441,7 @@ class RiskManager:
         Returns: Kapatılacak Bet nesnesi veya None
         """
         cfg = self._get_risk_config()
-        new_edge = getattr(new_signal, "edge", 0.0) or (
-            isinstance(new_signal, dict) and new_signal.get("edge", 0.0)
-        )
+        new_edge = getattr(new_signal, "edge", 0.0) or (isinstance(new_signal, dict) and new_signal.get("edge", 0.0))
 
         for bet in active_bets:
             # Bet edge'ini fair_value - entry_price'dan hesapla
@@ -514,9 +496,7 @@ class RiskManager:
             pass
         return False, ""
 
-    def calculate_position_size_with_risk(
-        self, signal, portfolio_value: float
-    ) -> float:
+    def calculate_position_size_with_risk(self, signal, portfolio_value: float) -> float:
         """Kelly + risk limitleri ile pozisyon boyutu hesapla.
 
         Akış:
@@ -541,12 +521,7 @@ class RiskManager:
             (signal.get("entry_price") if isinstance(signal, dict) else 0.5),
         )
 
-        if (
-            model_prob is None
-            or model_prob <= 0
-            or market_price is None
-            or market_price <= 0
-        ):
+        if model_prob is None or model_prob <= 0 or market_price is None or market_price <= 0:
             return 0.0
 
         # 1. Kelly — use passed portfolio_value, not self.portfolio_value
@@ -581,9 +556,7 @@ class BettingEngine:
         self.weather_engine = weather_engine
         self.config = config
 
-    def analyze_signal(
-        self, market_data: dict, model_prob: float, side: str = "YES"
-    ) -> dict | None:
+    def analyze_signal(self, market_data: dict, model_prob: float, side: str = "YES") -> dict | None:
         """Analyze signal, calculate edge and EV."""
         yes_price = market_data.get("yes_price", 0.5)
         if side.upper() == "NO":
@@ -644,14 +617,10 @@ class BettingEngine:
         ]
         return ladder
 
-    def calculate_position_size(
-        self, signal: dict, portfolio_value: float, risk_manager
-    ) -> float:
+    def calculate_position_size(self, signal: dict, portfolio_value: float, risk_manager) -> float:
         """Calculate position size using fractional Kelly and exposure caps."""
         market_price = signal["market_price"]
-        kelly_size = risk_manager.calculate_kelly_bet_size(
-            signal.get("model_prob", 0.5), market_price
-        )
+        kelly_size = risk_manager.calculate_kelly_bet_size(signal.get("model_prob", 0.5), market_price)
 
         current_exposure = 0.0
         if risk_manager and hasattr(risk_manager, "get_total_exposure"):
@@ -660,9 +629,7 @@ class BettingEngine:
         if not risk_manager.check_exposure_cap(current_exposure, kelly_size):
             # Use conservative portfolio value (initial + realized only)
             conservative_value = risk_manager._conservative_portfolio_value()
-            max_allowed = (
-                conservative_value * self.config.TOTAL_EXPOSURE_PCT
-            ) - current_exposure
+            max_allowed = (conservative_value * self.config.TOTAL_EXPOSURE_PCT) - current_exposure
             kelly_size = min(kelly_size, max_allowed)
 
         # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
@@ -686,9 +653,7 @@ class BettingEngine:
             city_code = getattr(market_data, "city_code", "")
             strike_temp = getattr(market_data, "strike_temp", 25.0)
             market_type = getattr(market_data, "market_type", "HIGH")
-            yes_price = getattr(market_data, "yes_price", 0.5) or getattr(
-                market_data, "current_yes_bid", 0.5
-            )
+            yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
 
         model_prob = 0.55
         side = "YES"
@@ -696,14 +661,8 @@ class BettingEngine:
             from utils.probability import estimate_probability as _ep
 
             try:
-                mean = (
-                    forecast.get("weighted_mean", 0)
-                    if isinstance(forecast, dict)
-                    else 0
-                )
-                std = (
-                    forecast.get("weighted_std", 0) if isinstance(forecast, dict) else 0
-                )
+                mean = forecast.get("weighted_mean", 0) if isinstance(forecast, dict) else 0
+                std = forecast.get("weighted_std", 0) if isinstance(forecast, dict) else 0
                 model_prob = _ep(
                     mean=float(mean),
                     std=float(std),
@@ -711,7 +670,10 @@ class BettingEngine:
                     days_ahead=0,
                     market_type=str(market_type),
                 )
-                side = "NO" if model_prob < 0.5 else "YES"
+                # Edge-based side selection: pick whichever side gives positive edge
+                yes_edge = model_prob - yes_price
+                no_edge = (1.0 - model_prob) - (1.0 - yes_price)
+                side = "YES" if yes_edge >= no_edge else "NO"
             except Exception:
                 model_prob = 0.55
 
@@ -734,9 +696,7 @@ class BettingEngine:
         bet_size = 10.0
         if self.risk_manager and hasattr(self.risk_manager, "calculate_position_size"):
             try:
-                bet_size = self.calculate_position_size(
-                    signal_dict, portfolio_value, self.risk_manager
-                )
+                bet_size = self.calculate_position_size(signal_dict, portfolio_value, self.risk_manager)
             except Exception:
                 bet_size = 10.0
         signal_dict["bet_size"] = bet_size
@@ -772,19 +732,13 @@ class BettingEngine:
 
         try:
             if isinstance(market_data, dict):
-                market_id = (
-                    market_data.get("market_id") or market_data.get("event_id") or ""
-                )
+                market_id = market_data.get("market_id") or market_data.get("event_id") or ""
                 city_code = market_data.get("city_code", "")
                 yes_price = market_data.get("yes_price", 0.5)
             else:
-                market_id = getattr(
-                    market_data, "market_id", getattr(market_data, "event_id", "")
-                )
+                market_id = getattr(market_data, "market_id", getattr(market_data, "event_id", ""))
                 city_code = getattr(market_data, "city_code", "")
-                yes_price = getattr(market_data, "yes_price", 0.5) or getattr(
-                    market_data, "current_yes_bid", 0.5
-                )
+                yes_price = getattr(market_data, "yes_price", 0.5) or getattr(market_data, "current_yes_bid", 0.5)
 
             bet = Bet(
                 market_id=str(market_id),
@@ -810,18 +764,14 @@ class BettingEngine:
                 status="active",
                 placed_at=datetime.now(timezone.utc),
                 ladder_data=(
-                    json.dumps(getattr(signal, "ladder_orders", []))
-                    if hasattr(signal, "ladder_orders")
-                    else None
+                    json.dumps(getattr(signal, "ladder_orders", [])) if hasattr(signal, "ladder_orders") else None
                 ),
             )
             if self.db:
                 self.db.add(bet)
                 self.db.commit()
                 self.db.refresh(bet)
-                if self.risk_manager and hasattr(
-                    self.risk_manager, "increment_city_bet"
-                ):
+                if self.risk_manager and hasattr(self.risk_manager, "increment_city_bet"):
                     self.risk_manager.increment_city_bet(city_code)
             return bet
         except Exception as e:
@@ -866,21 +816,14 @@ class SIALoop:
                 strategy.min_edge = float(persisted_strategy["min_edge"])
             if "kelly_fraction" in persisted_strategy:
                 strategy.kelly_fraction = float(persisted_strategy["kelly_fraction"])
-            logger.info(
-                "SIA strategy parameters loaded from disk: %s", persisted_strategy
-            )
+            logger.info("SIA strategy parameters loaded from disk: %s", persisted_strategy)
 
-    def calculate_brier_score(
-        self, predictions: list[float], outcomes: list[bool]
-    ) -> float:
+    def calculate_brier_score(self, predictions: list[float], outcomes: list[bool]) -> float:
         """Calculate Brier Score."""
         if len(predictions) != len(outcomes) or len(predictions) == 0:
             return 1.0
 
-        squared_errors = [
-            (pred - (1.0 if outcome else 0.0)) ** 2
-            for pred, outcome in zip(predictions, outcomes)
-        ]
+        squared_errors = [(pred - (1.0 if outcome else 0.0)) ** 2 for pred, outcome in zip(predictions, outcomes)]
         brier_score = sum(squared_errors) / len(squared_errors)
         return round(brier_score, 4)
 
@@ -975,11 +918,7 @@ class SIALoop:
                 outcomes_bool = [r[1] for r in records]
 
                 brier_score = self.calculate_brier_score(predictions, outcomes_bool)
-                correct = sum(
-                    1
-                    for pred, out in zip(predictions, outcomes_bool)
-                    if (pred >= 0.5) == out
-                )
+                correct = sum(1 for pred, out in zip(predictions, outcomes_bool) if (pred >= 0.5) == out)
                 num_pred = len(predictions)
                 accuracy = correct / num_pred if num_pred else 0
                 frozen = num_pred < 10
@@ -995,9 +934,7 @@ class SIALoop:
                     "brier_score": brier_score,
                     "accuracy": round(accuracy, 4),
                     "num_predictions": num_pred,
-                    "avg_confidence": (
-                        round(sum(predictions) / num_pred, 4) if num_pred else 0
-                    ),
+                    "avg_confidence": (round(sum(predictions) / num_pred, 4) if num_pred else 0),
                     "frozen": frozen,
                 }
 
@@ -1042,22 +979,15 @@ class SIALoop:
 
         # Separate frozen vs optimizable models
         frozen_models = {
-            m: self.model_weights.get(m, 0.0)
-            for m, d in performance_data.items()
-            if d.get("frozen", False)
+            m: self.model_weights.get(m, 0.0) for m, d in performance_data.items() if d.get("frozen", False)
         }
-        optimizable = {
-            m: d for m, d in performance_data.items() if not d.get("frozen", False)
-        }
+        optimizable = {m: d for m, d in performance_data.items() if not d.get("frozen", False)}
 
         if optimizable:
             frozen_total = sum(frozen_models.values())
             remaining_budget = 1.0 - frozen_total
 
-            inverse_scores = {
-                model: max(0.01, 1.0 - data["brier_score"])
-                for model, data in optimizable.items()
-            }
+            inverse_scores = {model: max(0.01, 1.0 - data["brier_score"]) for model, data in optimizable.items()}
             total_inv = sum(inverse_scores.values())
 
             if total_inv > 0:
@@ -1158,9 +1088,7 @@ class SIALoop:
             )
 
         # Persist changes
-        save_strategy_params(
-            {"min_edge": strategy.min_edge, "kelly_fraction": strategy.kelly_fraction}
-        )
+        save_strategy_params({"min_edge": strategy.min_edge, "kelly_fraction": strategy.kelly_fraction})
 
     def run_optimization_cycle(self) -> bool:
         """Execute full SIA optimization cycle (Models + Strategy)."""
@@ -1186,11 +1114,7 @@ class SIALoop:
 
             _closed_statuses = ("won", "lost", "settled", "closed_early")
 
-            all_closed = (
-                db.query(Bet.pnl, Bet.amount)
-                .filter(Bet.status.in_(_closed_statuses))
-                .all()
-            )
+            all_closed = db.query(Bet.pnl, Bet.amount).filter(Bet.status.in_(_closed_statuses)).all()
             win_count = sum(1 for b in all_closed if (b.pnl or 0) > 0)
             loss_count = sum(1 for b in all_closed if (b.pnl or 0) <= 0)
             total = win_count + loss_count
@@ -1220,9 +1144,7 @@ class SIALoop:
                 db.add(record)
 
             db.commit()
-            logger.info(
-                "SIA Loop tamamlandi. Model agirliklari ve strateji parametreleri guncellendi."
-            )
+            logger.info("SIA Loop tamamlandi. Model agirliklari ve strateji parametreleri guncellendi.")
             return True
         except Exception as e:
             db.rollback()
@@ -1231,9 +1153,7 @@ class SIALoop:
         finally:
             db.close()
 
-    def get_adjusted_probability(
-        self, base_prob: float, _model_name: str, recent_brier: float
-    ) -> float:
+    def get_adjusted_probability(self, base_prob: float, _model_name: str, recent_brier: float) -> float:
         """Adjust base probability based on recent model Brier Score."""
         confidence_factor = 1.0 - (recent_brier * 0.5)
         confidence_factor = max(0.5, min(1.0, confidence_factor))

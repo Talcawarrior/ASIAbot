@@ -40,7 +40,6 @@ import json
 import logging
 import os
 import random
-import shutil
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -50,7 +49,6 @@ from typing import Any
 import pandas as pd
 
 from asi_engine.karpathy_weekly import (
-    DEFAULT_MODELS,
     Hypothesis,
     _normalise,
     _uniform_weights,
@@ -334,155 +332,86 @@ class FeedbackAgent:
         return _mean_stats(per_split)
 
     def evaluate_harness_patch(self, patched_src: str) -> tuple[dict[str, float] | None, str]:
-        """Evaluate a harness patch by writing to a temp file and importing.
+        """Evaluate a harness patch in a subprocess sandbox.
 
+        LLM-generated code is NEVER executed in the main process.
         Returns (stats, error_message). If stats is None, the patch was
         rejected (syntax error, runtime error, or import failure).
         """
-        # Write to a temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as tmp:
-            tmp.write(patched_src)
-            tmp_path = tmp.name
+        import subprocess
 
+        # Write LLM source to a temp file
+        src_fd, src_path = tempfile.mkstemp(suffix=".py", prefix="sia_patch_")
         try:
-            # Syntax check first
+            with os.fdopen(src_fd, "w", encoding="utf-8") as f:
+                f.write(patched_src)
+
+            # Syntax check in main process (cheap, safe — compile() doesn't exec)
             try:
-                with open(tmp_path, encoding="utf-8") as f:
-                    compile(f.read(), tmp_path, "exec")
+                with open(src_path, encoding="utf-8") as f:
+                    compile(f.read(), src_path, "exec")
             except SyntaxError as e:
                 return None, f"SyntaxError: {e}"
 
-            # Load the patched module in an isolated namespace
-            import importlib.util
+            # Prepare input data for subprocess (brier rows for OOS eval)
+            brier_rows: list[dict] = []
+            if not self.brier_df.empty:
+                prob_cols = [c for c in self.brier_df.columns if c.startswith("prob_")]
+                if prob_cols:
+                    for _, row in self.brier_df.iterrows():
+                        realized = row.get("realized_yes")
+                        if realized is None or pd.isna(realized):
+                            continue
+                        r: dict[str, Any] = {"realized_yes": float(realized)}
+                        for c in prob_cols:
+                            v = row.get(c)
+                            if v is not None and not pd.isna(v):
+                                r[c] = float(v)
+                        brier_rows.append(r)
 
-            spec = importlib.util.spec_from_file_location("sia_harness_patched", tmp_path)
-            if spec is None or spec.loader is None:
-                return None, "Could not load patched module"
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-
-            if not hasattr(mod, "predict_yes_probability"):
-                return None, "Patched module missing predict_yes_probability"
-
-            # Smoke test: does the function return a sane value?
-            test_forecasts = {m: 25.0 + i for i, m in enumerate(DEFAULT_MODELS)}
-            test_weights = _uniform_weights()
+            inp_fd, inp_path = tempfile.mkstemp(suffix=".json", prefix="sia_input_")
             try:
-                p = mod.predict_yes_probability(
-                    forecasts=test_forecasts,
-                    weights=test_weights,
-                    threshold=30.0,
-                    days_ahead=2,
+                with os.fdopen(inp_fd, "w", encoding="utf-8") as f:
+                    json.dump({"brier_rows": brier_rows}, f)
+
+                # Run smoke test + OOS eval in isolated subprocess
+                runner = os.path.join(os.path.dirname(__file__), "_sandbox_runner.py")
+                result = subprocess.run(
+                    [sys.executable, runner, src_path, inp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
                 )
-                if not isinstance(p, (int, float)) or not 0.0 <= p <= 1.0:
-                    return None, f"Smoke test failed: returned {p!r}"
-            except Exception as e:
-                return None, f"Smoke test exception: {e}"
 
-            # Persist the patched harness temporarily so the evaluator
-            # uses it. We back up the current one first.
-            shutil.copy(HARNESS_PATH, HARNESS_BACKUP_PATH)
-            try:
-                with open(HARNESS_PATH, "w", encoding="utf-8") as f:
-                    f.write(patched_src)
+                if result.returncode != 0:
+                    err = result.stdout.strip() or result.stderr.strip()
+                    # Try to parse structured error from JSON output
+                    try:
+                        err_obj = json.loads(err)
+                        return None, err_obj.get("error", err)
+                    except (json.JSONDecodeError, AttributeError):
+                        return None, f"Subprocess error: {err}"
 
-                # Force reload in this process
-                import asi_engine.sia_harness as harness_mod
-
-                importlib.reload(harness_mod)
-
-                # Run OOS eval with the patched harness
-                # (uses Layer 1's evaluator, which calls predict_yes_probability
-                # through the per-model prob columns — but since Layer 1's
-                # evaluator already has per-model probs precomputed, the
-                # harness patch only matters if we re-derive probs from temps.
-                # For SIA's purposes, we treat the patched harness as the
-                # "blessed" YES probability function and re-derive probs here.)
-                stats = self._eval_with_patched_harness(mod)
-
+                stats = json.loads(result.stdout.strip())
+                if not stats:
+                    return None, "Empty subprocess output"
                 return stats, ""
+
             finally:
-                # Restore the original harness
-                if os.path.exists(HARNESS_BACKUP_PATH):
-                    shutil.copy(HARNESS_BACKUP_PATH, HARNESS_PATH)
-                    os.remove(HARNESS_BACKUP_PATH)
-                    import asi_engine.sia_harness as harness_mod
+                try:
+                    os.unlink(inp_path)
+                except OSError:
+                    pass
 
-                    importlib.reload(harness_mod)
-
+        except subprocess.TimeoutExpired:
+            return None, "Sandbox timeout (>30s)"
         except Exception as e:
             return None, f"Unexpected error: {e}"
         finally:
             try:
-                os.unlink(tmp_path)
+                os.unlink(src_path)
             except OSError:
                 pass
-
-    def _eval_with_patched_harness(self, mod) -> dict[str, float]:
-        """Run a minimal OOS eval using the patched harness's
-        predict_yes_probability directly.
-
-        This is a simplified evaluator: for each row in the Brier dataset
-        that has per-model *temperature* forecasts, compute YES prob via
-        the patched harness and compare to realized_yes.
-        """
-        if self.brier_df.empty:
-            return _mean_stats([])
-
-        # Build a temperature-forecast view from per-model prob columns
-        # (we don't have raw temps in the Brier dataset — we have probs).
-        # If we don't have prob_ columns, return empty stats.
-        prob_cols = [c for c in self.brier_df.columns if c.startswith("prob_")]
-        if not prob_cols:
-            return _mean_stats([])
-
-        brier_errors: list[float] = []
-        for _, row in self.brier_df.iterrows():
-            realized = row.get("realized_yes")
-            if realized is None or pd.isna(realized):
-                continue
-
-            # Average the per-model probs as a proxy for the ensemble
-            try:
-                probs = [float(row[c]) for c in prob_cols if not pd.isna(row[c])]
-            except (TypeError, ValueError):
-                continue
-            if not probs:
-                continue
-
-            # Use the patched harness to combine them
-            # (forecast value here is the prob itself, not temperature —
-            # this is a degraded signal but it's what we have without
-            # the full temp-forecast join. The harness is still being
-            # tested on its functional form.)
-            forecasts = {DEFAULT_MODELS[i]: probs[i] if i < len(probs) else 0.5 for i in range(len(DEFAULT_MODELS))}
-            try:
-                p_yes = mod.predict_yes_probability(
-                    forecasts=forecasts,
-                    weights=_uniform_weights(),
-                    threshold=0.5,  # threshold on prob, not temperature
-                    days_ahead=1,
-                )
-                p_yes = max(0.01, min(0.99, float(p_yes)))
-            except Exception:
-                continue
-
-            brier_errors.append((p_yes - float(realized)) ** 2)
-
-        if not brier_errors:
-            return _mean_stats([])
-
-        brier = sum(brier_errors) / len(brier_errors)
-        # We don't simulate trades here — just return Brier + dummy stats
-        return {
-            "sharpe": 0.0,
-            "roi_pct": 0.0,
-            "win_rate": 0.0,
-            "total_trades": 0,
-            "brier_score": round(brier, 4),
-            "total_pnl": 0.0,
-            "total_staked": 0.0,
-        }
 
 
 # ---------------------------------------------------------------------------

@@ -221,24 +221,13 @@ def evaluate_hypothesis_oos(
 
         # 3. Market entry price — we need this to compute Kelly + edge.
         # In production this comes from resolvedmarkets_ingest snapshots.
-        # For now we use the resolved yes_price (0.0 or 1.0) as a HONEST
-        # entry price proxy: the model's bet pays off iff its prediction
-        # matches the realized outcome. This isn't a real backtest (we
-        # don't know the entry price the bot would have faced), but it
-        # lets the 3-layer loop differentiate hypotheses by their
-        # YES-probability calibration quality.
-        # If a snapshot_yes_price column exists (from resolvedmarkets_ingest),
-        # prefer that.
+        # We ONLY use snapshot_yes_price (the pre-resolution orderbook price).
+        # The resolved yes_price (0.0/1.0) is NEVER used as entry proxy
+        # because it creates look-ahead bias: the model's bet would always
+        # appear profitable against the resolved outcome.
         market_yes_price: float | None = None
         if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
             market_yes_price = float(row["snapshot_yes_price"])
-        elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
-            # Use the resolved yes_price as a degraded market proxy.
-            # Yes markets have yes_price=1.0; No markets have yes_price=0.0.
-            # We use 0.5 + 0.4 * (yes_price - 0.5) to compress to [0.1, 0.9]
-            # so Kelly doesn't blow up on extremes.
-            yp = float(row["yes_price"])
-            market_yes_price = 0.5 + 0.4 * (yp - 0.5)
 
         # 4. Brier score (always — even without a market price)
         realized = row.get("realized_yes")

@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 
 from config.settings import Config, bot_config
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
@@ -96,6 +96,13 @@ class BetPlacer:
                 d.log(logging.DEBUG)
                 return None
 
+            # Guard: edge must be positive (prevents neg-EV bets from stale analyses)
+            edge_val = float(analysis.edge or 0.0)
+            d.check("edge_positive", edge_val > 0, edge=edge_val)
+            if not d.should_bet:
+                d.log(logging.WARNING)
+                return None
+
             market = session.query(WeatherMarket).filter_by(id=analysis.market_id).first()
             d.check("market_exists", market is not None)
             if not d.should_bet:
@@ -140,15 +147,18 @@ class BetPlacer:
                 d.log(logging.DEBUG)
                 return None
 
-            # Bu market'te su an acik bir bahis var mi?
-            # Onceki bahisler closed_early/won/lost/settled olsa bile,
-            # ayni market'te yeni firsat varsa tekrar bahis acabiliriz.
-            # Sadece hala ACIK (placed/active/pending) bahis varsa atla.
+            # Bu market'te su an acik veya bugun yerlestirilmis bir bahis var mi?
+            # Ayni market'te ayni gun icinde tekrar bahis acmayi onler.
+            _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+            _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
             existing_open = (
                 session.query(Bet)
                 .filter(
                     Bet.market_id == analysis.market_id,
-                    Bet.status.in_(OPEN_BET_STATUSES),
+                    or_(
+                        Bet.status.in_(OPEN_BET_STATUSES),
+                        Bet.placed_at >= _today_start,
+                    ),
                 )
                 .first()
             )
@@ -382,7 +392,7 @@ class BetPlacer:
             # Paper ladder: if edge >= 0.05, create a 3-level ladder
             ladder_orders = []
             edge_val = float(analysis.edge or 0.0)
-            if abs(edge_val) >= 0.05:
+            if edge_val >= 0.05:
                 for lvl, pct in [(1, 0.50), (2, 0.30), (3, 0.20)]:
                     lvl_amount = round(proposed_amount * pct, 2)
                     if lvl == 1:
@@ -547,16 +557,20 @@ class BetPlacer:
                 .all()
             )
 
-            # Dedup: skip market_ids that already have an OPEN bet.
-            # Closed/won/lost/settled bets don't block re-betting on
-            # the same market — new opportunities may have emerged.
+            # Dedup: skip market_ids that already have a bet (OPEN or placed today).
+            # Prevents re-betting the same market across scan cycles on the same day.
             market_ids = {a.market_id for a in pending}
             if market_ids:
+                _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+                _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
                 existing_rows = (
                     sess.query(Bet.market_id)
                     .filter(
                         Bet.market_id.in_(list(market_ids)),
-                        Bet.status.in_(OPEN_BET_STATUSES),
+                        or_(
+                            Bet.status.in_(OPEN_BET_STATUSES),
+                            Bet.placed_at >= _today_start,
+                        ),
                     )
                     .all()
                 )

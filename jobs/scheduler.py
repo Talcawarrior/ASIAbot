@@ -17,6 +17,11 @@ from utils.formulas import (
 logger = logging.getLogger("JOBS_SCHEDULER")
 
 
+def _utcnow_naive() -> datetime:
+    """Return naive UTC now. All DB datetimes are naive UTC."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def run_fetch_markets():
     """Fetch markets from Polymarket and save to raw weather_markets."""
     from scrapers.polymarket import PolymarketScraper
@@ -265,6 +270,70 @@ def run_risk_management(session=None):
     """
     from config.settings import bot_config
     from engine.strategy import RiskManager
+    from utils.accounting import credit_sale
+
+    def _parse_ladder_filled_shares(bet):
+        """Extract filled rung shares from ladder data."""
+        if not bet.ladder_data:
+            return 0.0
+        try:
+            ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
+            if not isinstance(ladder, list):
+                return 0.0
+            return sum(
+                float(r.get("shares", r.get("size", r.get("amount", 0)))) for r in ladder if r.get("status") == "filled"
+            )
+        except Exception:
+            return 0.0
+
+    def _close_early(bet, market, sess, reason, current_price, rm):
+        """Close a bet early and update portfolio."""
+        entry = float(bet.entry_price or bet.price or 0.0)
+        exit_shares = float(bet.shares or 0.0)
+
+        # Ladder: only filled rungs can be sold
+        filled = _parse_ladder_filled_shares(bet)
+        if filled > 0:
+            exit_shares = filled
+
+        raw_pnl = round(compute_unrealized_pnl(exit_shares, current_price, entry), 2)
+        proceeds = round(exit_shares * current_price, 2)
+        fee_rate = getattr(market, "fee_rate", None) or 0.05
+        fee = round(polymarket_fee(exit_shares, current_price, fee_rate), 2)
+        realized = round(raw_pnl - fee, 2)
+        proceeds_net = round(proceeds - fee, 2)
+
+        bet.status = "closed_early"
+        bet.close_reason = reason
+        bet.closed_at = datetime.now(timezone.utc)
+        bet.realized_pnl = realized
+        bet.pnl = realized
+        bet.current_price = current_price
+
+        credit_sale(sess, proceeds_net, f"early_exit:{bet.market_id}:{reason}")
+
+        portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
+        if portfolio:
+            open_exposure = (
+                sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
+            ) or 0.0
+            portfolio.total_value = portfolio_total_value(float(portfolio.cash_balance or 0.0), float(open_exposure))
+            portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
+            portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
+            portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)
+            portfolio.last_updated = datetime.now(timezone.utc)
+            sess.add(portfolio)
+
+        sess.add(bet)
+        logger.info(
+            "Early exit bet=%s market=%s reason=%s realized=$%.2f fee=$%.2f proceeds=$%.2f",
+            bet.id,
+            bet.market_id,
+            reason,
+            realized,
+            fee,
+            proceeds_net,
+        )
 
     with get_session_or(session) as sess:
         rm = RiskManager(db_session=sess, cfg=bot_config)
@@ -286,17 +355,11 @@ def run_risk_management(session=None):
             if not market:
                 continue
 
-            # Current price in side terms
             yes_price = float(market.yes_price or 0.5)
-            if bet.side and bet.side.upper() == "NO":
-                current_price = max(0.0, min(1.0, 1.0 - yes_price))
-            else:
-                current_price = max(0.0, min(1.0, yes_price))
+            current_price = max(0.0, min(1.0, 1.0 - yes_price if bet.side and bet.side.upper() == "NO" else yes_price))
 
-            # Check early exit
             should_exit, reason = rm.check_early_exit(bet, current_price, market)
 
-            # Check model reversal if analysis exists
             if not should_exit:
                 analysis = (
                     sess.query(Analysis)
@@ -309,80 +372,8 @@ def run_risk_management(session=None):
                     should_exit, reason = True, rev_reason
 
             if should_exit:
-                from utils.accounting import credit_sale
-
-                # Calculate proceeds: for ladder bets, sum ONLY filled rungs
-                entry = float(bet.entry_price or bet.price or 0.0)
-                exit_shares = float(bet.shares or 0.0)
-                raw_pnl = round(compute_unrealized_pnl(exit_shares, current_price, entry), 2)
-                proceeds = round(exit_shares * current_price, 2)  # principal + PnL
-
-                # Ladder: only filled rungs were debited, so only filled
-                # rung shares can be sold.  Pending rungs are cancelled.
-                if bet.ladder_data:
-                    try:
-                        ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
-                        if isinstance(ladder, list):
-                            filled_shares = sum(
-                                float(r.get("shares", r.get("size", r.get("amount", 0))))
-                                for r in ladder
-                                if r.get("status") == "filled"
-                            )
-                            if filled_shares > 0:
-                                exit_shares = filled_shares
-                                proceeds = round(exit_shares * current_price, 2)
-                                raw_pnl = round(
-                                    compute_unrealized_pnl(exit_shares, current_price, entry),
-                                    2,
-                                )
-                    except Exception:
-                        pass  # fall back to simple calculation
-
-                # Polymarket taker fee on early exit (sell order).
-                # Use market's fee_rate from feeSchedule (dynamic), fallback to config.
-                fee_rate = getattr(market, "fee_rate", None) or 0.05
-                fee = round(polymarket_fee(exit_shares, current_price, fee_rate), 2)
-                realized = round(raw_pnl - fee, 2)
-                proceeds_net = round(proceeds - fee, 2)
-
-                bet.status = "closed_early"
-                bet.close_reason = reason
-                bet.closed_at = datetime.now(timezone.utc)
-                bet.realized_pnl = realized
-                bet.pnl = realized
-                bet.current_price = current_price
-
-                # Credit net proceeds (after fee) to cash via central accounting.
-                credit_sale(sess, proceeds_net, f"early_exit:{bet.market_id}:{reason}")
-
-                portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
-                if portfolio:
-                    open_exposure = (
-                        sess.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                        .filter(Bet.status.in_(OPEN_BET_STATUSES))
-                        .scalar()
-                    ) or 0.0
-                    portfolio.total_value = portfolio_total_value(
-                        float(portfolio.cash_balance or 0.0), float(open_exposure)
-                    )
-                    portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
-                    portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
-                    portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)
-                    portfolio.last_updated = datetime.now(timezone.utc)
-
-                sess.add(bet)
-                if portfolio:
-                    sess.add(portfolio)
+                _close_early(bet, market, sess, reason, current_price, rm)
                 closed_count += 1
-                logger.info(
-                    "Early exit bet=%s market=%s reason=%s realized=$%.2f fee=$%.2f proceeds=$%.2f",
-                    bet.id,
-                    bet.market_id,
-                    reason,
-                    realized,
-                    fee,
-                    proceeds_net,
-                )
 
         sess.commit()
         return f"Risk: {closed_count} position(s) closed early"

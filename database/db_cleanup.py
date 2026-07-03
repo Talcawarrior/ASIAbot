@@ -43,22 +43,19 @@ ALL_TABLES = [FORECAST_TABLE, ANALYSIS_TABLE, PERF_TABLE, CALIB_TABLE]
 def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
     """Archive rows older than hot_days to Parquet, purge data older than cold_days.
 
-    1. Export rows older than hot_days -> Parquet files
-    2. Delete those rows from SQLite
-    3. Delete Parquet files older than cold_days (purge)
-
     Returns dict with counts per table.
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
-    hot_cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=hot_days)).isoformat()
-    cold_cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=cold_days)).isoformat()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    hot_cutoff = (now - timedelta(days=hot_days)).isoformat()
+    cold_cutoff = (now - timedelta(days=cold_days)).isoformat()
 
     conn = sqlite3.connect(config.DB_PATH)
     archived = 0
     result = {}
 
-    # --- Step 1+2: Archive old rows ---
+    # Archive old rows
     for table in ALL_TABLES:
         try:
             date_col = _TABLE_DATE_COL[table]
@@ -71,12 +68,9 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
                 logger.info("No old rows in %s", table)
                 continue
 
-            date_tag = datetime.now().strftime("%Y%m%d")
-            pq_path = os.path.join(ARCHIVE_DIR, f"{table}_{date_tag}.parquet")
-
+            pq_path = os.path.join(ARCHIVE_DIR, f"{table}_{datetime.now():%Y%m%d}.parquet")
             if os.path.exists(pq_path):
-                existing = pd.read_parquet(pq_path)
-                df = pd.concat([existing, df], ignore_index=True)
+                df = pd.concat([pd.read_parquet(pq_path), df], ignore_index=True)
 
             df.to_parquet(pq_path, index=False, compression="snappy")
 
@@ -87,35 +81,27 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
 
             archived += len(df)
             result[table] = {"archived": len(df), "deleted": deleted, "file": pq_path}
-            logger.info(
-                "Archived %d / deleted %d rows from %s",
-                len(df),
-                deleted,
-                table,
-            )
+            logger.info("Archived %d / deleted %d rows from %s", len(df), deleted, table)
 
         except Exception as e:
             logger.warning("Archive failed for %s: %s", table, e)
             result[table] = {"error": str(e)}
 
-    # --- Step 3: Purge old Parquet files beyond cold_days ---
+    # Purge old Parquet files
     purged = 0
     for table in ALL_TABLES:
-        pattern = os.path.join(ARCHIVE_DIR, f"{table}_*.parquet")
-        for pq_file in glob.glob(pattern):
+        for pq_file in glob.glob(os.path.join(ARCHIVE_DIR, f"{table}_*.parquet")):
             try:
                 fname = os.path.basename(pq_file)
-                # Parse date from filename: {table}_YYYYMMDD.parquet
                 date_str = fname.rsplit("_", 1)[-1].replace(".parquet", "")
-                file_date = datetime.strptime(date_str, "%Y%m%d")
-                if file_date.isoformat() < cold_cutoff:
+                if datetime.strptime(date_str, "%Y%m%d").isoformat() < cold_cutoff:
                     os.remove(pq_file)
                     purged += 1
                     logger.info("Purged old archive: %s", fname)
             except Exception as e:
                 logger.warning("Purge failed for %s: %s", pq_file, e)
 
-    # --- Step 4: VACUUM ---
+    # VACUUM
     if archived > 0:
         try:
             conn.execute("VACUUM")
@@ -127,11 +113,7 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
 
     result["total_archived"] = archived  # type: ignore[assignment]
     result["purged_files"] = purged  # type: ignore[assignment]
-    logger.info(
-        "Archive done: %d rows archived, %d old files purged",
-        archived,
-        purged,
-    )
+    logger.info("Archive done: %d rows archived, %d old files purged", archived, purged)
     return result
 
 

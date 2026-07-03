@@ -107,7 +107,7 @@ class SettlementEngine:
                     cash = float(portfolio.cash_balance or 0)
                     portfolio.total_value = portfolio_total_value(cash, float(open_exposure))
                     portfolio.current_value = portfolio.total_value
-                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)  # pyright: ignore
+                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
                     sync_session.commit()
 
         logger.info(
@@ -178,48 +178,57 @@ class SettlementEngine:
         bet_lost_count = 0
 
         for bet in open_bets:
-            bet_won = bet.side == outcome
-            if bet_won:
-                bet_won_count += 1
-            else:
-                bet_lost_count += 1
-            bet.status = "won" if bet_won else "lost"
-            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
-
-            stake = float(bet.amount or 0)
-            entry_price = float(bet.entry_price or bet.price or 0.5)
-            # Load entry_fee stored at bet placement time (default 0 for pre-migration bets)
-            entry_fee = float(getattr(bet, "entry_fee", 0.0) or 0.0)
-
-            # Settlement PnL — Polymarket charges fee at entry, NOT at settlement.
-            # At settlement (p→1) the fee formula gives 0: p×(1-p) = 1×0 = 0.
-            realized_pnl = settlement_pnl(stake, entry_price, entry_fee, bet_won)
-            payout = settlement_payout(stake, entry_price) if bet_won else 0.0
-
-            bet.realized_pnl = round(realized_pnl, 2)
-            bet.pnl = round(realized_pnl, 2)
-            bet.unrealized_pnl = 0.0
-            total_market_pnl += realized_pnl
-            any_settled = True
-
-            # Update daily PnL for circuit breaker (strategy.py)
-            if risk_manager:
-                risk_manager.update_daily_pnl(realized_pnl)
-
-            # Update portfolio via central accounting
-            from utils.accounting import credit_settlement
-
-            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            if portfolio:
+            try:
+                bet_won = bet.side == outcome
                 if bet_won:
-                    # Credit FULL payout — the entry fee was already debited
-                    # at bet placement time (bet_placer.py :: debit_stake for fee).
-                    # Settlement fee is always 0 (mathematical zero at p→1).
-                    credit_settlement(session, payout, 0.0, f"settle:{bet.market_id}:won")
-                    portfolio.total_won = (portfolio.total_won or 0) + 1
+                    bet_won_count += 1
                 else:
-                    portfolio.total_lost = (portfolio.total_lost or 0) + 1
-                portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
+                    bet_lost_count += 1
+                bet.status = "won" if bet_won else "lost"
+                bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+                stake = float(bet.amount or 0)
+                entry_price = float(bet.entry_price or bet.price or 0.5)
+                # Load entry_fee stored at bet placement time (default 0 for pre-migration bets)
+                entry_fee = float(getattr(bet, "entry_fee", 0.0) or 0.0)
+
+                # Settlement PnL — Polymarket charges fee at entry, NOT at settlement.
+                # At settlement (p→1) the fee formula gives 0: p×(1-p) = 1×0 = 0.
+                realized_pnl = settlement_pnl(stake, entry_price, entry_fee, bet_won)
+                payout = settlement_payout(stake, entry_price) if bet_won else 0.0
+
+                bet.realized_pnl = round(realized_pnl, 2)
+                bet.pnl = round(realized_pnl, 2)
+                bet.unrealized_pnl = 0.0
+                total_market_pnl += realized_pnl
+                any_settled = True
+
+                # Update daily PnL for circuit breaker (strategy.py)
+                if risk_manager:
+                    risk_manager.update_daily_pnl(realized_pnl)
+
+                # Update portfolio via central accounting
+                from utils.accounting import credit_settlement
+
+                portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+                if portfolio:
+                    if bet_won:
+                        # Credit FULL payout — the entry fee was already debited
+                        # at bet placement time (bet_placer.py :: debit_stake for fee).
+                        # Settlement fee is always 0 (mathematical zero at p→1).
+                        credit_settlement(session, payout, 0.0, f"settle:{bet.market_id}:won")
+                        portfolio.total_won = (portfolio.total_won or 0) + 1
+                    else:
+                        portfolio.total_lost = (portfolio.total_lost or 0) + 1
+                    portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
+            except Exception as e:
+                logger.error(
+                    "Settlement error for bet #%s (market %s): %s",
+                    bet.id,
+                    bet.market_id,
+                    e,
+                    exc_info=True,
+                )
 
         if any_settled:
             market.status = "settled_win" if outcome == "YES" else "settled_loss"

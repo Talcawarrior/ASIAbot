@@ -1,10 +1,10 @@
 {
-  "cma_grapes_global": 0.123,
-  "ecmwf_ifs025": 0.1237,
-  "gem_global": 0.1239,
-  "gfs_seamless": 0.1197,
-  "icon_global": 0.1301,
-  "jma_seamless": 0.1299,
-  "meteofrance_seamless": 0.1313,
-  "ukmo_seamless": 0.1184
+  "cma_grapes_global": 0.1215,
+  "ecmwf_ifs025": 0.1247,
+  "gem_global": 0.1238,
+  "gfs_seamless": 0.1201,
+  "icon_global": 0.1304,
+  "jma_seamless": 0.1287,
+  "meteofrance_seamless": 0.1311,
+  "ukmo_seamless": 0.1196
 }

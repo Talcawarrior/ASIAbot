@@ -37,12 +37,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Project root: two parents up from utils/ -> repo root.
-_WEIGHTS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
-)
-_STRATEGY_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
-)
+_WEIGHTS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json"))
+_STRATEGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json"))
 
 # Diversification floor — no model may drop below this weight after save.
 # Set to 5% so the ensemble cannot collapse to a 1-2 model solution even
@@ -78,9 +74,30 @@ def load_strategy_params() -> dict[str, float] | None:
 
 
 def save_strategy_params(params: dict[str, float]):
-    """Save strategy parameters to disk."""
+    """Save strategy parameters to disk with safety clamps."""
     with _lock:
         try:
+            # Safety clamps — prevent SIA/Evolve/LLM from pushing values
+            # into dangerous territory.  See KULLANIM_KILAVUZU §11 Bulgu 2.
+            _CLAMPS: dict[str, tuple[float, float]] = {
+                "min_edge": (0.04, 0.20),  # floor 4% (doc default 5%)
+                "kelly_fraction": (0.05, 0.25),  # ceiling 25% (doc default 15%)
+            }
+            for key, (lo, hi) in _CLAMPS.items():
+                if key in params:
+                    raw = float(params[key])
+                    clamped = max(lo, min(hi, raw))
+                    if clamped != raw:
+                        logger.warning(
+                            "Clamped %s: %.4f -> %.4f (bounds [%.2f, %.2f])",
+                            key,
+                            raw,
+                            clamped,
+                            lo,
+                            hi,
+                        )
+                    params[key] = clamped
+
             os.makedirs(os.path.dirname(_STRATEGY_PATH), exist_ok=True)
             with open(_STRATEGY_PATH, "w", encoding="utf-8") as f:
                 json.dump(params, f, indent=2)
@@ -140,8 +157,7 @@ def _apply_floor(
     n = len(weights)
     if floor * n >= 1.0:
         logger.warning(
-            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, "
-            "falling back to uniform 1/%d",
+            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, falling back to uniform 1/%d",
             floor,
             n,
             n,
