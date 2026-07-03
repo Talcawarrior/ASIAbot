@@ -41,13 +41,21 @@ export interface StatusResponse {
     max_drawdown_pct: number;
   };
   open_positions?: Array<{
-    id: number;
+    id: string;
     city: string;
     side: string;
-    shares: number;
+    entry_price: number;
     current_price: number;
     unrealized_pnl: number;
+    edge: number;
+    shares: number;
     amount: number;
+    opened_at: string | null;
+    market_id: string;
+    market_type: string | null;
+    threshold: number | null;
+    question: string | null;
+    metric: string | null;
   }>;
 }
 
@@ -91,6 +99,8 @@ export interface HistoryEntry {
 export interface HistoryStats {
   total_won: number;
   total_lost: number;
+  total_closed_early: number;
+  closed_early_pnl: number;
   win_rate: number;
   overall_roi: number;
   total_stake: number;
@@ -167,11 +177,13 @@ export interface HealthResponse {
   daily_pnl_timeline: Array<{
     date: string;
     pnl: number;
-    trades: number;
+    wins: number;
+    losses: number;
+    total: number;
   }>;
 }
 
-// ---- UI Component Types (matching mock-data.ts) ----
+// ---- UI Component Types ----
 
 export interface KpiData {
   portfolioValue: number;
@@ -338,7 +350,7 @@ function mapKpiData(
   const closedLosses = hs?.total_lost ?? 0;
   const closedBets = closedWins + closedLosses;
   const winRate = closedBets > 0 ? (closedWins / closedBets) * 100 : 0;
-  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
+  const expectancy = closedBets > 0 ? realizedPnl / closedBets : 0;
   const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
   const profitFactor = hs?.profit_factor ?? 0;
 
@@ -762,7 +774,7 @@ function mapModelScores(weights: Record<string, number | { weight: number; brier
         brierScore: perf?.brier_score ?? null,
         accuracy: perf?.accuracy ?? null,
         weight: Math.round(w * 10000) / 100,
-        trend: "stable" as const,
+        trend: (perf?.trend as "improving" | "declining" | "stable") ?? "stable",
         sampleCount: perf?.num_predictions ?? 0,
       };
     });
@@ -851,12 +863,20 @@ export function useApiData() {
 
   // Map data to UI types
   const kpiData = mapKpiData(status, health, historyStats);
-  // Use equity curve from backend (all dates, no 300 limit)
-  const portfolioData: PortfolioPoint[] = equityCurve?.points?.map((p) => ({
-    date: p.date,
-    value: Math.round(p.value),
-    drawdown: 0,
-  })) ?? mapPortfolioData(status, history);
+  // Use equity curve from backend (all dates, no 300 limit).
+  // Compute drawdown per point from the equity curve values.
+  let portfolioData: PortfolioPoint[];
+  if (equityCurve?.points && equityCurve.points.length > 0) {
+    let peak = 0;
+    portfolioData = equityCurve.points.map((p) => {
+      const val = p.value;
+      if (val > peak) peak = val;
+      const dd = peak > 0 ? ((peak - val) / peak) * 100 : 0;
+      return { date: p.date, value: Math.round(val), drawdown: Math.round(dd * 10) / 10 };
+    });
+  } else {
+    portfolioData = mapPortfolioData(status, history);
+  }
   const openPositions = mapOpenPositions(signals);
   const activityFeed = mapActivityFeed(signals, history, status, health, weights);
   const edgeDistribution = mapEdgeDistribution(health);

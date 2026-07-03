@@ -108,9 +108,9 @@ def _orderbook_slippage(
         return _tiered_fallback(entry_price, "orderbook: no condition_id")
 
     try:
-        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient
+        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as LiveOrderbookClient
 
-        ob = ResolvedMarketsClient().get_live_orderbook(condition_id)
+        ob = LiveOrderbookClient().get_live_orderbook(condition_id)
         if not ob or ("asks" not in ob and "bids" not in ob):
             logger.warning(
                 "Orderbook empty for %s, falling back to tiered", condition_id
@@ -304,9 +304,9 @@ def check_orderbook_depth(
         return True, 0.0
 
     try:
-        from data_pipeline.resolved_markets_helper import ResolvedMarketsClient
+        from data_pipeline.resolved_markets_helper import ResolvedMarketsClient as HistoricalOrderbookClient
 
-        client = ResolvedMarketsClient()
+        client = HistoricalOrderbookClient()
         ob = client.fetch_historical_orderbook(condition_id)
         if not ob:
             return True, 0.0

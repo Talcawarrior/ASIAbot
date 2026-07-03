@@ -26,7 +26,6 @@ from config.logging_config import setup_logging
 
 # Package Imports
 from config.settings import config
-from data_pipeline.poly_data_helper import PolyDataPipeline
 from data_pipeline.resolved_markets_helper import ResolvedMarketsClient as _MockResolvedClient
 try:
     from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as _RealResolvedClient
@@ -322,16 +321,28 @@ def get_status():
                 # Annualize: assume ~4 bets/day over 365 days
                 sharpe_ratio = round(mean_ret / std_ret * math.sqrt(365 * 4), 4) if std_ret > 0 else 0.0
 
-            # Max Drawdown: simulate portfolio from initial capital
-            port_val = float(initial_capital)
-            peak = port_val
-            for b in closed_bets:
-                port_val += float(b.pnl or 0.0)
-                if port_val > peak:
-                    peak = port_val
-                dd = (peak - port_val) / peak * 100 if peak > 0 else 0
-                if dd > max_drawdown_pct:
-                    max_drawdown_pct = round(dd, 2)
+            # Max Drawdown: simulate portfolio from initial capital.
+        # Include unrealized PnL from open bets so that large open
+        # losses are reflected (previously only closed bets counted).
+        port_val = float(initial_capital)
+        peak = port_val
+        # Sort all events (closed bets + current unrealized) chronologically.
+        # First apply closed bets, then apply the live open-bet snapshot.
+        for b in closed_bets:
+            port_val += float(b.pnl or 0.0)
+            if port_val > peak:
+                peak = port_val
+            dd = (peak - port_val) / peak * 100 if peak > 0 else 0
+            if dd > max_drawdown_pct:
+                max_drawdown_pct = round(dd, 2)
+        # Now apply current unrealized PnL as a single trailing point
+        if unrealized_pnl_db != 0:
+            port_val += float(unrealized_pnl_db)
+            if port_val > peak:
+                peak = port_val
+            dd = (peak - port_val) / peak * 100 if peak > 0 else 0
+            if dd > max_drawdown_pct:
+                max_drawdown_pct = round(dd, 2)
 
         return {
             "is_running": state.is_running,
@@ -418,6 +429,30 @@ def get_asi_weights():
         )
 
         perf_map = {p.model_name: p for p in perf_records}
+
+        # Compute trend: compare latest Brier with previous period's Brier.
+        # "improving" = Brier decreased, "declining" = Brier increased,
+        # "stable" = change < 0.02.
+        prev_perf = (
+            db.query(
+                ModelPerformance.model_name,
+                func.avg(ModelPerformance.brier_score).label("prev_brier"),
+            )
+            .filter(
+                ModelPerformance.recorded_at < latest_perf.c.max_date,  # noqa: S311
+            )
+            .join(
+                latest_perf,
+                ModelPerformance.model_name == latest_perf.c.model_name,
+            )
+            .group_by(ModelPerformance.model_name)
+            .subquery()
+        )
+        trend_rows = (
+            db.query(prev_perf.c.model_name, prev_perf.c.prev_brier)
+            .all()
+        )
+        trend_map = {r.model_name: r.prev_brier for r in trend_rows}
     finally:
         db.close()
 
@@ -425,12 +460,26 @@ def get_asi_weights():
     result = {}
     for model, weight in weights.items():
         perf = perf_map.get(model)
+        latest_brier = perf.brier_score if perf and perf.brier_score else None
+        prev_brier = trend_map.get(model)
+        # Determine trend direction
+        if latest_brier is not None and prev_brier is not None and prev_brier > 0:
+            delta = latest_brier - prev_brier
+            if delta < -0.02:
+                trend = "improving"
+            elif delta > 0.02:
+                trend = "declining"
+            else:
+                trend = "stable"
+        else:
+            trend = "stable"
         result[model] = {
             "weight": weight,
-            "brier_score": perf.brier_score if perf else None,
+            "brier_score": latest_brier,
             "accuracy": perf.accuracy if perf else None,
             "num_predictions": perf.num_predictions if perf else 0,
             "last_updated": perf.recorded_at.isoformat() if perf and perf.recorded_at else None,
+            "trend": trend,
         }
     return result
 
@@ -1450,13 +1499,21 @@ def get_health_check():
         # 7. Overall verdict
         if not red_flags or all(f["severity"] == "info" for f in red_flags):
             verdict = "healthy"
+            verdict_text = "Sağlıklı"
+            verdict_color = "#22C55E"
         elif any(f["severity"] == "critical" for f in red_flags):
             verdict = "critical"
+            verdict_text = "Kritik"
+            verdict_color = "#EF4444"
         else:
             verdict = "warning"
+            verdict_text = "Uyarı"
+            verdict_color = "#F59E0B"
 
         return {
             "verdict": verdict,
+            "verdict_text": verdict_text,
+            "verdict_color": verdict_color,
             "is_running": state.is_running,
             "activity_24h": {
                 "bets_opened": bets_opened_24h,

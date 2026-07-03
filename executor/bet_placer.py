@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, or_
 
@@ -553,7 +553,7 @@ class BetPlacer:
                 sess.query(Analysis)
                 .join(subq, Analysis.id == subq.c.max_id)
                 .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
-                .order_by(WeatherMarket.target_date.desc())
+                .order_by(Analysis.edge.desc())
                 .all()
             )
 
@@ -575,6 +575,91 @@ class BetPlacer:
                     .all()
                 )
                 markets_with_bets = {row[0] for row in existing_rows if row[0] is not None}
+
+            # --- Cooldown: skip markets that were recently closed (take-profit,
+            #     stop-loss, or stale_cleanup).  Prevents the bot from immediately
+            #     re-opening the same market after an early exit.  The cooldown
+            #     window is configurable via REOPEN_COOLDOWN_HOURS env var
+            #     (default 24 hours).  A market that was settled naturally
+            #     (won/lost) is also blocked for the cooldown period so that
+            #     the bot doesn't re-enter a resolved question before new data
+            #     arrives.
+            _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
+            _cooldown_cutoff = (
+                datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
+            )
+            if market_ids:
+                cooldown_rows = (
+                    sess.query(Bet.market_id)
+                    .filter(
+                        Bet.market_id.in_(list(market_ids)),
+                        Bet.status.notin_(OPEN_BET_STATUSES + ("rejected", "failed")),
+                        or_(
+                            Bet.closed_at >= _cooldown_cutoff,
+                            Bet.settled_at >= _cooldown_cutoff,
+                        ),
+                    )
+                    .all()
+                )
+                _cooldown_markets = {row[0] for row in cooldown_rows if row[0] is not None}
+                for m_id in _cooldown_markets:
+                    markets_with_bets.add(m_id)
+                if _cooldown_markets:
+                    logger.info(
+                        "Cooldown: %d market blocked (last %dh) from re-opening: %s",
+                        len(_cooldown_markets),
+                        _cooldown_hours,
+                        list(_cooldown_markets)[:5],
+                    )
+
+            # --- City+threshold dedup: skip if there's already an open bet on
+            #     the same city + metric + threshold + target_date, even if the
+            #     Polymarket market_id differs (rare but possible with duplicate
+            #     or near-duplicate questions).
+            if pending:
+                open_city_dup = (
+                    sess.query(
+                        func.lower(WeatherMarket.city).label("city_l"),
+                        WeatherMarket.metric,
+                        WeatherMarket.threshold,
+                        WeatherMarket.target_date,
+                    )
+                    .join(Bet, Bet.market_id == WeatherMarket.id)
+                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
+                    .group_by(
+                        func.lower(WeatherMarket.city),
+                        WeatherMarket.metric,
+                        WeatherMarket.threshold,
+                        WeatherMarket.target_date,
+                    )
+                    .all()
+                )
+                _city_dup_set = {
+                    (r.city_l, r.metric, r.threshold, r.target_date) for r in open_city_dup
+                }
+                # Build a lookup from analysis.market_id -> (city, metric, threshold, date)
+                _mkt_lookup = {}
+                for a in pending:
+                    mkt = sess.query(WeatherMarket).filter_by(id=a.market_id).first()
+                    if mkt:
+                        _mkt_lookup[a.market_id] = (
+                            (mkt.city or "").lower(),
+                            mkt.metric,
+                            mkt.threshold,
+                            mkt.target_date,
+                        )
+                for a in pending:
+                    key = _mkt_lookup.get(a.market_id)
+                    if key and key in _city_dup_set:
+                        markets_with_bets.add(a.market_id)
+                _city_dup_count = sum(
+                    1 for a in pending if _mkt_lookup.get(a.market_id) in _city_dup_set
+                )
+                if _city_dup_count:
+                    logger.info(
+                        "City+threshold dedup: %d analysis skipped (same city/metric/threshold/date already open)",
+                        _city_dup_count,
+                    )
 
             for a in pending:
                 aid_to_market[a.id] = a.market_id
