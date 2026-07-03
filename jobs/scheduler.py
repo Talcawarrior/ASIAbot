@@ -300,7 +300,10 @@ def run_risk_management(session=None):
         proceeds = round(exit_shares * current_price, 2)
         fee_rate = getattr(market, "fee_rate", None) or 0.05
         fee = round(polymarket_fee(exit_shares, current_price, fee_rate), 2)
-        realized = round(raw_pnl - fee, 2)
+        entry_fee = float(bet.entry_fee or 0.0)
+        # Total PnL must account for entry fee (already deducted from cash at entry)
+        # but bet.pnl should reflect the complete cost: (exit_proceeds - exit_fee) - (stake + entry_fee)
+        realized = round(raw_pnl - fee - entry_fee, 2)
         proceeds_net = round(proceeds - fee, 2)
 
         bet.status = "closed_early"

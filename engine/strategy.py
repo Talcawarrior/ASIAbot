@@ -15,7 +15,7 @@ from database.models import (
     Portfolio,
     WeatherMarket,
 )
-from utils.formulas import conservative_portfolio_value, max_exposure_cap
+from utils.formulas import conservative_portfolio_value, max_exposure_cap, polymarket_fee
 from utils.kelly import kelly_bet_amount
 from utils.weights_store import (
     load_strategy_params,
@@ -593,7 +593,13 @@ class BettingEngine:
             market_price = yes_price
             edge = model_prob - market_price
 
-        ev = edge - self.config.FEE_DRAG
+        # Dynamic fee drag using Polymarket's actual formula: feeRate × p × (1-p)
+        # Per dollar of stake: shares = 1/price, fee_per_share = feeRate * p * (1-p)
+        # total_fee = feeRate * p * (1-p) * (1/p) = feeRate * (1-p)
+        dynamic_fee_drag = self.config.fee_drag * (1.0 - market_price)
+        ev_dynamic = edge - dynamic_fee_drag
+        # Use the more conservative (smaller) EV
+        ev = min(edge - self.config.FEE_DRAG, ev_dynamic)
         # Canonical source: bot_config.strategy.min_edge (matches calculator).
         is_eligible = edge >= bot_config.strategy.min_edge and ev > 0
 

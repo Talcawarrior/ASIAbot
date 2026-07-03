@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, Index
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -89,6 +89,11 @@ class WeatherForecast(Base):
 
     __tablename__ = "weather_forecasts"
 
+    __table_args__ = (
+        Index("ix_wf_market_id", "market_id"),
+        Index("ix_wf_fetched_at", "fetched_at"),
+    )
+
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)  # Hangi market için
 
@@ -115,6 +120,10 @@ class Analysis(Base):
     """Analiz sonuçları."""
 
     __tablename__ = "analyses"
+
+    __table_args__ = (
+        Index("ix_an_market_id", "market_id"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)
@@ -151,6 +160,13 @@ class Bet(Base):
     """Açılan betler."""
 
     __tablename__ = "bets"
+
+    __table_args__ = (
+        Index("ix_bets_market_id", "market_id"),
+        Index("ix_bets_status", "status"),
+        Index("ix_bets_city", "city"),
+        Index("ix_bets_settled_at", "settled_at"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String, nullable=False)
@@ -217,6 +233,10 @@ class ModelPerformance(Base):
 
     __tablename__ = "model_performance"
 
+    __table_args__ = (
+        Index("ix_mp_model_name", "model_name"),
+    )
+
     id = Column(Integer, primary_key=True)
     model_name = Column(String, nullable=False)
     total_predictions = Column(Integer, default=0)
@@ -241,6 +261,11 @@ class HistoricalCalibration(Base):
     """Historical calibration records for Karpathy search and backtesting."""
 
     __tablename__ = "historical_calibrations"
+
+    __table_args__ = (
+        Index("ix_hc_city_model", "city_code", "model"),
+        Index("ix_hc_date", "date"),
+    )
 
     id = Column(Integer, primary_key=True)
     city_code = Column(String, nullable=False)

@@ -76,9 +76,9 @@ class CognitionBase:
                         parameters={
                             "model_weights": {
                                 "gfs_seamless": 0.125,
-                                "ecmwf_ifs04": 0.125,
-                                "gem_seamless": 0.125,
-                                "icon_seamless": 0.125,
+                                "ecmwf_ifs025": 0.125,
+                                "gem_global": 0.125,
+                                "icon_global": 0.125,
                                 "jma_msm": 0.125,
                                 "cma_grapes_global": 0.125,
                                 "ukmo_seamless": 0.125,
@@ -107,9 +107,9 @@ class CognitionBase:
                         parameters={
                             "model_weights": {
                                 "gfs_seamless": 0.30,
-                                "ecmwf_ifs04": 0.25,
-                                "gem_seamless": 0.15,
-                                "icon_seamless": 0.10,
+                                "ecmwf_ifs025": 0.25,
+                                "gem_global": 0.15,
+                                "icon_global": 0.10,
                                 "jma_msm": 0.08,
                                 "cma_grapes_global": 0.05,
                                 "ukmo_seamless": 0.04,

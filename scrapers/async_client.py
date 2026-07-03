@@ -49,10 +49,14 @@ _USER_AGENT = "ASIAbot/1.0 (+tier3-12)"
 
 
 # ---- Cache -------------------------------------------------------------
-# (url, frozen-params) -> result-or-None. We remember failures (None)
-# too so a 429-storm does not get retried by every market in the scan.
-_CACHE: dict[tuple, Any] = {}
+# (url, frozen-params) -> (result-or-None, timestamp).
+# We remember failures (None) too so a 429-storm does not get retried by
+# every market in the scan.
+# TTL: successful responses cached for 5 min, failures for 60 s.
+_CACHE: dict[tuple, tuple[Any, float]] = {}
 _CACHE_LOCK = threading.Lock()
+_SUCCESS_TTL = 300.0   # 5 minutes for successful responses
+_FAILURE_TTL = 60.0    # 1 minute for failed responses (429 etc.)
 
 
 def _cache_key(url: str, params: dict | None) -> tuple:
@@ -63,16 +67,23 @@ def _cache_key(url: str, params: dict | None) -> tuple:
 
 def _cache_get(key: tuple) -> tuple[bool, Any]:
     """Return (hit, value). hit=True even when the cached value is None
-    so callers can short-circuit failed fetches."""
+    so callers can short-circuit failed fetches. Respects TTL."""
+    import time as _time
     with _CACHE_LOCK:
         if key in _CACHE:
-            return True, _CACHE[key]
+            value, ts = _CACHE[key]
+            ttl = _FAILURE_TTL if value is None else _SUCCESS_TTL
+            if _time.monotonic() - ts < ttl:
+                return True, value
+            else:
+                del _CACHE[key]
         return False, None
 
 
 def _cache_set(key: tuple, value: Any) -> None:
+    import time as _time
     with _CACHE_LOCK:
-        _CACHE[key] = value
+        _CACHE[key] = (value, _time.monotonic())
 
 
 def cache_clear() -> None:

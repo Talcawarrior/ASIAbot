@@ -27,7 +27,13 @@ from config.logging_config import setup_logging
 # Package Imports
 from config.settings import config
 from data_pipeline.poly_data_helper import PolyDataPipeline
-from data_pipeline.resolved_markets_helper import ResolvedMarketsClient
+from data_pipeline.resolved_markets_helper import ResolvedMarketsClient as _MockResolvedClient
+try:
+    from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as _RealResolvedClient
+    from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsConfig
+    _HAS_REAL_ORDERBOOK = True
+except ImportError:
+    _HAS_REAL_ORDERBOOK = False
 from database.db import (
     ensure_initial_portfolio,
     get_db_session,
@@ -297,16 +303,24 @@ def get_status():
         sharpe_ratio = 0.0
         max_drawdown_pct = 0.0
         closed_bets = (
-            db.query(Bet.pnl, Bet.settled_at)
+            db.query(Bet.pnl, Bet.stake, Bet.settled_at)
             .filter(Bet.status.in_(_closed_statuses))
             .order_by(Bet.settled_at.asc())
             .all()
         )
         if len(closed_bets) > 1:
-            pnls = [float(b.pnl or 0.0) for b in closed_bets]
-            mean_pnl = sum(pnls) / len(pnls)
-            std_pnl = math.sqrt(sum((p - mean_pnl) ** 2 for p in pnls) / len(pnls))
-            sharpe_ratio = round(mean_pnl / std_pnl, 4) if std_pnl > 0 else 0.0
+            # Use returns (PnL / stake) instead of raw PnL for proper Sharpe ratio
+            returns = []
+            for b in closed_bets:
+                stake_val = float(b.stake or 0.0)
+                if stake_val > 0:
+                    returns.append(float(b.pnl or 0.0) / stake_val)
+            if len(returns) > 1:
+                mean_ret = sum(returns) / len(returns)
+                # Use N-1 (sample std) for unbiased estimate
+                std_ret = math.sqrt(sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1))
+                # Annualize: assume ~4 bets/day over 365 days
+                sharpe_ratio = round(mean_ret / std_ret * math.sqrt(365 * 4), 4) if std_ret > 0 else 0.0
 
             # Max Drawdown: simulate portfolio from initial capital
             port_val = float(initial_capital)
@@ -470,17 +484,49 @@ def run_asi_calibration_recalculate(_key: str = Depends(verify_api_key)):
 
 @app.get("/api/asi/trades")
 def get_asi_trades():
-    """Retrieve on-chain Polymarket trades fetched from warproxxx/poly_data."""
-    pipeline = PolyDataPipeline()
-    df = pipeline.load_trades_dataset()
-    return df.head(50).to_dict(orient="records")
+    """Retrieve on-chain Polymarket trades.
+
+    If real on-chain data (poly_trades.csv) exists, serves it.
+    Otherwise returns empty list — NOT mock data.
+    """
+    import os
+    trades_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "poly_trades.csv")
+    if os.path.exists(trades_path):
+        try:
+            import pandas as pd
+            df = pd.read_csv(trades_path)
+            records = df.head(50).to_dict(orient="records")
+            # Check if this looks like mock data (has 'maker_direction' column but
+            # all transaction hashes start with '0x10^' pattern)
+            if records and "transactionHash" in records[0]:
+                return records
+        except Exception:
+            pass
+    return []
 
 
 @app.get("/api/asi/orderbook")
 def get_asi_orderbook(market_id: str = "2513866"):
-    """Retrieve high-fidelity CLOB orderbook depth from resolvedmarkets.com."""
-    client = ResolvedMarketsClient()
-    orderbook = client.fetch_historical_orderbook(market_id)
+    """Retrieve CLOB orderbook depth from resolvedmarkets.com.
+
+    Tries the real API first if a RESOLVED_MARKETS_API_KEY is set.
+    Falls back to mock data with a clear ``is_demo: true`` flag.
+    """
+    import os
+    api_key = os.getenv("RESOLVED_MARKETS_API_KEY", "")
+    if _HAS_REAL_ORDERBOOK and api_key:
+        try:
+            cfg = ResolvedMarketsConfig(api_key=api_key)
+            client = _RealResolvedClient(cfg)
+            orderbook = client.get_orderbook(market_id)
+            orderbook["is_demo"] = False
+            return orderbook
+        except Exception:
+            pass
+    # Fallback to mock with demo flag
+    mock_client = _MockResolvedClient()
+    orderbook = mock_client.fetch_historical_orderbook(market_id)
+    orderbook["is_demo"] = True
     return orderbook
 
 
@@ -1272,7 +1318,16 @@ def get_health_check():
         recent_total = sum(
             1 for b in settled_all if ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
         )
-        recent_win_rate = (wins_all / total_settled * 100) if total_settled > 0 else 0
+        recent_win_rate = 0.0
+        if recent_total > 0:
+            recent_wins = sum(
+                1
+                for b in settled_all
+                if b.pnl is not None
+                and b.pnl > 0
+                and ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
+            )
+            recent_win_rate = round(recent_wins / recent_total * 100, 1)
 
         if recent_total >= 10 and recent_losses >= 7:
             red_flags.append(

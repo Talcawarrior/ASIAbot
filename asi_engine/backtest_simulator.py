@@ -139,7 +139,10 @@ class BacktestSimulator:
                         pnl = payout - bet_size - fee
                     else:
                         bets_lost += 1
-                        pnl = -bet_size
+                        # Fee is also lost on losing bets (paid at entry in real system)
+                        shares = bet_size / entry_price
+                        fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
+                        pnl = -(bet_size + fee)
 
                     simulated_pnl += pnl
                     bankroll += pnl
@@ -345,7 +348,10 @@ class BacktestSimulator:
                     pnl = payout - bet_size - fee
                 else:
                     trades_lost += 1
-                    pnl = -bet_size
+                    # Fee is also lost on losing bets (paid at entry in real system)
+                    shares = bet_size / entry_price
+                    fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
+                    pnl = -(bet_size + fee)
 
                 sim_pnl += pnl
                 bankroll += pnl
