@@ -10,6 +10,8 @@ import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from config.settings import config
 from database.db import DB_PATH
@@ -47,10 +49,10 @@ class DataBackfiller:
         conn.commit()
         conn.close()
 
-    def run_deep_backfill(self, past_days: int = 90, max_cities: int = 10) -> int:
+    def run_deep_backfill(self, past_days: int = 90, max_cities: int = 999) -> int:
         """Fetch historical GFS, ECMWF, and other forecasts along with actual ground-truth observations.
 
-        Loops back through `past_days` for a subset of major cities, matches
+        Loops back through `past_days` for all mapped cities, matches
         the predictions vs actuals, and saves them to the DB.
 
         KNOWN LIMITATION (S3): Open-Meteo Historical Forecast API does NOT
@@ -64,37 +66,51 @@ class DataBackfiller:
         correction — acceptable since ECMWF is already the most accurate
         global model and typically has <0.5°C systematic bias.
         """
-        logger.info(
-            "ASI Backfiller: Starting deep backfill for past %d days...", past_days
-        )
+        logger.info("ASI Backfiller: Starting deep backfill for past %d days...", past_days)
 
-        # Select a representative set of cities from ICAO map
-        all_cities = list(config.CITY_ICAO_MAP.items())[:max_cities]
+        # Deduplicate by ICAO code: multiple CITY_ICAO_MAP aliases can map to
+        # the same code (e.g. "new york", "newyork", "nyc" → KLGA).
+        seen_codes: set[str] = set()
+        unique_cities: list[tuple[str, str]] = []
+        for city_name, icao_code in config.CITY_ICAO_MAP.items():
+            if icao_code not in seen_codes:
+                seen_codes.add(icao_code)
+                unique_cities.append((city_name, icao_code))
+
+        all_cities = unique_cities[:max_cities]
 
         now = datetime.now(UTC)
         start_date_dt = now - timedelta(days=past_days + 1)
-        end_date_dt = now - timedelta(
-            days=2
-        )  # Archive is fully complete up to 2 days ago
+        end_date_dt = now - timedelta(days=2)  # Archive is fully complete up to 2 days ago
 
         start_str = start_date_dt.strftime("%Y-%m-%d")
         end_str = end_date_dt.strftime("%Y-%m-%d")
 
         records_inserted = 0
 
-        # Define internal to API model mapping
+        # Use the same Open-Meteo API model names as engine/calculator.py
+        # OPEN_METEO_MODEL_MAP uses. The Historical Forecast API returns
+        # the same API model keys as the live forecast API.
         api_models = (
-            "gfs_seamless,ecmwf_ifs04,gem_global,icon_global,"
+            "gfs_seamless,ecmwf_ifs04,gem_seamless,icon_seamless,"
             "jma_seamless,cma_grapes_global,ukmo_seamless,"
             "meteofrance_seamless"
         )
-        # Map API model names to internal names matching Config.MODEL_WEIGHTS.
-        # Left = API parameter name, right = internal name used in calibrations table.
+        # Map API model names → internal model names (matching ModelWeights).
+        # WARNING: these must stay in sync with
+        # engine/calculator.py:OPEN_METEO_MODEL_MAP.
+        #
+        # NOTE: the Historical Forecast API uses different response keys
+        # than the live Forecast API for some models:
+        #   live   historical   internal
+        #   jma_msm  → jma_seamless → jma_seamless
+        #   both use 'ecmwf_ifs04' in the request but only the live API
+        #   returns it — the historical API has no ECMWF archive.
         model_names_mapping = {
             "gfs_seamless": "gfs_seamless",
-            "ecmwf_ifs04": "ecmwf_ifs04",
-            "gem_global": "gem_global",
-            "icon_global": "icon_global",
+            "ecmwf_ifs04": "ecmwf_ifs025",
+            "gem_seamless": "gem_global",
+            "icon_seamless": "icon_global",
             "jma_seamless": "jma_seamless",
             "cma_grapes_global": "cma_grapes_global",
             "ukmo_seamless": "ukmo_seamless",
@@ -103,6 +119,12 @@ class DataBackfiller:
 
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
+
+        # Reusable HTTP session with retries for API timeouts
+        http = requests.Session()
+        retries = Retry(total=3, backoff_factor=2, allowed_methods=["GET"])
+        http.mount("https://", HTTPAdapter(max_retries=retries, pool_connections=4, pool_maxsize=8))
+        http.mount("http://", HTTPAdapter(max_retries=retries, pool_connections=4, pool_maxsize=8))
 
         for city_name, icao_code in all_cities:
             coords = config.ICAO_COORDS.get(icao_code)
@@ -142,8 +164,8 @@ class DataBackfiller:
             }
 
             try:
-                f_resp = requests.get(forecast_url, params=f_params, timeout=15)
-                a_resp = requests.get(archive_url, params=a_params, timeout=15)
+                f_resp = http.get(forecast_url, params=f_params, timeout=30)
+                a_resp = http.get(archive_url, params=a_params, timeout=30)
 
                 if f_resp.status_code != 200 or a_resp.status_code != 200:
                     logger.warning(
@@ -170,11 +192,7 @@ class DataBackfiller:
                     for api_m, internal_m in model_names_mapping.items():
                         # Maximum temperature
                         pred_max_key = f"temperature_2m_max_{api_m}"
-                        pred_max = (
-                            f_data.get(pred_max_key, [])[idx]
-                            if pred_max_key in f_data
-                            else None
-                        )
+                        pred_max = f_data.get(pred_max_key, [])[idx] if pred_max_key in f_data else None
 
                         if pred_max is not None and act_max is not None:
                             bias_max = round(pred_max - act_max, 3)
@@ -199,11 +217,7 @@ class DataBackfiller:
 
                         # Minimum temperature
                         pred_min_key = f"temperature_2m_min_{api_m}"
-                        pred_min = (
-                            f_data.get(pred_min_key, [])[idx]
-                            if pred_min_key in f_data
-                            else None
-                        )
+                        pred_min = f_data.get(pred_min_key, [])[idx] if pred_min_key in f_data else None
 
                         if pred_min is not None and act_min is not None:
                             bias_min = round(pred_min - act_min, 3)
@@ -229,9 +243,7 @@ class DataBackfiller:
                 conn.commit()
 
             except Exception as e:
-                logger.error(
-                    "ASI Backfiller: Error backfilling city %s: %s", city_name, e
-                )
+                logger.error("ASI Backfiller: Error backfilling city %s: %s", city_name, e)
                 continue
 
         conn.close()

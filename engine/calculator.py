@@ -482,13 +482,78 @@ class WeatherEngine:
                 api_model_names.append(api_name)
         models_str = ",".join(api_model_names)
 
-        # Cache check
+        # Cache check: key by (lat, lon) only — the API already returns 14 days
+        # of data per call, so one call per city covers ALL open-market dates.
         target_str = target_date.strftime("%Y-%m-%d")
-        cache_key = (round(latitude, 4), round(longitude, 4), target_str)
-        if cache_key in self._forecast_cache:
-            data = self._forecast_cache[cache_key]
-            logger.debug("Ensemble cache hit for %s", cache_key)
+        city_cache_key = (round(latitude, 4), round(longitude, 4))
+        data = self._forecast_cache.get(city_cache_key)
+        # Verify cached data covers the target_date (avoid stale if days pass)
+        if data is not None:
+            cached_times = data.get("daily", {}).get("time", [])
+            if target_str not in cached_times:
+                data = None  # date outside range — refetch
+
+        if data is not None:
+            logger.debug("Ensemble cache hit for city %s (date %s)", city_cache_key, target_str)
         else:
+            # DB cache: check if we already have ensemble forecasts for this city
+            # from a previous run. This avoids re-fetching all cities on restart.
+            if db_session is not None:
+                try:
+                    from database.models import WeatherForecast
+
+                    existing = (
+                        db_session.query(WeatherForecast)
+                        .filter(
+                            WeatherForecast.lat == latitude,
+                            WeatherForecast.lon == longitude,
+                            WeatherForecast.target_date == target_date,
+                            WeatherForecast.metric == metric,
+                            WeatherForecast.source.in_(self.model_weights.keys()),
+                        )
+                        .all()
+                    )
+                    if existing and len(existing) >= 3:
+                        # Reconstruct ensemble from DB forecasts
+                        model_temps_db: dict[str, float] = {}
+                        for fe in existing:
+                            if fe.source not in model_temps_db:
+                                model_temps_db[fe.source] = fe.predicted_value
+
+                        # Verify we have enough models
+                        if len(model_temps_db) >= 3:
+                            total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps_db)
+                            if total_weight > 0:
+                                weighted_mean = (
+                                    sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items())
+                                    / total_weight
+                                )
+                                weighted_var = (
+                                    sum(
+                                        self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2
+                                        for m, t in model_temps_db.items()
+                                    )
+                                    / total_weight
+                                )
+                                weighted_std = max(weighted_var**0.5, 0.5)
+
+                                logger.info(
+                                    "DB cache hit for %s (date %s): %d models, mean=%.1f",
+                                    city_cache_key,
+                                    target_str,
+                                    len(model_temps_db),
+                                    weighted_mean,
+                                )
+                                return {
+                                    "weighted_mean": weighted_mean,
+                                    "weighted_std": weighted_std,
+                                    "model_count": len(model_temps_db),
+                                    "model_temps": model_temps_db,
+                                    "timestamp": existing[0].fetched_at,
+                                }
+                except Exception as e:
+                    logger.debug("DB cache check failed for %s: %s", city_cache_key, e)
+
             url = f"{Config.OPEN_METEO_API}/forecast"
             params = {
                 "latitude": latitude,
@@ -512,7 +577,8 @@ class WeatherEngine:
                     try:
                         if aiohttp_session is not None:
                             async with aiohttp_session.get(
-                                url, params=params,
+                                url,
+                                params=params,
                                 timeout=aiohttp.ClientTimeout(total=30),
                             ) as resp:
                                 if resp.status == 429:
@@ -522,7 +588,9 @@ class WeatherEngine:
                                         wait = float(retry_after) if retry_after else backoff_s
                                         logger.warning(
                                             "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
-                                            attempt + 1, max_retries + 1, wait,
+                                            attempt + 1,
+                                            max_retries + 1,
+                                            wait,
                                         )
                                         await asyncio.sleep(wait)
                                         backoff_s *= 2  # exponential backoff
@@ -530,13 +598,14 @@ class WeatherEngine:
                                     logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
                                     return None
                                 if resp.status != 200:
-                                    logger.warning("Ensemble API status %d for %s", resp.status, cache_key)
+                                    logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
                                     return None
                                 data = await resp.json()
                         else:
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(
-                                    url, params=params,
+                                    url,
+                                    params=params,
                                     timeout=aiohttp.ClientTimeout(total=30),
                                 ) as resp:
                                     if resp.status == 429:
@@ -545,7 +614,9 @@ class WeatherEngine:
                                             wait = float(retry_after) if retry_after else backoff_s
                                             logger.warning(
                                                 "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
-                                                attempt + 1, max_retries + 1, wait,
+                                                attempt + 1,
+                                                max_retries + 1,
+                                                wait,
                                             )
                                             await asyncio.sleep(wait)
                                             backoff_s *= 2
@@ -553,7 +624,7 @@ class WeatherEngine:
                                         logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
                                         return None
                                     if resp.status != 200:
-                                        logger.warning("Ensemble API status %d for %s", resp.status, cache_key)
+                                        logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
                                         return None
                                     data = await resp.json()
                         # Success — break out of retry loop
@@ -563,7 +634,9 @@ class WeatherEngine:
                         if attempt < max_retries:
                             logger.warning(
                                 "Ensemble API timeout (attempt %d/%d) — retrying in %.0fs",
-                                attempt + 1, max_retries + 1, backoff_s,
+                                attempt + 1,
+                                max_retries + 1,
+                                backoff_s,
                             )
                             await asyncio.sleep(backoff_s)
                             backoff_s *= 2
@@ -573,7 +646,7 @@ class WeatherEngine:
 
                 if data is None:
                     return None
-                self._forecast_cache[cache_key] = data
+                self._forecast_cache[city_cache_key] = data
             except Exception as e:
                 logger.error("get_multi_model_forecast fetch error: %s", e)
                 return None

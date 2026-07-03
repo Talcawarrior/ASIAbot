@@ -288,6 +288,12 @@ export interface HealthData {
     max_net_edge_pct: number;
     count: number;
   };
+  open_edge_distribution: {
+    avg_net_edge_pct: number;
+    min_net_edge_pct: number;
+    max_net_edge_pct: number;
+    count: number;
+  };
   summary_all: {
     total_settled: number;
     wins: number;
@@ -322,6 +328,12 @@ export const healthData: HealthData = {
     min_net_edge_pct: 2.1,
     max_net_edge_pct: 14.5,
     count: 38,
+  },
+  open_edge_distribution: {
+    avg_net_edge_pct: 12.5,
+    min_net_edge_pct: 5.3,
+    max_net_edge_pct: 31.2,
+    count: 83,
   },
   summary_all: {
     total_settled: 18,

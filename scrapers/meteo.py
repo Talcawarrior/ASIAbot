@@ -302,10 +302,6 @@ class MeteoFetcher:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            # FIX: aiohttp.ClientSession must be created INSIDE an async function
-            # (it requires a running event loop). Wrap creation in a coroutine
-            # and run it via the loop. This fixes the "no running event loop"
-            # RuntimeError when fetch_all_markets() is called from sync context.
             import aiohttp as _aiohttp
 
             async def _make_session() -> _aiohttp.ClientSession:
@@ -316,64 +312,146 @@ class MeteoFetcher:
 
             shared_session = loop.run_until_complete(_make_session())
 
-            try:
-                for key, markets in groups.items():
-                    city, city_code, target_date, lat, lon = group_info[key]
+            # --- PARALLEL FETCH: asyncio.gather with semaphore + smart throttle ---
+            # Instead of sequential for-loop (3s throttle × N cities = N×3s wait),
+            # fetch all cities concurrently with a semaphore to limit parallelism
+            # and a shared throttle lock to respect rate limits.
+            _THROTTLE_INTERVAL = 2.5  # seconds between API calls (Open-Meteo allows ~3s)
+            _MAX_CONCURRENT = 8  # max parallel API calls
 
-                    # Separate markets by metric within the city/date group
-                    mids_by_metric = defaultdict(list)
-                    for mid, metric in markets:
-                        mids_by_metric[metric].append(mid)
+            _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
+            _throttle_lock = asyncio.Lock()
+            _last_api_call = [0.0]  # mutable container for async closure
 
-                    # FIX (S5+S6): All metrics for the same (city, date) share
-                    # ONE API call. get_multi_model_forecast already caches by
-                    # (lat, lon, date), so the 2nd metric gets a cache hit.
-                    # Pass ALL market_ids (both metrics) so both get persisted.
-                    all_mids_for_city_date: list[str] = []
-                    for mids in mids_by_metric.values():
-                        all_mids_for_city_date.extend(mids)
+            async def _fetch_one_group(
+                key: tuple,
+                markets: list,
+            ) -> int:
+                """Fetch weather for one (city, date) group. Returns forecast count."""
+                city, city_code, target_date, lat, lon = group_info[key]
 
-                    # Use the first metric as the "primary" — the API call
-                    # fetches both max+min anyway, and S6 fix persists both.
-                    primary_metric = next(iter(mids_by_metric.keys()), "temperature_max")
+                mids_by_metric: dict[str, list[str]] = defaultdict(list)
+                for mid, metric in markets:
+                    mids_by_metric[metric].append(mid)
 
+                all_mids: list[str] = []
+                for mids in mids_by_metric.values():
+                    all_mids.extend(mids)
+
+                primary_metric = next(iter(mids_by_metric.keys()), "temperature_max")
+                count = 0
+
+                async with _semaphore:
+                    # Smart throttle: wait only if needed before API call
+                    async with _throttle_lock:
+                        now = time.monotonic()
+                        wait = _THROTTLE_INTERVAL - (now - _last_api_call[0])
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                        _last_api_call[0] = time.monotonic()
+
+                    # 1. Try Ensemble (8-model)
                     try:
-                        # 1. Try Ensemble (8-model) — single API call per (city, date)
-                        try:
-                            result = loop.run_until_complete(
-                                we.get_multi_model_forecast(
-                                    city_code=city_code or city,
-                                    latitude=lat,
-                                    longitude=lon,
-                                    target_date=target_date,
-                                    market_ids=all_mids_for_city_date,  # FIX: all markets, not just one metric
-                                    db_session=session,
-                                    metric=primary_metric,  # API fetches both; this just picks consensus
-                                    aiohttp_session=shared_session,
-                                )
-                            )
-
-                            if result and result.get("model_count", 0) >= 3:
-                                total += result["model_count"] * len(all_mids_for_city_date)
-                                continue
-                        except Exception as e:
-                            logger.debug(
-                                "Ensemble failed for group %s %s: %s",
-                                key,
-                                primary_metric,
-                                e,
-                            )
-
-                        # 2. Fallback to Backup (Open-Meteo + WeatherAPI) for each metric
-                        for metric, mids in mids_by_metric.items():
-                            count = self.fetch_for_markets(mids, city, target_date, metric)
-                            total += count
-
+                        result = await we.get_multi_model_forecast(
+                            city_code=city_code or city,
+                            latitude=lat,
+                            longitude=lon,
+                            target_date=target_date,
+                            market_ids=all_mids,
+                            db_session=session,
+                            metric=primary_metric,
+                            aiohttp_session=shared_session,
+                        )
+                        if result and result.get("model_count", 0) >= 3:
+                            return result["model_count"] * len(all_mids)
                     except Exception as e:
-                        logger.error("Group %s bucket error: %s", key, e)
-                        continue
+                        logger.debug("Ensemble failed for %s %s: %s", key, primary_metric, e)
+
+                    # 2. DB cache fallback
+                    for metric, mids in mids_by_metric.items():
+                        from database.models import WeatherForecast
+
+                        existing = (
+                            session.query(WeatherForecast)
+                            .filter(
+                                WeatherForecast.city == (city_code or city),
+                                WeatherForecast.target_date == target_date,
+                                WeatherForecast.metric == metric,
+                            )
+                            .first()
+                        )
+                        if existing is not None:
+                            all_existing = (
+                                session.query(WeatherForecast)
+                                .filter(
+                                    WeatherForecast.city == (city_code or city),
+                                    WeatherForecast.target_date == target_date,
+                                    WeatherForecast.metric == metric,
+                                )
+                                .all()
+                            )
+                            source_map: dict[str, WeatherForecast] = {}
+                            for fe in all_existing:
+                                if fe.source not in source_map:
+                                    source_map[fe.source] = fe
+                            newly_created = 0
+                            for mid in mids:
+                                for source_name, fe in source_map.items():
+                                    already_exists = (
+                                        session.query(WeatherForecast.id)
+                                        .filter(
+                                            WeatherForecast.market_id == mid,
+                                            WeatherForecast.source == source_name,
+                                        )
+                                        .first()
+                                    )
+                                    if already_exists is None:
+                                        session.add(
+                                            WeatherForecast(
+                                                market_id=mid,
+                                                city=fe.city,
+                                                lat=fe.lat,
+                                                lon=fe.lon,
+                                                target_date=fe.target_date,
+                                                metric=fe.metric,
+                                                source=source_name,
+                                                predicted_value=fe.predicted_value,
+                                                model_weight=fe.model_weight,
+                                                fetched_at=datetime.now(UTC),
+                                                raw_data=fe.raw_data,
+                                            )
+                                        )
+                                        newly_created += 1
+                            if newly_created > 0:
+                                session.commit()
+                                count += newly_created
+                                date_str = target_date.strftime("%Y-%m-%d")
+                                logger.info(
+                                    "DB-cache replicated %d forecasts for %d markets at %s/%s/%s",
+                                    newly_created,
+                                    len(mids),
+                                    city_code or city,
+                                    date_str,
+                                    metric,
+                                )
+                                continue
+
+                        # 3. Fallback to Backup sources
+                        c = self.fetch_for_markets(mids, city, target_date, metric)
+                        count += c
+
+                return count
+
+            try:
+                # Fire all groups concurrently — semaphore limits parallelism
+                tasks = [_fetch_one_group(key, markets) for key, markets in groups.items()]
+                results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+                for r in results:
+                    if isinstance(r, int):
+                        total += r
+                    elif isinstance(r, Exception):
+                        logger.error("Parallel fetch group error: %s", r)
             finally:
-                # Close shared aiohttp session
                 loop.run_until_complete(shared_session.close())
                 loop.close()
 

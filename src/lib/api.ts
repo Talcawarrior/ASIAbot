@@ -132,6 +132,21 @@ export interface HealthResponse {
     max_net_edge_pct: number;
     count: number;
   };
+  open_edge_distribution: {
+    values: Array<{
+      bet_id: number;
+      raw_edge_pct: number | null;
+      net_edge_pct: number | null;
+      market_id: string;
+      city: string;
+      amount: number;
+      status: string;
+    }>;
+    avg_net_edge_pct: number;
+    min_net_edge_pct: number;
+    max_net_edge_pct: number;
+    count: number;
+  };
   summary_all: {
     total_settled: number;
     wins: number;
@@ -631,6 +646,32 @@ function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
   return buckets;
 }
 
+function mapOpenEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
+  const buckets: EdgeBucket[] = [
+    { range: "0-5%", count: 0 },
+    { range: "5-10%", count: 0 },
+    { range: "10-15%", count: 0 },
+    { range: "15-20%", count: 0 },
+    { range: "20-30%", count: 0 },
+    { range: "30%+", count: 0 },
+  ];
+
+  if (!health?.open_edge_distribution?.values?.length) return buckets;
+
+  for (const v of health.open_edge_distribution.values) {
+    const edge = v.net_edge_pct;
+    if (edge === null || edge === undefined) continue;
+    if (edge <= 5) buckets[0].count++;
+    else if (edge <= 10) buckets[1].count++;
+    else if (edge <= 15) buckets[2].count++;
+    else if (edge <= 20) buckets[3].count++;
+    else if (edge <= 30) buckets[4].count++;
+    else buckets[5].count++;
+  }
+
+  return buckets;
+}
+
 function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
   return history.map((h) => {
     const placedDate = h.placed_at ? new Date(h.placed_at) : new Date();
@@ -690,13 +731,20 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
 function mapModelScores(weights: Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>): ModelScore[] {
   const modelNames: Record<string, string> = {
     gfs_seamless: "GFS Seamless",
+    ecmwf_ifs025: "ECMWF IFS025",
     ecmwf_ifs04: "ECMWF IFS04",
     ecmwf_aifs025: "ECMWF AIFS",
+    ecmwf_seamless: "ECMWF Seamless",
     gfs025: "GFS 0.25",
     ncep_gfs_seamless: "NCEP GFS",
-    ecmwf_seamless: "ECMWF Seamless",
-    icon_seamless: "ICON",
     gfs_seamless_04: "GFS 0.04",
+    icon_global: "ICON Global",
+    icon_seamless: "ICON Seamless",
+    cma_grapes_global: "CMA GRAPES",
+    gem_global: "GEM Global",
+    jma_seamless: "JMA Seamless",
+    meteofrance_seamless: "MF Seamless",
+    ukmo_seamless: "UKMO Seamless",
   };
 
   return Object.entries(weights)
@@ -713,7 +761,7 @@ function mapModelScores(weights: Record<string, number | { weight: number; brier
         name: modelNames[key] ?? key,
         brierScore: perf?.brier_score ?? null,
         accuracy: perf?.accuracy ?? null,
-        weight: Math.round(w * 100),
+        weight: Math.round(w * 10000) / 100,
         trend: "stable" as const,
         sampleCount: perf?.num_predictions ?? 0,
       };
@@ -812,6 +860,7 @@ export function useApiData() {
   const openPositions = mapOpenPositions(signals);
   const activityFeed = mapActivityFeed(signals, history, status, health, weights);
   const edgeDistribution = mapEdgeDistribution(health);
+  const openEdgeDistribution = mapOpenEdgeDistribution(health);
   const tradeHistory = mapTradeHistory(history);
   const modelScores = mapModelScores(weights);
 
@@ -827,6 +876,7 @@ export function useApiData() {
     openPositions,
     activityFeed,
     edgeDistribution,
+    openEdgeDistribution,
     tradeHistory,
     modelScores,
     slippageData,

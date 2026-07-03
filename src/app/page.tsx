@@ -211,12 +211,13 @@ function MetricTooltip({ children, title, description, formula, example }: {
 // ==========================================
 // OVERVIEW TAB
 // ==========================================
-function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edgeDistribution, isLoading }: {
+function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edgeDistribution, openEdgeDistribution, isLoading }: {
   kpiData: KpiData;
   portfolioData: PortfolioPoint[];
   openPositions: OpenPosition[];
   activityFeed: ActivityItem[];
   edgeDistribution: EdgeBucket[];
+  openEdgeDistribution: EdgeBucket[];
   isLoading?: boolean;
 }) {
   const winLossData = [
@@ -512,10 +513,10 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
         </Card>
       </section>
 
-      {/* Edge Distribution */}
+      {/* Edge Distribution - Closed Bets */}
       <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
         <CardHeader className="pb-0 pt-0 px-5">
-          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı</CardTitle>
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Kapalı Bahisler</CardTitle>
         </CardHeader>
         <CardContent className="px-4">
           <ChartWrapper height={220}>
@@ -526,6 +527,26 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                 <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
                 <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                 <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
+              </BarChart>
+            </ResponsiveContainer>
+          </ChartWrapper>
+        </CardContent>
+      </Card>
+
+      {/* Edge Distribution - Open Positions */}
+      <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <CardHeader className="pb-0 pt-0 px-5">
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı — Açık Pozisyonlar</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4">
+          <ChartWrapper height={220}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={openEdgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
+                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
+                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                <Bar dataKey="count" fill={TEAL} radius={[4, 4, 0, 0]} barSize={40} />
               </BarChart>
             </ResponsiveContainer>
           </ChartWrapper>
@@ -857,8 +878,8 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
                     </div>
                     <div>
                       <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Brier Score</p>
-                      <p className="text-sm font-bold font-mono tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
-                        {m.brierScore.toFixed(3)}
+                      <p className="text-sm font-bold font-mono tabular-nums" style={{ color: (m.brierScore ?? 0.2) <= 0.16 ? TEAL : (m.brierScore ?? 0.2) <= 0.19 ? TEXT_PRIMARY : RED }}>
+                        {m.brierScore != null ? m.brierScore.toFixed(3) : "—"}
                       </p>
                     </div>
                   </div>
@@ -885,8 +906,15 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
                   <BarChart data={modelScores.map(m => ({ name: m.name, weight: m.weight }))} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
                     <XAxis dataKey="name" tick={{ fontSize: 10, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} angle={-20} textAnchor="end" height={60} />
-                    <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `%${v}`} width={40} />
-                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: TEXT_MUTED }}
+                      axisLine={false}
+                      tickLine={false}
+                      tickFormatter={(v: number) => `%${v.toFixed(1)}`}
+                      width={50}
+                      domain={["dataMin - 1", "dataMax + 1"]}
+                    />
+                    <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8, border: `1px solid ${BORDER}` }} formatter={(value: number) => [`%${value.toFixed(2)}`, "Ağırlık"]} />
                     <Bar dataKey="weight" radius={[4, 4, 0, 0]} barSize={36}>
                       {modelScores.map((_, i) => (
                         <Cell key={i} fill={MODEL_COLORS[i % MODEL_COLORS.length]} />
@@ -923,8 +951,8 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
                           {m.name}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
-                        {m.brierScore.toFixed(3)}
+                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: (m.brierScore ?? 0.2) <= 0.16 ? TEAL : (m.brierScore ?? 0.2) <= 0.19 ? TEXT_PRIMARY : RED }}>
+                        {m.brierScore != null ? m.brierScore.toFixed(3) : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>%{m.weight}</TableCell>
                       <TableCell>
@@ -1421,6 +1449,7 @@ export default function DashboardPage() {
             openPositions={data.openPositions}
             activityFeed={data.activityFeed}
             edgeDistribution={data.edgeDistribution}
+            openEdgeDistribution={data.openEdgeDistribution}
           />
         )}
         {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} historyStats={data.historyStats} totalPnl={data.historyStats?.total_pnl ?? 0} />}

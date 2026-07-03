@@ -127,6 +127,15 @@ class StrategyConfig:
     min_entry_price: float = 0.01
     inefficiency_min: float = -1.0  # negative = gate disabled (accept all)
 
+    # ── YES probability floor ──────────────────────────────────────────
+    # Model probability on YES bets must be at least this high to take the
+    # trade.  Low-probability YES bets (e.g. fv=0.10 with entry=0.05) are
+    # edge-positive but lose 90% of the time — psychologically painful and
+    # high-variance.  Setting this to ~0.15 filters the riskiest long-shot
+    # YES bets while still allowing high-conviction NO bets on the same
+    # markets.  0.15 = 15% model probability floor.
+    min_yes_prob: float = 0.15
+
     # ── Slippage model ────────────────────────────────────────────────
     # "flat"   — fixed slippage_pct from strategy_params.json
     # "tiered" — 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
@@ -451,6 +460,7 @@ class BotConfig:
         s.kelly_fraction = float(os.getenv("KELLY_FRACTION", str(s.kelly_fraction)))
         s.daily_loss_limit = float(os.getenv("DAILY_LOSS_LIMIT", str(s.daily_loss_limit)))
         s.min_entry_price = float(os.getenv("MIN_ENTRY_PRICE", str(s.min_entry_price)))
+        s.min_yes_prob = float(os.getenv("MIN_YES_PROB", str(s.min_yes_prob)))
         s.flat_bet_usd = float(os.getenv("FLAT_BET_USD", str(s.flat_bet_usd)))
 
 
@@ -589,11 +599,11 @@ def apply_persisted_strategy_params() -> dict:
 
     # Safety constants — these are HARD limits that cannot be overridden
     # by the SIA loop / Karpathy search / strategy_params.json.
-    MIN_EDGE_FLOOR = 0.05          # 5% — below this = negative-EV after fees
-    KELLY_FRACTION_MIN = 0.05      # 5% — below this = Kelly sizing is meaningless
-    KELLY_FRACTION_MAX = 0.25      # 25% — above this = too aggressive
-    MIN_ENTRY_PRICE_FLOOR = 0.05   # 5% — long-shot markets bleed
-    INEFFICIENCY_MIN_FLOOR = -0.20 # -20% — anything more negative = noise
+    MIN_EDGE_FLOOR = 0.05  # 5% — below this = negative-EV after fees
+    KELLY_FRACTION_MIN = 0.05  # 5% — below this = Kelly sizing is meaningless
+    KELLY_FRACTION_MAX = 0.25  # 25% — above this = too aggressive
+    MIN_ENTRY_PRICE_FLOOR = 0.05  # 5% — long-shot markets bleed
+    INEFFICIENCY_MIN_FLOOR = -0.20  # -20% — anything more negative = noise
 
     if "min_edge" in persisted:
         try:
@@ -602,9 +612,12 @@ def apply_persisted_strategy_params() -> dict:
             clamped = max(raw, MIN_EDGE_FLOOR)
             if clamped != raw:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "strategy_params.json min_edge=%.4f clamped to floor %.4f "
-                    "(below breakeven after 5%% fee + slippage)", raw, clamped
+                    "(below breakeven after 5%% fee + slippage)",
+                    raw,
+                    clamped,
                 )
             s.min_edge = clamped
             applied["min_edge"] = s.min_edge
@@ -617,9 +630,13 @@ def apply_persisted_strategy_params() -> dict:
             clamped = min(max(raw, KELLY_FRACTION_MIN), KELLY_FRACTION_MAX)
             if clamped != raw:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "strategy_params.json kelly_fraction=%.4f clamped to [%.2f, %.2f] -> %.4f",
-                    raw, KELLY_FRACTION_MIN, KELLY_FRACTION_MAX, clamped
+                    raw,
+                    KELLY_FRACTION_MIN,
+                    KELLY_FRACTION_MAX,
+                    clamped,
                 )
             s.kelly_fraction = clamped
             applied["kelly_fraction"] = s.kelly_fraction
@@ -634,9 +651,9 @@ def apply_persisted_strategy_params() -> dict:
             clamped = max(raw, MIN_ENTRY_PRICE_FLOOR)
             if clamped != raw:
                 import logging
+
                 logging.getLogger(__name__).warning(
-                    "strategy_params.json min_entry_price=%.4f clamped to floor %.4f",
-                    raw, clamped
+                    "strategy_params.json min_entry_price=%.4f clamped to floor %.4f", raw, clamped
                 )
             s.min_entry_price = clamped
             applied["min_entry_price"] = s.min_entry_price
@@ -648,9 +665,9 @@ def apply_persisted_strategy_params() -> dict:
             clamped = max(raw, INEFFICIENCY_MIN_FLOOR)
             if clamped != raw:
                 import logging
+
                 logging.getLogger(__name__).warning(
-                    "strategy_params.json inefficiency_min=%.4f clamped to floor %.4f",
-                    raw, clamped
+                    "strategy_params.json inefficiency_min=%.4f clamped to floor %.4f", raw, clamped
                 )
             s.inefficiency_min = clamped
             applied["inefficiency_min"] = s.inefficiency_min

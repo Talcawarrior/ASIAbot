@@ -1186,6 +1186,36 @@ def get_health_check():
         min_net_edge = min(net_edges) if net_edges else 0
         max_net_edge = max(net_edges) if net_edges else 0
 
+        # 3b. Edge distribution for OPEN bets
+        open_for_edge = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
+        open_analysis_ids = [b.analysis_id for b in open_for_edge if b.analysis_id]
+        open_analyses_by_id = {}
+        if open_analysis_ids:
+            for a in db.query(Analysis).filter(Analysis.id.in_(open_analysis_ids)).all():
+                open_analyses_by_id[a.id] = a
+
+        open_edge_values = []
+        for b in open_for_edge:
+            if b.analysis_id:
+                analysis = open_analyses_by_id.get(b.analysis_id)
+                if analysis:
+                    open_edge_values.append(
+                        {
+                            "bet_id": b.id,
+                            "raw_edge_pct": (round((analysis.raw_edge or 0) * 100, 2) if analysis.raw_edge else None),
+                            "net_edge_pct": (round((analysis.edge or 0) * 100, 2) if analysis.edge else None),
+                            "market_id": b.market_id,
+                            "city": b.city,
+                            "amount": b.amount,
+                            "status": b.status,
+                        }
+                    )
+
+        open_net_edges = [e["net_edge_pct"] for e in open_edge_values if e["net_edge_pct"] is not None]
+        open_avg_edge = sum(open_net_edges) / len(open_net_edges) if open_net_edges else 0
+        open_min_edge = min(open_net_edges) if open_net_edges else 0
+        open_max_edge = max(open_net_edges) if open_net_edges else 0
+
         # 4. All-Time Closed Bets Summary (settled + closed_early)
         settled_all = (
             db.query(Bet)
@@ -1384,6 +1414,13 @@ def get_health_check():
                 "min_net_edge_pct": round(min_net_edge, 2),
                 "max_net_edge_pct": round(max_net_edge, 2),
                 "count": len(edge_values),
+            },
+            "open_edge_distribution": {
+                "values": open_edge_values,
+                "avg_net_edge_pct": round(open_avg_edge, 2),
+                "min_net_edge_pct": round(open_min_edge, 2),
+                "max_net_edge_pct": round(open_max_edge, 2),
+                "count": len(open_edge_values),
             },
             "summary_all": {
                 "total_settled": total_settled,

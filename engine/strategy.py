@@ -456,7 +456,7 @@ class RiskManager:
                     min_edge_threshold = float(getattr(self.config, "MIN_EDGE", 0.05))
                     # Close if edge dropped below half of min_edge (heavily degraded)
                     if current_edge < (min_edge_threshold / 2):
-                        return True, f"Edge erosion: {current_edge:.1%} < {min_edge_threshold/2:.1%} (threshold)"
+                        return True, f"Edge erosion: {current_edge:.1%} < {min_edge_threshold / 2:.1%} (threshold)"
         except Exception:
             pass  # Don't let edge erosion check crash the whole exit logic
 
@@ -615,7 +615,7 @@ class BettingEngine:
     def create_ladder_orders(self, signal: dict, bet_size: float) -> list[dict]:
         """Create 3-level ladder orders. All start as PENDING."""
         edge = signal.get("edge", 0)
-        if edge < 0.05:
+        if edge < bot_config.strategy.min_edge:
             return []
 
         current_price = signal["market_price"]
@@ -701,6 +701,20 @@ class BettingEngine:
                 yes_edge = model_prob - yes_price
                 no_edge = (1.0 - model_prob) - (1.0 - yes_price)
                 side = "YES" if yes_edge >= no_edge else "NO"
+
+                # YES probability floor filter.
+                # Low-probability YES bets (< min_yes_prob) lose ~90% of the
+                # time even when edge-positive — skip them.
+                if side == "YES" and model_prob < bot_config.strategy.min_yes_prob:
+                    logger.debug(
+                        "Skipping YES side on %s: model_prob=%.3f < min_yes_prob=%.2f, yes_edge=%.4f no_edge=%.4f",
+                        city_code,
+                        model_prob,
+                        bot_config.strategy.min_yes_prob,
+                        yes_edge,
+                        no_edge,
+                    )
+                    return None
             except Exception:
                 model_prob = 0.55
 
@@ -746,7 +760,7 @@ class BettingEngine:
             side=side,
         )
 
-        if sig.edge > 0.05:
+        if sig.edge > bot_config.strategy.min_edge:
             sig.ladder_orders = self.create_ladder_orders(signal_dict, sig.bet_size)
 
         return sig
