@@ -36,6 +36,9 @@ def get_engine():
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA cache_size=10000")
         cursor.execute("PRAGMA busy_timeout=30000")
+        # FIX: Enable FK enforcement so Bet.market_id / Bet.analysis_id
+        # constraints are actually checked (was disabled by default).
+        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
     return eng

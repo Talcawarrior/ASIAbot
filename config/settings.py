@@ -71,7 +71,10 @@ class StrategyConfig:
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
     max_bet_amount: float = 6.0  # Maximum $6 per bet (0.6% of $1,000)
-    max_bet_pct: float = 0.006  # Max bet as % of portfolio (single source of truth)
+    # FIX: Was 0.006 (0.6%), .env.example uses 0.03 (3%). The 10x divergence
+    # meant local dev (no .env) capped bets at $6 on a $1000 portfolio,
+    # completely nullifying Kelly sizing. Align with .env.example.
+    max_bet_pct: float = 0.03  # Max bet as % of portfolio (3%, aligned with .env.example)
     min_bet_size: float = 1.0  # Minimum bet size in USD
     total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
