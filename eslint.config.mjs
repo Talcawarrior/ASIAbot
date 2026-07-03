@@ -44,7 +44,35 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills"]
+  // FIX: Added .venv/**, .git/**, scripts/**, data/**, tests/**, *.py, *.db
+  // to prevent eslint from scanning Python files (caused OOM/timeout in test report).
+  ignores: [
+    "node_modules/**",
+    ".next/**",
+    "out/**",
+    "build/**",
+    "next-env.d.ts",
+    "examples/**",
+    "skills/**",
+    // Python venv & source (eslint should only lint src/)
+    ".venv/**",
+    "venv/**",
+    ".git/**",
+    "*.py",
+    "*.db",
+    "asi_engine/**",
+    "config/**",
+    "data_pipeline/**",
+    "database/**",
+    "engine/**",
+    "executor/**",
+    "jobs/**",
+    "scrapers/**",
+    "utils/**",
+    "tests/**",
+    "scripts/**",
+    "data/**",
+  ],
 }];
 
 export default eslintConfig;

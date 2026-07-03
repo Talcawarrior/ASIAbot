@@ -149,7 +149,10 @@ class SettlementEngine:
 
         # ── Fetch resolution from Gamma API ────────────────────────────────
         outcome = self._fetch_market_resolution(market)
-        if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=24):
+        # FIX: Threshold was 24h in code but 48h in comments/logs — unified to 48h.
+        # This gives Polymarket enough time to publish umaResolutionStatus before
+        # we fall back to outcomePrices inspection.
+        if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
             # Fallback: resolution tarihi +48h geçmişse, outcomePrices'a bak
             outcome = self._fallback_price_resolution(market)
             if outcome:

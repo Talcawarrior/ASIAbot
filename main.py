@@ -87,8 +87,29 @@ def _ensure_port_free(port: int, host: str = "127.0.0.1") -> None:
 
 def run_cli():
     """CLI entry point: run, reset, fetch, parse, weather, analyze."""
-    parser = argparse.ArgumentParser()
-    parser.add_argument("command")
+    parser = argparse.ArgumentParser(
+        description="ASIAbot — Polymarket weather trading bot.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py bot       # Run bot + API + dashboard + background loops
+  python main.py run       # API + dashboard only (no background loops)
+  python main.py fetch     # One-shot: fetch markets from Polymarket
+  python main.py analyze   # One-shot: analyze pending markets
+  python main.py bet       # One-shot: place bets on analyzed markets
+  python main.py settle    # One-shot: settle resolved markets
+  python main.py report    # One-shot: print portfolio report
+  python main.py reset     # Cancel all bets, reset portfolio (DESTRUCTIVE)
+""",
+    )
+    parser.add_argument(
+        "command",
+        choices=[
+            "bot", "run", "reset",
+            "fetch", "parse", "weather", "analyze", "bet", "settle", "report",
+        ],
+        help="Command to run. Use --help for details.",
+    )
     args = parser.parse_args()
     init_db()
     ensure_initial_portfolio()
@@ -214,12 +235,29 @@ def run_cli():
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "reset":
         db = get_db_session()
-        db.query(Bet).update({"status": "cancelled"})
-        db.query(Analysis).delete()
-        pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
-        pf.cash_balance = config.INITIAL_PORTFOLIO
-        db.commit()
-        db.close()
+        try:
+            db.query(Bet).update({"status": "cancelled"})
+            db.query(Analysis).delete()
+            pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
+            if pf is None:
+                # No portfolio row yet — create fresh.
+                pf = Portfolio(id=1, cash_balance=config.INITIAL_PORTFOLIO)
+                db.add(pf)
+            else:
+                # FIX: Reset ALL portfolio fields, not just cash_balance.
+                # Previously total_won / total_lost / total_realized_pnl /
+                # total_value / current_value / daily_pnl were left stale.
+                pf.cash_balance = config.INITIAL_PORTFOLIO
+                pf.total_value = config.INITIAL_PORTFOLIO
+                pf.current_value = config.INITIAL_PORTFOLIO
+                pf.initial_value = config.INITIAL_PORTFOLIO
+                pf.total_realized_pnl = 0.0
+                pf.total_won = 0
+                pf.total_lost = 0
+                pf.daily_pnl = 0.0
+            db.commit()
+        finally:
+            db.close()
     elif args.command in cmds:
         print(cmds[args.command]())
 

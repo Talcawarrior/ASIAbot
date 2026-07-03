@@ -106,11 +106,32 @@ python -c "from database.db import init_db; init_db()"
 ### Dashboard Build
 
 ```bash
-# Root'tan build et (dashboard/out/ otomatik oluşturulur)
+# Root'tan build et (out/ dizini otomatik oluşturulur)
 npm run build
 ```
 
-> **Not:** Bot `python main.py bot` ile başlatıldığında dashboard otomatik build edilir.
+> **Not:** `output: "export"` modu `out/` dizinine statik HTML/CSS/JS üretir. Bot `python main.py bot` ile başlatıldığında dashboard otomatik build edilir (src/ out/'tan yeniyse).
+
+### API Güvenliği (Production)
+
+Bot'u internete açmadan önce **mutlaka** `ASIABOT_API_KEY` env değişkenini set edin:
+
+```bash
+# Güçlü anahtar üret
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+# .env dosyasına ekle
+echo "ASIABOT_API_KEY=ürettiğin_anahtar" >> .env
+```
+
+Set edildiğinde, tüm POST endpoint'leri `X-API-Key` header'ı gerektirir:
+
+```bash
+curl -X POST http://localhost:8091/api/reset \
+  -H "X-API-Key: ürettiğin_anahtar"
+```
+
+> ⚠️ **Uyarı:** `ASIABOT_API_KEY` set edilmezse API açık modda çalışır — tüm POST endpoint'leri (reset, cleanup, start/stop) kimlik doğrulamasız çalışır. **Sadeca localhost için güvenlidir.** `HOST=0.0.0.0` yapmadan önce mutlaka set edin.
 
 ### Çalıştırma
 
@@ -155,7 +176,10 @@ Bot ayağa kalktığında:
 | `GET /api/bets` | Bahis geçmişi (status, limit, offset filtresi) |
 | `GET /api/signals` | Açık pozisyonlar + canlı edge takibi |
 | `GET /api/history` | Kapanmış bahislerin W/L/ROI geçmişi (exit_price dahil) |
+| `GET /api/equity-curve` | Günlük PnL serisi (portföy değeri zaman grafiği) |
+| `GET /api/slippage` | Slippage tahmin kayıtları (model doğrulama) |
 | `GET /api/asi/trades` | On-chain Polymarket trade verisi |
+| `GET /api/asi/orderbook` | ResolvedMarkets'ten CLOB orderbook derinliği |
 
 ### ASI-Evolve
 
@@ -164,19 +188,21 @@ Bot ayağa kalktığında:
 | `GET /api/asi/weights` | Güncel model ağırlıkları |
 | `GET /api/asi/cognition` | Cognition Base içgörüleri |
 | `GET /api/asi/calibration` | Şehir bazlı bias kalibrasyon haritası |
-| `POST /api/asi/evolve` | 5 turlu evrim pipeline'ı başlat |
-| `POST /api/asi/backfill` | Tarihsel veri backfill (Open-Meteo) |
-| `POST /api/asi/calibration/recalculate` | Kalibrasyon bias'larını yeniden hesapla |
-| `POST /api/asi/autoresearch/run` | AI Scientist araştırma motoru |
+| `POST /api/asi/evolve` 🔒 | 5 turlu evrim pipeline'ı başlat |
+| `POST /api/asi/backfill` 🔒 | Tarihsel veri backfill (Open-Meteo) |
+| `POST /api/asi/calibration/recalculate` 🔒 | Kalibrasyon bias'larını yeniden hesapla |
 
 ### Kontrol
 
 | Endpoint | Açıklama |
 |----------|----------|
-| `POST /api/start` | Bot döngülerini başlat |
-| `POST /api/stop` | Bot döngülerini durdur |
-| `POST /api/reset` | Bot'u sıfırla (tüm bet'leri iptal et) |
+| `POST /api/cleanup` 🔒 | Eski bet'leri iptal et + stake iadesi |
+| `POST /api/start` 🔒 | Bot döngülerini başlat |
+| `POST /api/stop` 🔒 | Bot döngülerini durdur |
+| `POST /api/reset` 🔒 | Bot'u sıfırla (tüm bet'leri iptal et, portföyü resetle) |
 | `WS /ws` | WebSocket canlı güncellemeler |
+
+> 🔒 = **Korunan endpoint**. `ASIABOT_API_KEY` env değişkeni set edildiğinde, bu endpoint'ler `X-API-Key` header'ı gerektirir. Set edilmezse API açık modda çalışır (sadece localhost için güvenli).
 
 ---
 
@@ -192,22 +218,24 @@ Bot ayağa kalktığında:
 | `SETTLEMENT_INTERVAL` | `120` | Settlement kontrol aralığı (saniye) |
 | `SIA_INTERVAL` | `86400` | SIA optimizasyon aralığı (saniye) |
 | `MAX_EXPOSURE_PCT` | `0.25` | Maksimum exposure oranı |
-| `MAX_BET_PCT` | `0.006` | Maksimum bet büyüklüğü (portföy %) |
-| `MAX_BET_AMOUNT` | `6.0` | Maksimum tek bahis tutarı ($) |
-| `DAILY_LOSS_LIMIT` | `0.20` | Günlük zarar limiti (portföy %) |
+| `MAX_BET_PCT` | `0.03` | Maksimum bet büyüklüğü (portföy %3'ü) |
+| `MAX_BET_AMOUNT` | `3.0` | Maksimum tek bahis tutarı ($) |
+| `DAILY_LOSS_LIMIT` | `0.05` | Günlük zarar limiti (portföy %5'i) |
 | `KELLY_FRACTION` | `0.15` | Fractional Kelly katsayısı |
 | `CITY_CAP` | `4` | Şehir başına maksimum pozisyon |
 | `HOST` | `127.0.0.1` | Sunucu adresi |
 | `PORT` | `8091` | API portu |
-| `FEE_DRAG` | `0.02` | Polymarket taker fee (%2) |
-| `ASIABOT_API_KEY` | — | API koruması için anahtar (yoksa dev mod) |
+| `FEE_DRAG` | `0.05` | Polymarket Weather taker fee (%5) |
+| `ASIABOT_API_KEY` | — | API koruması için anahtar (yoksa açık mod) |
+
+> **Not:** `MAX_BET_PCT` ve `MAX_BET_AMOUNT` .env.example ile senkron tutulur. `FEE_DRAG` gerçek Polymarket Weather kategori fee oranı olan %5'e ayarlı (eski sürümlerde yanlış %2 idi).
 
 ### Risk Parametreleri
 
 | Parametre | Varsayılan | Açıklama |
 |-----------|-----------|----------|
 | `take_profit_pct` | `1.0` | Take-profit eşiği (%100 kâr) |
-| `stop_loss_pct` | `0.30` | Stop-loss eşiği (%30 zarar) |
+| `stop_loss_pct` | `0.20` | Stop-loss eşiği (%20 zarar — hızlı kayıp kesme) |
 | `trailing_stop_pct` | `0.15` | Trailing stop eşiği (%15 gerileme) |
 | `MIN_HOLD_MINUTES` | `3` | Minimum bekleme süresi (dakika) |
 
