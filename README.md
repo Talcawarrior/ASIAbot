@@ -191,6 +191,40 @@ python main.py settle   # Settlement
 python main.py report   # Rapor
 ```
 
+### Hızlı Açılış (86 sn → 2 sn)
+
+Bot açılış süresi 3 faktöre bağlıdır:
+
+| Senaryo | Süre | Açıklama |
+|---------|------|----------|
+| **Cold start** (npm install + build) | ~30-86 sn | İlk açılış, `node_modules` + `out/` yok |
+| **Warm start** (out/ + node_modules hazır) | ~2.5 sn | Normal açılış |
+| **Skip build** (`SKIP_DASHBOARD_BUILD=true`) | ~2 sn | Production modu |
+
+#### En Hızlı Açılış İçin
+
+```bash
+# 1. İlk sefer: npm install + build yap (bir kez)
+npm install
+npm run build
+
+# 2. Sonraki açılışlarda: build'i atla
+export SKIP_DASHBOARD_BUILD=true
+python main.py bot
+
+# veya .env'ye ekle:
+echo "SKIP_DASHBOARD_BUILD=true" >> .env
+python main.py bot
+```
+
+#### Neden Hızlı?
+
+- **`SKIP_DASHBOARD_BUILD=true`** → `npx next build` tamamen atlanır (~25 sn tasarruf)
+- **`npm ci`** (package-lock varsa) → `npm install`'dan 2-3x daha hızlı
+- **`PER-5 warm-start`** → restart sonrası 47 şehir DB'den cache'e yüklenir (~60 sn tasarruf)
+- **Paralel tarama** → `parse_markets` + `fetch_weather` aynı anda çalışır (~50 sn tasarruf)
+- **`forecast_days=5`** → 14 yerine 5 gün (~10 sn tasarruf)
+
 Bot ayağa kalktığında:
 - **API**: http://localhost:8091
 - **Dashboard**: http://localhost:8091 (Next.js static export)

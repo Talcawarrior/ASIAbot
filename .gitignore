@@ -37,8 +37,9 @@ node_modules/
 dashboard/node_modules/
 dashboard/out/
 dashboard/.next/
-dashboard/package-lock.json
-package-lock.json
+# HIZ FIX: package-lock.json COMMITLENMELI (npm ci icin, 2-3x daha hizli)
+# dashboard/package-lock.json  → artik commitleniyor
+# package-lock.json            → artik commitleniyor
 bun.lock
 *.log
 server_err.txt

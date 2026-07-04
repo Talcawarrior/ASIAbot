@@ -155,44 +155,51 @@ Examples:
             return max(pkg_mtime, src_mtime) > out_mtime
 
         if _needs_build() and os.path.isfile(_pkg):
-            # FIX: node_modules yoksa once npm install calistir.
-            # Aksi takdirde `npx next build` indirmeye calisir ve
-            # "workspace root" hatasi verir.
-            _node_modules = os.path.join(_base, "node_modules")
-            if not os.path.isdir(_node_modules):
-                logger.info("node_modules not found — running 'npm install' first...")
+            # HIZ OPTIMIZASYONU: SKIP_DASHBOARD_BUILD=true ise build'i tamamen atla.
+            # Production'da out/ commit'liyse veya CI'da build yapildiysa kullan.
+            # Bot aninda acilir (npm install + next build atlanir).
+            if os.getenv("SKIP_DASHBOARD_BUILD", "false").lower() == "true":
+                logger.info("SKIP_DASHBOARD_BUILD=true — dashboard build atlandi")
+            else:
+                # FIX: node_modules yoksa once npm install calistir.
+                # HIZ: npm ci kullan (package-lock varsa 2-3x daha hizli).
+                _node_modules = os.path.join(_base, "node_modules")
+                _lock = os.path.join(_base, "package-lock.json")
+                if not os.path.isdir(_node_modules):
+                    install_cmd = ["npm", "ci"] if os.path.isfile(_lock) else ["npm", "install"]
+                    logger.info("node_modules not found — running '%s' first...", " ".join(install_cmd))
+                    try:
+                        install_result = subprocess.run(
+                            install_cmd,
+                            cwd=_base,
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
+                        if install_result.returncode == 0:
+                            logger.info("%s SUCCESS", " ".join(install_cmd))
+                        else:
+                            logger.warning(
+                                "%s failed: %s", " ".join(install_cmd), install_result.stderr[:500]
+                            )
+                    except Exception as e:
+                        logger.warning("npm install error: %s", e)
+
+                logger.info("Dashboard source changed — auto-building...")
                 try:
-                    install_result = subprocess.run(
-                        ["npm", "install"],
+                    result = subprocess.run(
+                        ["npx", "next", "build"],
                         cwd=_base,
                         capture_output=True,
                         text=True,
-                        timeout=300,
+                        timeout=120,
                     )
-                    if install_result.returncode == 0:
-                        logger.info("npm install SUCCESS")
+                    if result.returncode == 0:
+                        logger.info("Dashboard auto-build SUCCESS")
                     else:
-                        logger.warning(
-                            "npm install failed: %s", install_result.stderr[:500]
-                        )
+                        logger.warning("Dashboard auto-build failed: %s", result.stderr[:500])
                 except Exception as e:
-                    logger.warning("npm install error: %s", e)
-
-            logger.info("Dashboard source changed — auto-building...")
-            try:
-                result = subprocess.run(
-                    ["npx", "next", "build"],
-                    cwd=_base,
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                if result.returncode == 0:
-                    logger.info("Dashboard auto-build SUCCESS")
-                else:
-                    logger.warning("Dashboard auto-build failed: %s", result.stderr[:500])
-            except Exception as e:
-                logger.warning("Dashboard auto-build error: %s", e)
+                    logger.warning("Dashboard auto-build error: %s", e)
 
         # ── Start bot: API + Dashboard + Background loops ────────────────────
         if os.path.isdir(_out):
