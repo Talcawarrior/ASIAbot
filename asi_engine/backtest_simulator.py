@@ -14,11 +14,16 @@ from database.models import Analysis, Bet, WeatherMarket
 from utils.formulas import polymarket_fee
 from utils.kelly import kelly_bet_amount
 from utils.probability import estimate_probability
+from utils.slippage import adjust_edge_for_costs, estimate_slippage
 
 # Weather category fee rate — loaded from config (default 0.05)
 from config.settings import bot_config as _bot_cfg
 
 WEATHER_FEE_RATE = _bot_cfg.weather_fee_rate
+
+# HATA-12 FIX: Backtest simulator'a slippage + gas eklendi.
+# Onceki kod sadece fixed 5% fee drag (ev = sim_edge - 0.05) kullaniyordu.
+GAS_COST_USD = 0.10  # Polygon gas per trade
 
 logger = logging.getLogger("ASI_BACKTESTER")
 
@@ -109,8 +114,10 @@ class BacktestSimulator:
                     sim_edge = no_edge
                     entry_price = no_price
 
-                # Check if edge exceeds proposed min_edge (plus 5% Polymarket fee)
-                ev = sim_edge - 0.05
+                # HATA-12 FIX: Dinamik EV hesabi (slippage + fee_drag + gas dahil).
+                ev = adjust_edge_for_costs(
+                    sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0
+                )
                 if sim_edge >= min_edge and ev > 0:
                     # Yes, would place a bet!
                     total_bets_opened += 1
@@ -122,27 +129,32 @@ class BacktestSimulator:
                         prob_win,
                         entry_price,
                         fraction=kelly_fraction,
-                        min_bet=1.0,
+                        min_bet=0.0,  # HATA-12 FIX: 1.0 → 0.0 (dusuk Kelly'yi zorla açma)
                         max_bet_pct=0.03,
+                        edge=sim_edge,  # EV FIX: dinamik sizing
                     )
+                    if bet_size <= 0:
+                        continue  # Kelly cok dusuk — bet açma
 
                     # Evaluate bet outcome
                     won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
                     total_wagered += bet_size
 
+                    # HATA-12 FIX: Slippage-adjusted entry price + gas
+                    slip_est = estimate_slippage(entry_price, stake_usd=bet_size)
+                    adj_entry = entry_price * (1.0 + slip_est.slippage_pct)
+                    adj_entry = max(0.01, min(0.99, adj_entry))
+                    shares = bet_size / adj_entry
+
                     if won:
                         bets_won += 1
-                        payout = bet_size / entry_price
-                        # Polymarket taker fee: C × feeRate × p × (1-p)
-                        shares = bet_size / entry_price
-                        fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
-                        pnl = payout - bet_size - fee
+                        payout = bet_size / adj_entry
+                        fee = polymarket_fee(shares, adj_entry, WEATHER_FEE_RATE)
+                        pnl = payout - bet_size - fee - GAS_COST_USD
                     else:
                         bets_lost += 1
-                        # Fee is also lost on losing bets (paid at entry in real system)
-                        shares = bet_size / entry_price
-                        fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
-                        pnl = -(bet_size + fee)
+                        fee = polymarket_fee(shares, adj_entry, WEATHER_FEE_RATE)
+                        pnl = -(bet_size + fee + GAS_COST_USD)
 
                     simulated_pnl += pnl
                     bankroll += pnl
@@ -323,7 +335,9 @@ class BacktestSimulator:
                 sim_edge = no_edge
                 entry_price = no_price
 
-            ev = sim_edge - 0.05
+            ev = adjust_edge_for_costs(
+                sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0
+            )
             if sim_edge >= min_edge and ev > 0:
                 total_trades += 1
                 prob_win = prob if sim_side == "YES" else (1.0 - prob)
@@ -332,26 +346,31 @@ class BacktestSimulator:
                     prob_win,
                     entry_price,
                     fraction=kelly_fraction,
-                    min_bet=1.0,
+                    min_bet=0.0,  # HATA-12 FIX
                     max_bet_pct=0.03,
+                    edge=sim_edge,  # EV FIX
                 )
+                if bet_size <= 0:
+                    continue
 
                 won = (sim_side == "YES" and outcome_yes) or (sim_side == "NO" and not outcome_yes)
                 total_wagered += bet_size
 
+                # HATA-12 FIX: Slippage + gas
+                slip_est = estimate_slippage(entry_price, stake_usd=bet_size)
+                adj_entry = entry_price * (1.0 + slip_est.slippage_pct)
+                adj_entry = max(0.01, min(0.99, adj_entry))
+                shares = bet_size / adj_entry
+
                 if won:
                     trades_won += 1
-                    payout = bet_size / entry_price
-                    # Polymarket taker fee: C × feeRate × p × (1-p)
-                    shares = bet_size / entry_price
-                    fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
-                    pnl = payout - bet_size - fee
+                    payout = bet_size / adj_entry
+                    fee = polymarket_fee(shares, adj_entry, WEATHER_FEE_RATE)
+                    pnl = payout - bet_size - fee - GAS_COST_USD
                 else:
                     trades_lost += 1
-                    # Fee is also lost on losing bets (paid at entry in real system)
-                    shares = bet_size / entry_price
-                    fee = polymarket_fee(shares, entry_price, WEATHER_FEE_RATE)
-                    pnl = -(bet_size + fee)
+                    fee = polymarket_fee(shares, adj_entry, WEATHER_FEE_RATE)
+                    pnl = -(bet_size + fee + GAS_COST_USD)
 
                 sim_pnl += pnl
                 bankroll += pnl

@@ -116,6 +116,14 @@ class BotState:
         self.backfiller = DataBackfiller()
         self.calibration_engine = CalibrationEngine()
 
+        # PER-5 FIX: Warm-start — DB'deki son forecast'leri in-process cache'e yukle.
+        try:
+            loaded = self.weather_engine.warm_start_from_db()
+            if loaded > 0:
+                logger.info("WeatherEngine warm-start: %d cities pre-loaded", loaded)
+        except Exception as e:
+            logger.warning("WeatherEngine warm-start failed (non-fatal): %s", e)
+
 
 state = BotState()
 
@@ -318,8 +326,13 @@ def get_status():
                 mean_ret = sum(returns) / len(returns)
                 # Use N-1 (sample std) for unbiased estimate
                 std_ret = math.sqrt(sum((r - mean_ret) ** 2 for r in returns) / (len(returns) - 1))
-                # Annualize: assume ~4 bets/day over 365 days
-                sharpe_ratio = round(mean_ret / std_ret * math.sqrt(365 * 4), 4) if std_ret > 0 else 0.0
+                # HATA-5 FIX: Risk-free rate (T-bill ~5% yillik) ekle.
+                # 4 bet/gun × 365 gun = 1460 bet/yil → per-trade rf = 0.05/365/4
+                risk_free_per_trade = 0.05 / 365.0 / 4.0
+                if std_ret > 0:
+                    sharpe_ratio = round(
+                        (mean_ret - risk_free_per_trade) / std_ret * math.sqrt(365 * 4), 4
+                    )
 
             # Max Drawdown: simulate portfolio from initial capital.
         # Include unrealized PnL from open bets so that large open
@@ -463,12 +476,13 @@ def get_asi_weights():
         latest_brier = perf.brier_score if perf and perf.brier_score else None
         prev_brier = trend_map.get(model)
         # Determine trend direction
+        # HATA-4 FIX: Backend "up"/"down"/"stable" gonderir (frontend ayni enum'u bekler).
         if latest_brier is not None and prev_brier is not None and prev_brier > 0:
             delta = latest_brier - prev_brier
             if delta < -0.02:
-                trend = "improving"
+                trend = "up"  # Brier dustu = iyilesiyor = up arrow
             elif delta > 0.02:
-                trend = "declining"
+                trend = "down"  # Brier artti = kotulesiyor = down arrow
             else:
                 trend = "stable"
         else:

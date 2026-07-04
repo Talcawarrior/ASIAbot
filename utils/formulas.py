@@ -372,24 +372,8 @@ def daily_pnl(today_realized: float, open_bets: list) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 13. Exit price from PnL (for frontend exit-price reconstruction)
+# 13. (removed) exit_price_from_pnl — HATA-16 FIX
 # ---------------------------------------------------------------------------
-
-
-def exit_price_from_pnl(entry_price: float, realized_pnl: float, stake: float, side: str) -> float:
-    """Reconstruct the exit price from a closed bet's PnL.
-
-    For YES side:
-      exit = entry + (pnl / stake)
-    For NO side:
-      exit = entry - (|pnl| / stake)
-
-    Used by:
-      - frontend (api.ts:575-576) — trade history
-    """
-    if stake <= 0:
-        return entry_price
-    if side.upper() == "YES":
-        return min(1.0, entry_price * (1.0 + realized_pnl / stake))
-    else:
-        return max(0.0, entry_price * (1.0 - abs(realized_pnl) / stake))
+# Bu fonksiyon artik kullanilmiyor (dead code). Frontend zaten backend'den
+# gelen exit_price (bet.current_price) kullaniyor. Onceki Python docstring
+# YES/NO bazliydi, frontend fallback WIN/LOSS bazliydi — capisma vardi.

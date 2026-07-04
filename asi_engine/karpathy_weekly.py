@@ -259,12 +259,10 @@ def evaluate_hypothesis_oos(
         if entry <= 0 or entry >= 1 or prob <= 0 or prob >= 1:
             continue
 
-        # Kelly sizing (same formula as trading_model.compute_kelly_fraction)
-        b = (1.0 / entry) - 1.0
-        if b <= 0:
-            continue
-        q = 1.0 - prob
-        f_star = (b * prob - q) / b
+        # Kelly sizing — HATA-11 FIX: Artik utils/kelly.py kullaniliyor (tek kaynak).
+        from utils.kelly import kelly_fraction
+
+        f_star = kelly_fraction(prob, entry)
         if f_star <= 0:
             continue
 

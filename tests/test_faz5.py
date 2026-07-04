@@ -165,8 +165,17 @@ def test_portfolio_cash_decreases_after_bet():
             )
             bet = session.query(Bet).filter(Bet.market_id == "test-faz5-nyc").first()
             assert bet is not None
-            # Level 1 = 50% of recommended, cash -= Level 1 + entry_fee
-            expected_level1 = bet.amount * 0.5
+            # EV FIX: L1 split artık dinamik (edge band'ine göre).
+            # Yüksek edge → L1 %70, orta edge → L1 %50, düşük edge → L1 %40.
+            # ladder_data JSON'ından L1 yüzdesini oku.
+            import json as _json
+            ladder = _json.loads(bet.ladder_data) if bet.ladder_data else []
+            if ladder and len(ladder) > 0:
+                l1_amount = float(ladder[0].get("amount", 0))
+                expected_level1 = l1_amount
+            else:
+                # Ladder yoksa eski davranış: tam amount
+                expected_level1 = bet.amount
             entry_fee = bet.entry_fee or 0.0
             expected_cash = round(initial_cash - expected_level1 - entry_fee, 2)
             assert abs(pf.cash_balance - expected_cash) < 0.1, (

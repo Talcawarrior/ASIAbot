@@ -303,38 +303,44 @@ def check_orderbook_depth(
     if min_depth_usd <= 0 or not condition_id:
         return True, 0.0
 
+    # HATA-2 FIX: Once gercek API'ye (resolvedmarkets_ingest) dene.
+    # Eger API anahtari yoksa veya cagri basarisizsa, mock data donen
+    # resolved_markets_helper'a fallback yapma — graceful skip yap.
+    ob = None
     try:
-        from data_pipeline.resolved_markets_helper import ResolvedMarketsClient as HistoricalOrderbookClient
+        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as LiveOrderbookClient
 
-        client = HistoricalOrderbookClient()
-        ob = client.fetch_historical_orderbook(condition_id)
-        if not ob:
-            return True, 0.0
-
-        # Pick the relevant side: buying YES = consuming asks, buying NO = consuming bids
-        if side.upper() == "YES":
-            levels = ob.get("asks", [])
-        else:
-            levels = ob.get("bids", [])
-
-        # Sum depth within ±2 ticks (0.02) of fill_price
-        depth_usd = 0.0
-        for lvl in levels:
-            price = float(lvl.get("price", 0))
-            size = float(lvl.get("size", 0))
-            if abs(price - fill_price) <= 0.02:
-                depth_usd += price * size  # price * shares = USD value
-
-        ok = depth_usd >= min_depth_usd
-        if not ok:
-            logger.warning(
-                "Depth filter: %.2f USD < %.2f USD min at price %.4f (side=%s)",
-                depth_usd,
-                min_depth_usd,
-                fill_price,
-                side,
-            )
-        return ok, depth_usd
+        client = LiveOrderbookClient()
+        ob = client.get_live_orderbook(condition_id)
     except Exception as exc:
-        logger.warning("Depth check failed (graceful skip): %s", exc)
+        logger.warning("Live orderbook fetch failed: %s", exc)
+
+    if not ob or not isinstance(ob, dict):
+        # Gercek API yanit vermedi — mock kullanma, graceful skip
+        logger.info("Depth check skipped (no live orderbook data for %s)", condition_id)
         return True, 0.0
+
+    # Pick the relevant side: buying YES = consuming asks, buying NO = consuming bids
+    if side.upper() == "YES":
+        levels = ob.get("asks", [])
+    else:
+        levels = ob.get("bids", [])
+
+    # Sum depth within ±2 ticks (0.02) of fill_price
+    depth_usd = 0.0
+    for lvl in levels:
+        price = float(lvl.get("price", 0))
+        size = float(lvl.get("size", 0))
+        if abs(price - fill_price) <= 0.02:
+            depth_usd += price * size  # price * shares = USD value
+
+    ok = depth_usd >= min_depth_usd
+    if not ok:
+        logger.warning(
+            "Depth filter: %.2f USD < %.2f USD min at price %.4f (side=%s)",
+            depth_usd,
+            min_depth_usd,
+            fill_price,
+            side,
+        )
+    return ok, depth_usd

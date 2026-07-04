@@ -593,13 +593,17 @@ class BettingEngine:
             market_price = yes_price
             edge = model_prob - market_price
 
-        # Dynamic fee drag using Polymarket's actual formula: feeRate × p × (1-p)
-        # Per dollar of stake: shares = 1/price, fee_per_share = feeRate * p * (1-p)
-        # total_fee = feeRate * p * (1-p) * (1/p) = feeRate * (1-p)
-        dynamic_fee_drag = bot_config.strategy.fee_drag * (1.0 - market_price)
-        ev_dynamic = edge - dynamic_fee_drag
-        # Use the more conservative (smaller) EV
-        ev = min(edge - bot_config.strategy.fee_drag, ev_dynamic)
+        # HATA-7 FIX: Onceki kod kendi EV hesabi yapiyordu (edge - fee_drag),
+        # slippage dahil degildi. Artik Calculator ile ayni formulu kullaniyoruz:
+        # adjust_edge_for_costs(raw_edge, price) → edge - slippage - fee_drag - gas
+        from utils.slippage import adjust_edge_for_costs
+
+        ev = adjust_edge_for_costs(
+            edge,
+            market_price,
+            include_fee=True,
+            bet_amount_usd=market_data.get("recommended_amount"),
+        )
         # Canonical source: bot_config.strategy.min_edge (matches calculator).
         is_eligible = edge >= bot_config.strategy.min_edge and ev > 0
 

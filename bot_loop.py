@@ -13,6 +13,18 @@ from database.models import OPEN_BET_STATUSES, Bet, WeatherMarket
 logger = logging.getLogger("BOT_LOOP")
 
 
+# HATA-15 FIX: broadcast_message lazy import (circular import önlemek için)
+async def _safe_broadcast(message: dict):
+    """Broadcast message to WebSocket clients (best-effort)."""
+    try:
+        from api import broadcast_message
+        await broadcast_message(message)
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.debug("Broadcast failed: %s", e)
+
+
 def _is_midnight_window(now: datetime) -> bool:
     """Check if *now* is within the midnight fast-scan window (00:00 .. N minutes)."""
     from config.settings import bot_config
@@ -62,10 +74,17 @@ async def scan_and_bet_loop(state):
             if is_new_day:
                 logger.info("Midnight detected — running immediate scan for 2-day-ahead markets")
 
-            # Data fetching (each with its own session — I/O bound, no shared state needed)
+            # Data fetching — PER-2 FIX: Paralellestirme.
+            # fetch_markets once (market listesi lazim), sonra parse + weather paralel.
             await asyncio.to_thread(run_fetch_markets)
-            await asyncio.to_thread(run_parse_markets)
-            await asyncio.to_thread(run_fetch_weather)
+            parse_and_weather = await asyncio.gather(
+                asyncio.to_thread(run_parse_markets),
+                asyncio.to_thread(run_fetch_weather),
+                return_exceptions=True,
+            )
+            for result in parse_and_weather:
+                if isinstance(result, Exception):
+                    logger.error("Parallel step error: %s", result)
             # Core DB operations — single shared session for consistency
             await asyncio.to_thread(run_cycle)
 
@@ -77,6 +96,15 @@ async def scan_and_bet_loop(state):
         except Exception as e:
             logger.error("Scan error: %s", e)
         state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # HATA-15 FIX: WebSocket broadcast. Onceki kod broadcast_message
+        # fonksiyonu vardi ama hic cagrilmadi. Simdi her scan sonrasi
+        # bagli WebSocket istemcilerine status guncellemesi gonderiliyor.
+        await _safe_broadcast({
+            "type": "scan_complete",
+            "last_scan": state.last_scan.isoformat(),
+            "is_running": state.is_running,
+        })
 
         # Dynamic interval: fast during midnight window, normal otherwise
         now = datetime.now(timezone.utc).replace(tzinfo=None)

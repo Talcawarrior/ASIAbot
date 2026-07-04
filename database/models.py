@@ -32,6 +32,9 @@ class BetStatus(enum.Enum):
     FAILED = "failed"
     WON = "won"
     LOST = "lost"
+    # HATA-10 FIX: closed_early ve rejected enum'a eklendi (string olarak kullaniliyordu)
+    CLOSED_EARLY = "closed_early"  # TP/SL/trailing ile erken kapandi
+    REJECTED = "rejected"  # risk cap veya depth filter tarafindan reddedildi
 
 
 # ── Open bet statuses ────────────────────────────────────────────────────

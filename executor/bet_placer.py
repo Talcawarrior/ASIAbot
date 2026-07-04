@@ -5,7 +5,7 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 
 from config.settings import Config, bot_config
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
@@ -149,15 +149,37 @@ class BetPlacer:
 
             # Bu market'te su an acik veya bugun yerlestirilmis bir bahis var mi?
             # Ayni market'te ayni gun icinde tekrar bahis acmayi onler.
+            #
+            # HATA-1 + HATA-3 + HATA-14 FIX: Closed bet'leri (closed_early,
+            # settled_won/lost, cancelled) de REOPEN_COOLDOWN_HOURS (default 24h)
+            # penceresi icinde tekrar acmayi onler. Bu sayede take-profit ile
+            # kapanan bir bet ayni gun veya 24 saat icinde tekrar acilmaz.
+            # Cooldown kontrolu burada (place_bet icinde) yapilir — bu gate
+            # hem place_all_pending hem de manuel/API/CLI cagrilarda aktiftir.
             _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
             _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+            _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
+            _cooldown_cutoff = _today_start - timedelta(hours=_cooldown_hours)
+
             existing_open = (
                 session.query(Bet)
                 .filter(
                     Bet.market_id == analysis.market_id,
                     or_(
+                        # 1) Aktif bet varsa engelle
                         Bet.status.in_(OPEN_BET_STATUSES),
+                        # 2) Bugun acilmis bet varsa engelle
                         Bet.placed_at >= _today_start,
+                        # 3) Son N saatte kapanmis bet varsa engelle (cooldown)
+                        #    TP/SL/settled/cancelled hepsini kapsar.
+                        and_(
+                            Bet.status.notin_(OPEN_BET_STATUSES + ("rejected", "failed")),
+                            or_(
+                                Bet.closed_at >= _cooldown_cutoff,
+                                Bet.settled_at >= _cooldown_cutoff,
+                            ),
+                        ),
                     ),
                 )
                 .first()
@@ -167,6 +189,7 @@ class BetPlacer:
                 existing_open is None,
                 existing_id=existing_open.id if existing_open else None,
                 existing_status=existing_open.status if existing_open else None,
+                cooldown_hours=_cooldown_hours,
             )
             if not d.should_bet:
                 d.log(logging.INFO)
@@ -208,17 +231,27 @@ class BetPlacer:
             # Cap 1: per-bet cap (MAX_BET_PCT * portfolio). Formula from
             # utils/formulas.py → max_bet_cap(). Kelly sizing in calculator.py
             # already enforces this, but we re-apply here as a hard ceiling.
+            #
+            # EV FIX: Dinamik max_bet_pct kullan — yüksek edge → yüksek cap.
+            # Eski sabit %3 cap yüksek EV'yi sınırlıyordu (edge %30 ile %10
+            # aynı $29.70 bet'i açıyordu). Artık edge >= 0.20 ise %5 cap.
+            from utils.kelly import dynamic_max_bet_pct
+
+            _edge_for_cap = float(analysis.edge or 0.0)
+            _dyn_max_pct = dynamic_max_bet_pct(_edge_for_cap, float(self.risk_manager.config.MAX_BET_PCT))
             max_bet = max_bet_cap(
                 float(self.risk_manager.portfolio_value),
-                float(self.risk_manager.config.MAX_BET_PCT),
+                _dyn_max_pct,
             )
             if proposed_amount > max_bet:
                 logger.warning(
                     f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
-                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
+                    f"exceeds per-bet max ${max_bet:.2f} (edge={_edge_for_cap:.3f}, "
+                    f"dyn_pct={_dyn_max_pct:.3f}) — clamping."
                 )
                 proposed_amount = max_bet
             d.set_param("max_bet_cap", max_bet)
+            d.set_param("dynamic_max_bet_pct", _dyn_max_pct)
 
             # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * conservative portfolio).
             # check_exposure_cap now dynamically computes conservative value
@@ -389,18 +422,37 @@ class BetPlacer:
 
             bet.potential_payout = bet.amount / bet.price if bet.price > 0 else 0
 
-            # Paper ladder: if edge >= 0.05, create a 3-level ladder
+            # Paper ladder: if edge >= 0.05, create a 3-level ladder.
+            #
+            # EV FIX: Edge band'ine göre dinamik ladder split ve fiyat.
+            # Eski sabit 50/30/20 split + ×0.98/×0.95 fiyatlar edge'den
+            # bağımsızdı. Artık yüksek edge'de L1 daha agresif (%70) ve
+            # L2/L3 pyramiding (fiyat YÜKSELDİĞİNDE dolar — tezi doğrula).
+            # Düşük edge'de L1 daha保守 (%40) ve L2/L3 averaging down
+            # (fiyat DÜŞTÜĞÜNDE dolar — maliyet düşür).
             ladder_orders = []
             edge_val = float(analysis.edge or 0.0)
             if edge_val >= 0.05:
-                for lvl, pct in [(1, 0.50), (2, 0.30), (3, 0.20)]:
+                # EV FIX: Edge band'ine göre split ve fiyat faktörleri
+                if edge_val >= 0.20:
+                    # Yüksek EV: agresif L1, pyramiding (fiyat yükselince ekle)
+                    splits = [(1, 0.70), (2, 0.20), (3, 0.10)]
+                    price_factors = [1.0, 1.02, 1.05]  # fiyat yükselince (pyramiding)
+                    ladder_mode = "pyramiding"
+                elif edge_val >= 0.10:
+                    # Orta EV: standart 50/30/20, averaging down
+                    splits = [(1, 0.50), (2, 0.30), (3, 0.20)]
+                    price_factors = [1.0, 0.98, 0.95]  # fiyat düşünce (averaging)
+                    ladder_mode = "averaging"
+                else:
+                    # Düşük EV:保守, kademeli averaging
+                    splits = [(1, 0.40), (2, 0.35), (3, 0.25)]
+                    price_factors = [1.0, 0.98, 0.95]
+                    ladder_mode = "conservative_averaging"
+
+                for (lvl, pct), pf in zip(splits, price_factors):
                     lvl_amount = round(proposed_amount * pct, 2)
-                    if lvl == 1:
-                        lvl_price = fill_price
-                    elif lvl == 2:
-                        lvl_price = fill_price * 0.98
-                    else:
-                        lvl_price = fill_price * 0.95
+                    lvl_price = fill_price * pf
                     # Clamp price to [0.01, 0.99]
                     lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
                     lvl_shares = round(lvl_amount / lvl_price, 4) if lvl_price > 0 else 0.0
@@ -411,6 +463,7 @@ class BetPlacer:
                             "amount": lvl_amount,
                             "shares": lvl_shares,
                             "status": "pending",
+                            "mode": ladder_mode,
                         }
                     )
             bet.ladder_data = json.dumps(ladder_orders) if ladder_orders else "[]"

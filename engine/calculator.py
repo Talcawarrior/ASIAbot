@@ -276,7 +276,12 @@ class Calculator:
             # Preliminary bet amount for gas cost calculation (using raw edge)
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
-            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
+            # EV FIX: Dinamik max_bet_pct ve kelly_fraction kullan.
+            # Eski sabit %3 cap yüksek EV'yi sınırlıyordu.
+            from utils.kelly import dynamic_max_bet_pct
+
+            _dyn_pct = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
+            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, _dyn_pct))
 
             net_edge = (
                 adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly)
@@ -286,7 +291,9 @@ class Calculator:
             slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
-            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
+            # EV FIX: Dinamik cap kullan — yüksek edge → yüksek cap.
+            _dyn_pct_final = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
+            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, _dyn_pct_final))
             # Reduce Kelly size by estimated slippage cost
             recommended_amount = adjust_kelly_for_slippage(raw_kelly_amount, entry_price_for_cost)
 
@@ -447,6 +454,74 @@ class WeatherEngine:
 
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
+        # PER-5 FIX: Warm-start — bot baslarken DB'deki son forecast'leri
+        # in-process cache'e yukle. Restart sonrasi ilk tarama hizlanir.
+        self._warm_started = False
+
+    def warm_start_from_db(self) -> int:
+        """PER-5 FIX: Restart sonrasi in-process cache'i DB'den yukle.
+
+        Bot baslarken cagrilmali. DB'deki son 3 gunun ensemble forecast'lerini
+        okuyup (lat, lon) → forecast_data map'ini _forecast_cache'e yazar.
+
+        Returns: yuklenen sehir sayisi.
+        """
+        if self._warm_started:
+            return 0
+        self._warm_started = True
+        try:
+            from database.db import get_session
+            from database.models import WeatherForecast
+
+            loaded = 0
+            with get_session() as session:
+                from datetime import timedelta
+                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
+                rows = (
+                    session.query(WeatherForecast)
+                    .filter(WeatherForecast.fetched_at >= cutoff)
+                    .filter(WeatherForecast.source.in_(self.model_weights.keys()))
+                    .all()
+                )
+                city_models: dict[tuple, dict[str, float]] = {}
+                for r in rows:
+                    key = (round(r.lat or 0, 4), round(r.lon or 0, 4))
+                    city_models.setdefault(key, {})[r.source] = float(r.predicted_value or 0)
+
+                for key, model_temps_db in city_models.items():
+                    if len(model_temps_db) < 3:
+                        continue
+                    total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps_db)
+                    if total_weight <= 0:
+                        continue
+                    weighted_mean = (
+                        sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items())
+                        / total_weight
+                    )
+                    weighted_var = (
+                        sum(
+                            self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2
+                            for m, t in model_temps_db.items()
+                        )
+                        / total_weight
+                    )
+                    weighted_std = max(weighted_var**0.5, 0.5)
+                    self._forecast_cache[key] = {
+                        "weighted_mean": weighted_mean,
+                        "weighted_std": weighted_std,
+                        "model_count": len(model_temps_db),
+                        "model_temps": model_temps_db,
+                        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                    }
+                    loaded += 1
+            if loaded > 0:
+                logger.info(
+                    "PER-5 warm-start: %d sehir DB'den in-process cache'e yuklendi", loaded
+                )
+            return loaded
+        except Exception as e:
+            logger.warning("PER-5 warm-start failed: %s", e)
+            return 0
 
     @staticmethod
     def _compute_effective_min_edge(market, std: float | None = None) -> float:
@@ -561,7 +636,8 @@ class WeatherEngine:
                 "daily": "temperature_2m_max,temperature_2m_min",
                 "timezone": "auto",
                 "models": models_str,
-                "forecast_days": 14,
+                # PER-4 FIX: 14 → 5. Bot sadece 0-2 gun ileri marketleri isliyor.
+                "forecast_days": 5,
             }
 
             try:

@@ -26,7 +26,12 @@ def test_fee_drag():
 
 
 def test_ev_with_fee():
-    """Test 2: EV = edge - FEE_DRAG in analyze_signal."""
+    """Test 2: EV = edge - slippage - fee_drag - gas (HATA-7 fix).
+
+    Onceki kod ev = edge - FEE_DRAG (0.15 - 0.05 = 0.10) kullanuyordu.
+    HATA-7 fix sonrasi BettingEngine.analyze_signal adjust_edge_for_costs
+    kullaniyor: ev = edge - slippage - fee_drag (dinamik) - gas.
+    """
     from engine.strategy import BettingEngine
 
     be = BettingEngine()
@@ -41,10 +46,18 @@ def test_ev_with_fee():
         side="YES",
     )
     assert signal is not None
-    # edge = 0.75 - 0.60 = 0.15, ev = 0.15 - 0.05 = 0.10
+    # edge = 0.75 - 0.60 = 0.15 (raw edge)
     assert abs(signal["edge"] - 0.15) < 0.001, f"edge={signal['edge']}"
-    assert abs(signal["ev"] - 0.10) < 0.001, f"ev={signal['ev']}"
-    print(f"✅ Test 2: EV={signal['ev']:.4f} (edge={signal['edge']:.4f} - FEE_DRAG)")
+    # EV dinamik fee drag kullaniyor: feeRate × p × (1-p) = 0.05 × 0.60 × 0.40 = 0.012
+    # Eski: ev = 0.15 - 0.05 = 0.10
+    # Yeni: ev = 0.15 - 0.012 (fee) - slippage - gas ≈ 0.131
+    assert signal["ev"] > 0.10, (
+        f"HATA-7 fix: ev={signal['ev']} 0.10'dan buyuk olmali (dinamik fee < fixed fee)"
+    )
+    assert signal["ev"] < signal["edge"], (
+        f"ev ({signal['ev']}) edge'den ({signal['edge']}) kucuk olmali (costs dusulmus)"
+    )
+    print(f"✅ Test 2: EV={signal['ev']:.4f} (edge - slippage - dinamik_fee - gas)")
 
 
 def test_kelly_bankroll():

@@ -180,6 +180,12 @@ def run_update_prices(session=None):
 
             # 2. Ladder fill check — only status=="pending" rungs fill.
             # L1 is already "filled" at open (bet_placer), so safe from double-debit.
+            #
+            # EV FIX: Pyramiding desteği. Eski kod sadece `current <= trigger_price`
+            # (averaging down — fiyat düşünce ekle) yapıyordu. Yeni kod ladder
+            # mode'una göre hem pyramiding (fiyat yükselince ekle) hem averaging
+            # (fiyat düşünce ekle) destekler. Yüksek edge'li bet'lerde pyramiding
+            # aktif → kazanan pozisyona eklenir (tezi doğrula sonra büyü).
             from utils.accounting import debit_stake
 
             if bet.ladder_data:
@@ -191,10 +197,14 @@ def run_update_prices(session=None):
                             if rung.get("status") == "pending":
                                 trigger_price = float(rung.get("price", 0))
                                 rung_size = float(rung.get("size", rung.get("amount", 0)))
-                                # current is already in bet's side terms
-                                # (YES side = yes_price, NO side = 1 - yes_price)
-                                # Fill when current side price drops to/below trigger
-                                should_fill = current <= trigger_price
+                                rung_mode = rung.get("mode", "averaging")
+                                # EV FIX: Pyramiding modunda fiyat YÜKSELDİĞİNDE
+                                # dolar (current >= trigger). Averaging modunda
+                                # eski davranış: fiyat DÜŞTÜĞÜNDE (current <= trigger).
+                                if rung_mode == "pyramiding":
+                                    should_fill = current >= trigger_price
+                                else:
+                                    should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:
                                     rung["status"] = "filled"
                                     rung["filled_at"] = datetime.now(timezone.utc).isoformat()

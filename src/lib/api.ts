@@ -302,6 +302,15 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 
 // ---- Data mapping functions ----
 
+// HATA-13 FIX: Portfolio value hesabi tek yardimci fonksiyonda toplandi.
+function portfolioValue(
+  initial: number,
+  realizedPnl: number,
+  unrealizedPnl: number,
+): number {
+  return initial + realizedPnl + unrealizedPnl;
+}
+
 function mapKpiData(
   status: StatusResponse | null,
   health: HealthResponse | null,
@@ -375,7 +384,7 @@ function mapKpiData(
   const maxExposure = status.portfolio.max_exposure;
 
   return {
-    portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
+    portfolioValue: portfolioValue(p.initial, p.realized_pnl, p.unrealized_pnl),
     dailyPnl: p.daily_pnl,
     totalPnl: hs?.total_pnl ?? 0,
     openPositions: s.total_bets,
@@ -416,7 +425,7 @@ function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]
 
   if (settled.length === 0) {
     // Return a single point with current value
-    const current = status ? initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl : initial;
+    const current = status ? portfolioValue(initial, status.portfolio.realized_pnl, status.portfolio.unrealized_pnl) : initial;
     return [{ date: "Bugün", value: Math.round(current) }];
   }
 
@@ -441,7 +450,7 @@ function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]
 
   // Add current value as last point
   if (status) {
-    const current = initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl;
+    const current = portfolioValue(initial, status.portfolio.realized_pnl, status.portfolio.unrealized_pnl);
     const today = new Date();
     const todayKey = `${today.getDate()} ${today.toLocaleDateString("tr-TR", { month: "short" })}`;
     if (points.length === 0 || points[points.length - 1].date !== todayKey) {
@@ -701,12 +710,11 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       duration = hours > 0 ? `${hours}s ${mins}dk` : `${mins}dk`;
     }
 
-    // Use exit_price from API if available, otherwise fallback to computation
+    // HATA-6 FIX: Backend hep exit_price gonderiyor (bet.current_price).
+    // Frontend fallback formulu (WIN/LOSS bazli) formulas.py ile capisiyordu.
     const exitPrice = h.exit_price != null
       ? h.exit_price
-      : h.result === "WIN"
-        ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / (h.stake_amount || 10)))
-        : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / (h.stake_amount || 10)));
+      : h.entry_price;
 
     // closed_at for early exits, settled_at for normal settlements
     const closeDate = h.closed_at || h.settled_at;

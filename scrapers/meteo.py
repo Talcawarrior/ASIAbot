@@ -313,11 +313,12 @@ class MeteoFetcher:
             shared_session = loop.run_until_complete(_make_session())
 
             # --- PARALLEL FETCH: asyncio.gather with semaphore + smart throttle ---
-            # Instead of sequential for-loop (3s throttle × N cities = N×3s wait),
-            # fetch all cities concurrently with a semaphore to limit parallelism
-            # and a shared throttle lock to respect rate limits.
-            _THROTTLE_INTERVAL = 2.5  # seconds between API calls (Open-Meteo allows ~3s)
-            _MAX_CONCURRENT = 8  # max parallel API calls
+            # PER-3 FIX: Onceki Semaphore(8) + 2.5s throttle yavasti.
+            # Open-Meteo free tier ~60 req/dk = 1 req/s destekliyor.
+            # Throttle 1.0s'ye dusuruldu, concurrent 20'ye cikarildi.
+            # Net kazanım: ~65 sehir × 2.5s / 8 = ~20s → ~65 × 1s / 20 = ~3.5s
+            _THROTTLE_INTERVAL = 1.0  # seconds between API calls (Open-Meteo free tier ~1 req/s)
+            _MAX_CONCURRENT = 20  # max parallel API calls (PER-3 FIX: 8 → 20)
 
             _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
             _throttle_lock = asyncio.Lock()
