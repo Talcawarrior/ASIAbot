@@ -567,14 +567,15 @@ def get_asi_orderbook(market_id: str = "2513866"):
         try:
             cfg = ResolvedMarketsConfig(api_key=api_key)
             client = _RealResolvedClient(cfg)
-            orderbook = client.get_orderbook(market_id)
-            orderbook["is_demo"] = False
+            orderbook = client.get_live_orderbook(market_id)
+            if orderbook:
+                orderbook["is_demo"] = False
             return orderbook
         except Exception:
             pass
     # Fallback to mock with demo flag
     mock_client = _MockResolvedClient()
-    orderbook = mock_client.fetch_historical_orderbook(market_id)
+    orderbook = mock_client.fetch_historical_orderbook(market_id) or {}
     orderbook["is_demo"] = True
     return orderbook
 
