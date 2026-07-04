@@ -11,6 +11,13 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  // Next.js 16 Turbopack workspace root fix:
+  // "We couldn't find the Next.js package" hatasını önler.
+  // src/app dizininden Next.js çözümlenemediğinde workspace root
+  // yanlış infer edilir. Turbopack.root ile explicitly belirt.
+  turbopack: {
+    root: path.join(__dirname),
+  },
 };
 
 export default nextConfig;

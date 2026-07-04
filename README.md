@@ -131,6 +131,9 @@ cd ASIAbot
 # Python bağımlılıkları
 pip install -r requirements.txt
 
+# Dashboard bağımlılıkları (npm install — node_modules .gitignore'da)
+npm install
+
 # .env yapılandırması
 cp .env.example .env
 # .env dosyasını düzenle (API anahtarları, tercihler)
@@ -138,6 +141,8 @@ cp .env.example .env
 # Veritabanı
 python -c "from database.db import init_db; init_db()"
 ```
+
+> ⚠️ **Önemli:** `npm install` çalıştırmazsanız bot açılırken dashboard build'i hata verir. Bot ilk açılışta `node_modules` yoksa otomatik `npm install` çalıştırır, ama elle yapmak daha hızlıdır.
 
 ### Dashboard Build
 

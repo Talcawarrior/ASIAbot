@@ -155,6 +155,29 @@ Examples:
             return max(pkg_mtime, src_mtime) > out_mtime
 
         if _needs_build() and os.path.isfile(_pkg):
+            # FIX: node_modules yoksa once npm install calistir.
+            # Aksi takdirde `npx next build` indirmeye calisir ve
+            # "workspace root" hatasi verir.
+            _node_modules = os.path.join(_base, "node_modules")
+            if not os.path.isdir(_node_modules):
+                logger.info("node_modules not found — running 'npm install' first...")
+                try:
+                    install_result = subprocess.run(
+                        ["npm", "install"],
+                        cwd=_base,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                    if install_result.returncode == 0:
+                        logger.info("npm install SUCCESS")
+                    else:
+                        logger.warning(
+                            "npm install failed: %s", install_result.stderr[:500]
+                        )
+                except Exception as e:
+                    logger.warning("npm install error: %s", e)
+
             logger.info("Dashboard source changed — auto-building...")
             try:
                 result = subprocess.run(
