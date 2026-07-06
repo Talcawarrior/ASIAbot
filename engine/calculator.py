@@ -276,12 +276,15 @@ class Calculator:
             # Preliminary bet amount for gas cost calculation (using raw edge)
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
+            # Conservative value (initial + realized PnL) for cap calculations.
+            # max_bet_cap uses this as basis: conservative × MAX_EXPOSURE_PCT × max_bet_pct
+            conservative = (portfolio.initial_value or 1000.0) + (portfolio.total_realized_pnl or 0.0)
             # EV FIX: Dinamik max_bet_pct ve kelly_fraction kullan.
             # Eski sabit %3 cap yüksek EV'yi sınırlıyordu.
             from utils.kelly import dynamic_max_bet_pct
 
             _dyn_pct = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
-            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, _dyn_pct))
+            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(conservative, _dyn_pct))
 
             net_edge = (
                 adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly)
@@ -293,7 +296,7 @@ class Calculator:
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
             # EV FIX: Dinamik cap kullan — yüksek edge → yüksek cap.
             _dyn_pct_final = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
-            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, _dyn_pct_final))
+            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(conservative, _dyn_pct_final))
             # Reduce Kelly size by estimated slippage cost
             recommended_amount = adjust_kelly_for_slippage(raw_kelly_amount, entry_price_for_cost)
 
@@ -476,6 +479,7 @@ class WeatherEngine:
             loaded = 0
             with get_session() as session:
                 from datetime import timedelta
+
                 cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
                 rows = (
                     session.query(WeatherForecast)
@@ -495,13 +499,11 @@ class WeatherEngine:
                     if total_weight <= 0:
                         continue
                     weighted_mean = (
-                        sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items())
-                        / total_weight
+                        sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items()) / total_weight
                     )
                     weighted_var = (
                         sum(
-                            self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2
-                            for m, t in model_temps_db.items()
+                            self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps_db.items()
                         )
                         / total_weight
                     )
@@ -515,9 +517,7 @@ class WeatherEngine:
                     }
                     loaded += 1
             if loaded > 0:
-                logger.info(
-                    "PER-5 warm-start: %d sehir DB'den in-process cache'e yuklendi", loaded
-                )
+                logger.info("PER-5 warm-start: %d sehir DB'den in-process cache'e yuklendi", loaded)
             return loaded
         except Exception as e:
             logger.warning("PER-5 warm-start failed: %s", e)

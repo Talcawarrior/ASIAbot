@@ -99,16 +99,24 @@ def clear_fee_cache() -> None:
 # ---------------------------------------------------------------------------
 
 
-def max_bet_cap(portfolio_value: float, max_bet_pct: float) -> float:
-    """Per-bet dollar ceiling = portfolio_value × max_bet_pct.
+def max_bet_cap(conservative_value: float, max_bet_pct: float) -> float:
+    """Per-bet dollar ceiling = conservative_value × MAX_EXPOSURE_PCT × max_bet_pct.
+
+    conservative_value = initial capital + realized PnL (bets closed before today).
+    This ensures max_bet is proportional to the daily risk budget (exposure cap),
+    not the full market-value portfolio.
+
+    Essentially: max_bet_cap = exposure_cap × max_bet_pct
+    where exposure_cap = conservative_value × MAX_EXPOSURE_PCT.
 
     Used by:
-      - calculator.py (:309, :325) — Kelly sizing
-      - bet_placer.py (:182)       — Cap 1 hard ceiling
-      - utils/kelly.py (:110)      — kelly_bet_amount wrapper
-      - strategy.py (:555)         — was duplicated, now deleted
+      - calculator.py (:284, :296) — Kelly sizing
+      - bet_placer.py (:242)       — Cap 1 hard ceiling
     """
-    return portfolio_value * max_bet_pct
+    from config.settings import Config
+
+    daily_limit = conservative_value * Config.MAX_EXPOSURE_PCT
+    return daily_limit * max_bet_pct
 
 
 # ---------------------------------------------------------------------------

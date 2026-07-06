@@ -67,7 +67,7 @@ _lock = threading.Lock()
 def load_strategy_params() -> dict[str, float] | None:
     """Read strategy parameters from disk."""
     try:
-        with open(_STRATEGY_PATH, encoding="utf-8") as f:
+        with open(_STRATEGY_PATH, encoding="utf-8-sig") as f:
             return json.load(f)
     except Exception:
         return None
@@ -89,7 +89,7 @@ def save_strategy_params(params: dict[str, float]):
             # Safety clamps — prevent SIA/Evolve/LLM from pushing values
             # into dangerous territory. These are HARD limits.
             _CLAMPS: dict[str, tuple[float, float]] = {
-                "min_edge": (0.05, 0.20),  # FIX: floor raised 0.04 -> 0.05 (breakeven after 5% fee)
+                "min_edge": (0.05, 0.50),  # floor 5% (breakeven after fees), ceiling 50%
                 "kelly_fraction": (0.05, 0.25),  # ceiling 25% (quarter-Kelly)
                 "min_entry_price": (0.05, 0.95),  # floor 5%, ceiling 95%
                 "inefficiency_min": (-0.20, 0.0),  # floor -20%, ceiling 0

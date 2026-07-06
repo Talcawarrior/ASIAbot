@@ -96,9 +96,11 @@ class BetPlacer:
                 d.log(logging.DEBUG)
                 return None
 
-            # Guard: edge must be positive (prevents neg-EV bets from stale analyses)
+            # Guard: edge must be >= min_edge from strategy config
+            # (prevents neg-EV bets from stale analyses or config changes)
             edge_val = float(analysis.edge or 0.0)
-            d.check("edge_positive", edge_val > 0, edge=edge_val)
+            _min_edge = float(bot_config.strategy.min_edge) if hasattr(bot_config.strategy, "min_edge") else 0.0
+            d.check("edge_positive", edge_val >= _min_edge, edge=edge_val, min_edge=_min_edge)
             if not d.should_bet:
                 d.log(logging.WARNING)
                 return None
@@ -137,9 +139,8 @@ class BetPlacer:
             market_price = float(market.yes_price or 0.5)
             # Prefer the Karpathy-tuned strategy value; fall back to legacy
             # Config.MIN_ENTRY_PRICE for backwards compatibility.
-            strategy_min_price = getattr(self.risk_manager.config, "strategy", None)
-            if strategy_min_price is not None and hasattr(strategy_min_price, "min_entry_price"):
-                min_price = float(strategy_min_price.min_entry_price)
+            if hasattr(bot_config.strategy, "min_entry_price"):
+                min_price = float(bot_config.strategy.min_entry_price)
             else:
                 min_price = float(getattr(self.risk_manager.config, "MIN_ENTRY_PRICE", 0.01))
             d.check("min_entry_price", market_price >= min_price, price=market_price, min_price=min_price)
@@ -169,8 +170,12 @@ class BetPlacer:
                     or_(
                         # 1) Aktif bet varsa engelle
                         Bet.status.in_(OPEN_BET_STATUSES),
-                        # 2) Bugun acilmis bet varsa engelle
-                        Bet.placed_at >= _today_start,
+                        # 2) Bugun acilmis bet varsa engelle (rejected/failed hariç — exposure_cap
+                        #    gibi geçici sebeplerle reddedilen bet'ler aynı gün tekrar denenebilir)
+                        and_(
+                            Bet.status.notin_(("rejected", "failed")),
+                            Bet.placed_at >= _today_start,
+                        ),
                         # 3) Son N saatte kapanmis bet varsa engelle (cooldown)
                         #    TP/SL/settled/cancelled hepsini kapsar.
                         and_(
@@ -239,8 +244,11 @@ class BetPlacer:
 
             _edge_for_cap = float(analysis.edge or 0.0)
             _dyn_max_pct = dynamic_max_bet_pct(_edge_for_cap, float(self.risk_manager.config.MAX_BET_PCT))
+            # Use conservative portfolio value (initial + realized_before_today)
+            # so max_bet is proportional to the daily exposure cap, not market value.
+            _conservative = float(self.risk_manager._conservative_portfolio_value())
             max_bet = max_bet_cap(
-                float(self.risk_manager.portfolio_value),
+                _conservative,
                 _dyn_max_pct,
             )
             if proposed_amount > max_bet:
@@ -363,6 +371,13 @@ class BetPlacer:
             )
             d.set_param("slippage_pct", slip_est.slippage_pct)
             d.set_param("slippage_model", slip_est.model_used)
+
+            # Guard: skip if fill price > 0.97 (low margin, fees eat the profit)
+            MAX_ENTRY_PRICE = 0.97
+            d.check("max_entry_price", fill_price <= MAX_ENTRY_PRICE, fill_price=fill_price, max_price=MAX_ENTRY_PRICE)
+            if not d.should_bet:
+                d.log(logging.WARNING)
+                return None
 
             min_depth = float(getattr(bot_config.strategy, "min_depth_usd", 0.0) or 0.0)
             depth_ok, depth_usd = check_orderbook_depth(
@@ -598,13 +613,13 @@ class BetPlacer:
                     Analysis.market_id,
                     sa_func.max(Analysis.id).label("max_id"),
                 )
-                .filter(Analysis.should_bet.is_(True))
                 .group_by(Analysis.market_id)
                 .subquery()
             )
             pending = (
                 sess.query(Analysis)
                 .join(subq, Analysis.id == subq.c.max_id)
+                .filter(Analysis.should_bet.is_(True))
                 .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
                 .order_by(Analysis.edge.desc())
                 .all()
@@ -622,7 +637,10 @@ class BetPlacer:
                         Bet.market_id.in_(list(market_ids)),
                         or_(
                             Bet.status.in_(OPEN_BET_STATUSES),
-                            Bet.placed_at >= _today_start,
+                            and_(
+                                Bet.status.notin_(("rejected", "failed")),
+                                Bet.placed_at >= _today_start,
+                            ),
                         ),
                     )
                     .all()
@@ -638,9 +656,7 @@ class BetPlacer:
             #     the bot doesn't re-enter a resolved question before new data
             #     arrives.
             _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
-            _cooldown_cutoff = (
-                datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
-            )
+            _cooldown_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
             if market_ids:
                 cooldown_rows = (
                     sess.query(Bet.market_id)
@@ -687,9 +703,7 @@ class BetPlacer:
                     )
                     .all()
                 )
-                _city_dup_set = {
-                    (r.city_l, r.metric, r.threshold, r.target_date) for r in open_city_dup
-                }
+                _city_dup_set = {(r.city_l, r.metric, r.threshold, r.target_date) for r in open_city_dup}
                 # Build a lookup from analysis.market_id -> (city, metric, threshold, date)
                 _mkt_lookup = {}
                 for a in pending:
@@ -705,14 +719,59 @@ class BetPlacer:
                     key = _mkt_lookup.get(a.market_id)
                     if key and key in _city_dup_set:
                         markets_with_bets.add(a.market_id)
-                _city_dup_count = sum(
-                    1 for a in pending if _mkt_lookup.get(a.market_id) in _city_dup_set
-                )
+                _city_dup_count = sum(1 for a in pending if _mkt_lookup.get(a.market_id) in _city_dup_set)
                 if _city_dup_count:
                     logger.info(
                         "City+threshold dedup: %d analysis skipped (same city/metric/threshold/date already open)",
                         _city_dup_count,
                     )
+
+            # --- Sort by target_date priority: markets furthest from
+            #     resolution open FIRST.  Tier-based scoring ensures that
+            #     2-day-out markets outrank 1-day-out, which outrank today,
+            #     regardless of edge.  Within the same tier, higher edge wins.
+            #     Tier thresholds:
+            #       tier 3 (highest):  >36h to close  (~2+ days out)
+            #       tier 2:            >12h to close  (~1+ day out)
+            #       tier 1 (lowest):   <=12h to close (today)
+            if pending:
+                mkt_ids = list({a.market_id for a in pending})
+                _markets = {m.id: m for m in sess.query(WeatherMarket).filter(WeatherMarket.id.in_(mkt_ids))}
+                _now_utc = datetime.now(timezone.utc)
+
+                def _priority_key(a: Analysis) -> float:
+                    m = _markets.get(a.market_id)
+                    if m is None or a.edge is None:
+                        return 0.0
+                    td = m.target_date
+                    if td:
+                        if td.tzinfo is None:
+                            td = td.replace(tzinfo=timezone.utc)
+                        hours_left = (td - _now_utc).total_seconds() / 3600.0
+                    else:
+                        hours_left = -1.0
+
+                    if hours_left > 36:
+                        tier = 3
+                    elif hours_left > 12:
+                        tier = 2
+                    else:
+                        tier = 1
+
+                    return tier * 1000.0 + float(a.edge) * 100.0
+
+                pending.sort(key=_priority_key, reverse=True)
+                logger.info(
+                    "Pending sorted by tier: top3=%s",
+                    [
+                        (
+                            a.market_id,
+                            _markets.get(a.market_id).city if _markets.get(a.market_id) else "?",
+                            round(a.edge * 100, 1),
+                        )
+                        for a in pending[:3]
+                    ],
+                )
 
             for a in pending:
                 aid_to_market[a.id] = a.market_id
