@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-330%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-329%20passed-brightgreen)
 
 ---
 
@@ -14,15 +14,15 @@
 
 - **🤖 Tam Otomatik** — Market tarama → hava durumu çekme → analiz → bahis yerleştirme → settlement döngüsü
 - **🌤️ 8 Model Ensemble** — GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, Météo-France — SIA ağırlık optimizasyonu ile (tek Open-Meteo çağrısı, 8 model)
-- **🧠 SIA Loop** — Self-Improving Agent, saatlik Brier skoruna göre model ağırlıklarını ve strateji parametrelerini otomatik günceller
+- **🧠 SIA Loop** — Self-Improving Agent, saatlik Brier skoruna + financial feedback'e (Win Rate, ROI) göre model ağırlıklarını ve strateji parametrelerini otomatik günceller (✅ aktif)
 - **🔬 ASI-Evolve** — Genetik algoritma ile strateji evrimi (UCB1 selection + crossover + mutation ladder)
 - **📊 Dashboard** — Next.js 16 + shadcn/ui + Recharts ile canlı takip (http://localhost:8091), dark mode desteği
 - **⚡ Slippage Modeli** — 3 model (flat / tiered / orderbook) — VWAP walk + gerçek ResolvedMarkets API
-- **🛡️ Risk Yönetimi** — 11 gate + 3 cap + 7 early-exit + daily circuit breaker
+- **🛡️ Risk Yönetimi** — 12 gate (max_entry_price dahil) + 3 cap + 7 early-exit + daily circuit breaker + tier-based priority scoring
 - **💰 EV-Proportional Sizing** — Dinamik max_bet_pct (edge band'ine göre: %2/%3/%5) + Kelly fraction + edge-band ladder
 - **📈 Ladder Betting** — 3 kademeli bahis; yüksek edge → L1 %70 (agresif), düşük edge → L1 %40
 - **🔄 Pyramiding** — Yüksek edge'de L2/L3 fiyat YÜKSELDİĞİNDE dolar (kazanana ekle), düşük edge'de averaging down
-- **🔍 Karpathy Search** — Walk-forward OOS grid search ile strateji parametre optimizasyonu (temporal leakage yok)
+- **🔍 Karpathy Search** — Genetic algoritma + mutation ladder ile strateji parametre optimizasyonu (walk-forward OOS doğrulama, temporal leakage yok). Pazar 02:00 otomatik veya `python main.py llm karpathy` ile manuel çalışır. (⚠️ hazır — trade verisi birikince hipotez kabul eder)
 - **🧪 LLM 3-Layer Loop** — Z.AI API ile araştırma, analiz ve karar katmanları (opsiyonel, fallback mutation ladder)
 - **📈 Canlı API** — FastAPI + WebSocket (scan_complete broadcast) + 10s/60s polling fallback
 - **🌙 Midnight Scan** — Gece yarısı sonrası 60 sn aralıkla 2 gün ileri piyasaları tarar
@@ -459,16 +459,23 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 `place_bet()` sırasıyla şu gate'leri kontrol eder:
 
 1. `analysis_exists` — Analysis kaydı var ve `should_bet=True`
-2. `edge_positive` — Edge > 0 (neg-EV guard)
+2. `edge_positive` — Edge > `bot_config.strategy.min_edge` (canlı min_edge, SIA/Karpathy ayarlar)
 3. `market_exists` — WeatherMarket bulundu
 4. `daily_loss_limit` — Circuit breaker tetiklenmedi
 5. `price_valid` — Binary price geçerli (0.01-0.99)
 6. `target_date_ok` — Target date gelecekte
-7. `min_entry_price` — Fiyat ≥ min_entry_price (long-shot filter)
-8. **`no_existing_bet`** — Duplicate önleme (cooldown dahil)
-9. `exposure_cap` — Toplam exposure ≤ %25 × conservative portfolio
-10. `city_cap` — Şehir başına < 4 bet
-11. `depth_ok` — Orderbook derinliği yeterli (resolvedmarkets_ingest gerçek API)
+7. `min_entry_price` — Fiyat ≥ `bot_config.strategy.min_entry_price` (long-shot filter)
+8. `max_entry_price` — Fiyat ≤ 0.97 (çok yüksek fiyata girme)
+9. **`no_existing_bet`** — Duplicate önleme (cooldown dahil)
+10. `exposure_cap` — Toplam exposure ≤ %25 × conservative portfolio
+11. `city_cap` — Şehir başına < 4 bet
+12. `depth_ok` — Orderbook derinliği yeterli (resolvedmarkets_ingest gerçek API)
+
+Tüm gate'leri geçen adaylar **tier-based priority** ile sıralanır:
+- **Tier 3** (2+ gün sonra): en yüksek öncelik — erken pozisyon avantajı
+- **Tier 2** (1+ gün sonra): orta öncelik
+- **Tier 1** (bugün): düşük öncelik
+- Aynı tier'da edge'i yüksek olan önce açılır
 
 ---
 
