@@ -501,7 +501,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
     parent = parent or Hypothesis(
         description="Uniform prior",
         model_weights=_uniform_weights(),
-        min_edge=0.05,
+        min_edge=0.30,  # SAFETY CLAMP: matched to settings.py MIN_EDGE_FLOOR
         kelly_fraction=0.15,
         max_bet_pct=0.05,
     )
@@ -1079,7 +1079,7 @@ def run_karpathy_weekly(
         incumbent = Hypothesis(
             description="Uniform prior (baseline)",
             model_weights=_uniform_weights(),
-            min_edge=0.05,
+            min_edge=0.30,  # SAFETY CLAMP: matched to settings.py MIN_EDGE_FLOOR
             kelly_fraction=0.15,
             max_bet_pct=0.05,
         )

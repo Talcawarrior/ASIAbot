@@ -127,7 +127,7 @@ class ResearcherAgent:
             adjusted_weights[model] = round(adjusted_weights[model] / total_w, 4)
 
         # Mutate strategy parameters (min_edge, kelly_fraction)
-        best_min_edge = best_params.get("min_edge", 0.05)
+        best_min_edge = best_params.get("min_edge", 0.30)
         best_kelly = best_params.get("kelly_fraction", 0.15)
 
         # Ramped change

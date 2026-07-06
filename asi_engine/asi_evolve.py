@@ -310,7 +310,7 @@ class ResearcherAgent:
             parent = _load_best() or Hypothesis(
                 description="Uniform prior (no parent)",
                 model_weights=_uniform_weights(),
-                min_edge=0.05,
+                min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
             )
@@ -323,7 +323,7 @@ class ResearcherAgent:
             parent = _load_best() or Hypothesis(
                 description="Fallback",
                 model_weights=_uniform_weights(),
-                min_edge=0.05,
+                min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
             )

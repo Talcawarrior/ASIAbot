@@ -453,7 +453,7 @@ class RiskManager:
                     else:  # NO side: price goes UP means NO got cheaper
                         price_drift = entry_price - current_price
                     current_edge = raw_edge_at_entry - price_drift
-                    min_edge_threshold = float(getattr(self.config, "MIN_EDGE", 0.05))
+                    min_edge_threshold = float(bot_config.strategy.min_edge)
                     # Close if edge dropped below half of min_edge (heavily degraded)
                     if current_edge < (min_edge_threshold / 2):
                         return True, f"Edge erosion: {current_edge:.1%} < {min_edge_threshold / 2:.1%} (threshold)"

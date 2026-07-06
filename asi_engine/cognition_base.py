@@ -84,7 +84,7 @@ class CognitionBase:
                                 "ukmo_seamless": 0.125,
                                 "meteofrance_seamless": 0.125,
                             },
-                            "min_edge": 0.05,
+                            "min_edge": 0.30,  # SAFETY CLAMP
                             "kelly_fraction": 0.15,
                         },
                     ),
@@ -115,7 +115,7 @@ class CognitionBase:
                                 "ukmo_seamless": 0.04,
                                 "meteofrance_seamless": 0.03,
                             },
-                            "min_edge": 0.05,
+                            "min_edge": 0.30,  # SAFETY CLAMP
                             "kelly_fraction": 0.15,
                         },
                     ),

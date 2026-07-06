@@ -560,7 +560,7 @@ def run_sia_hourly(
             parent_hyp = Hypothesis(
                 description="Uniform prior (SIA seed)",
                 model_weights=_uniform_weights(),
-                min_edge=0.05,
+                min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
             )
