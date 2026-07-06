@@ -859,15 +859,15 @@ class SIALoop:
                 {k: round(v, 4) for k, v in self.model_weights.items()},
             )
 
-        # Load persisted strategy parameters
-        persisted_strategy = load_strategy_params()
-        if persisted_strategy:
-            strategy = bot_config.strategy
-            if "min_edge" in persisted_strategy:
-                strategy.min_edge = float(persisted_strategy["min_edge"])
-            if "kelly_fraction" in persisted_strategy:
-                strategy.kelly_fraction = float(persisted_strategy["kelly_fraction"])
-            logger.info("SIA strategy parameters loaded from disk: %s", persisted_strategy)
+        # Persisted strategy parameters are loaded at import time by
+        # config.settings.apply_persisted_strategy_params() which applies
+        # proper SAFETY CLAMPS (MIN_EDGE_FLOOR=0.30, kelly_fraction=[0.05,0.25]).
+        # Re-loading here would OVERRIDE those clamps with raw file values.
+        # Strategy.optimize_strategy_params() writes directly to the object
+        # and persists via save_strategy_params() — no need for init-time reload.
+        _sp = load_strategy_params()  # keep for logging only
+        if _sp:
+            logger.info("SIA strategy params on disk (clamped at import): %s", _sp)
 
     def calculate_brier_score(self, predictions: list[float], outcomes: list[bool]) -> float:
         """Calculate Brier Score."""
