@@ -272,28 +272,13 @@ def evaluate_hypothesis_oos(
 
         total_staked += stake
 
-        # PnL resolution — with realistic cost model
-        #   Polymarket fee: C × feeRate × p × (1-p) at entry time
-        #   Slippage: price-impact model — low-liquidity markets (entry < 0.05)
-        #     suffer worse fill. Estimated from CLOB orderbook depth:
-        #     - High liquidity (entry > 0.10): 0.5% of stake
-        #     - Medium (0.05–0.10): 1.0% of stake
-        #     - Low liquidity (entry < 0.05): 3.0% of stake (thin books)
-        #   Gas / on-chain cost: ~$0.10 flat per trade (Polygon tx)
-        GAS_COST_USD = 0.10  # noqa: N806  # Polygon gas per trade
+        # PnL resolution — with realistic cost model (slippage from utils/slippage.py)
+        from utils.slippage import estimate_slippage, GAS_COST_USD
 
-        # Adaptive slippage based on entry price (liquidity proxy)
-        if entry < 0.05:
-            SLIPPAGE_PCT = 0.03  # noqa: N806  # thin orderbook
-        elif entry < 0.10:
-            SLIPPAGE_PCT = 0.01  # noqa: N806  # moderate
-        else:
-            SLIPPAGE_PCT = 0.005  # noqa: N806  # deep book
-
-        slippage_cost = stake * SLIPPAGE_PCT
-        effective_stake = stake + slippage_cost  # you pay more than planned
-        # Effective entry price is worse due to slippage
-        effective_entry = entry * (1.0 + SLIPPAGE_PCT)
+        slip_est = estimate_slippage(entry, stake_usd=stake, model="tiered")
+        slippage_cost = stake * slip_est.slippage_pct
+        effective_stake = stake + slippage_cost
+        effective_entry = entry * (1.0 + slip_est.slippage_pct)
 
         won = (realized_f >= 0.5) == side_yes
         if won:

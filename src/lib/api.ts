@@ -782,7 +782,7 @@ function mapModelScores(weights: Record<string, number | { weight: number; brier
         brierScore: perf?.brier_score ?? null,
         accuracy: perf?.accuracy ?? null,
         weight: Math.round(w * 10000) / 100,
-        trend: (perf?.trend as "improving" | "declining" | "stable") ?? "stable",
+        trend: (perf?.trend as "up" | "down" | "stable") ?? "stable",
         sampleCount: perf?.num_predictions ?? 0,
       };
     });

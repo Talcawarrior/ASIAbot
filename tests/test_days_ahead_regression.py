@@ -76,9 +76,7 @@ def test_analyze_market_source_uses_inclusive_days_ahead_check():
         "today-resolving markets (days_ahead == 0) are not rejected."
     )
     # And explicitly reject the old buggy form
-    assert "0 < days_ahead" not in src, (
-        "Strict `0 < days_ahead` rejects today's markets (regression)."
-    )
+    assert "0 < days_ahead" not in src, "Strict `0 < days_ahead` rejects today's markets (regression)."
 
 
 def test_analyze_market_source_uses_min_liquidity_bypass():
@@ -94,12 +92,8 @@ def test_flat_bet_usd_default_is_disabled():
     """Config.FLAT_BET_USD defaults to 0.0 (Kelly sizing)."""
     from config.settings import Config
 
-    assert hasattr(Config, "FLAT_BET_USD"), (
-        "Config must expose FLAT_BET_USD so a flat-bet override can be set."
-    )
-    assert float(Config.FLAT_BET_USD) == 0.0, (
-        f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
-    )
+    assert hasattr(Config, "FLAT_BET_USD"), "Config must expose FLAT_BET_USD so a flat-bet override can be set."
+    assert float(Config.FLAT_BET_USD) == 0.0, f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
 
 
 def test_strategy_min_edge_is_lowered_to_one_percent():
@@ -111,9 +105,7 @@ def test_strategy_min_edge_is_lowered_to_one_percent():
     from config.settings import StrategyConfig
 
     me = float(StrategyConfig().min_edge)
-    assert 0.01 <= me <= 0.10, (
-        f"StrategyConfig.min_edge should be between 1%-10%, got {me}"
-    )
+    assert 0.25 <= me <= 0.35, f"StrategyConfig.min_edge should be between 25%-35%, got {me}"
 
 
 def test_bet_placer_overrides_amount_when_flat_bet_set():

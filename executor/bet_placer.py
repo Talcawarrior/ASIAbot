@@ -161,7 +161,7 @@ class BetPlacer:
             _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
             _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
-            _cooldown_cutoff = _today_start - timedelta(hours=_cooldown_hours)
+            _cooldown_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
 
             existing_open = (
                 session.query(Bet)
@@ -706,15 +706,20 @@ class BetPlacer:
                 _city_dup_set = {(r.city_l, r.metric, r.threshold, r.target_date) for r in open_city_dup}
                 # Build a lookup from analysis.market_id -> (city, metric, threshold, date)
                 _mkt_lookup = {}
-                for a in pending:
-                    mkt = sess.query(WeatherMarket).filter_by(id=a.market_id).first()
-                    if mkt:
-                        _mkt_lookup[a.market_id] = (
-                            (mkt.city or "").lower(),
-                            mkt.metric,
-                            mkt.threshold,
-                            mkt.target_date,
-                        )
+                if pending:
+                    mkt_ids_for_dedup = list({a.market_id for a in pending})
+                    _city_markets = {
+                        m.id: m for m in sess.query(WeatherMarket).filter(WeatherMarket.id.in_(mkt_ids_for_dedup))
+                    }
+                    for a in pending:
+                        m = _city_markets.get(a.market_id)
+                        if m:
+                            _mkt_lookup[a.market_id] = (
+                                (m.city or "").lower(),
+                                m.metric,
+                                m.threshold,
+                                m.target_date,
+                            )
                 for a in pending:
                     key = _mkt_lookup.get(a.market_id)
                     if key and key in _city_dup_set:
@@ -726,14 +731,14 @@ class BetPlacer:
                         _city_dup_count,
                     )
 
-            # --- Sort by target_date priority: markets furthest from
-            #     resolution open FIRST.  Tier-based scoring ensures that
-            #     2-day-out markets outrank 1-day-out, which outrank today,
-            #     regardless of edge.  Within the same tier, higher edge wins.
+            # --- Sort by target_date priority FIRST (farthest date opens first):
+            #     Markets with more time to close are prioritised so they get
+            #     filled and settled before nearer-term markets.
+            #     Within the same tier (same days-out), highest edge wins.
             #     Tier thresholds:
-            #       tier 3 (highest):  >36h to close  (~2+ days out)
-            #       tier 2:            >12h to close  (~1+ day out)
-            #       tier 1 (lowest):   <=12h to close (today)
+            #       tier 3 (highest):  >48h to close  (~2+ days out)
+            #       tier 2:            >24h to close  (~1+ day out)
+            #       tier 1 (lowest):   <=24h to close (today)
             if pending:
                 mkt_ids = list({a.market_id for a in pending})
                 _markets = {m.id: m for m in sess.query(WeatherMarket).filter(WeatherMarket.id.in_(mkt_ids))}
@@ -751,9 +756,9 @@ class BetPlacer:
                     else:
                         hours_left = -1.0
 
-                    if hours_left > 36:
+                    if hours_left > 48:
                         tier = 3
-                    elif hours_left > 12:
+                    elif hours_left > 24:
                         tier = 2
                     else:
                         tier = 1

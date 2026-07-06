@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-329%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-330%20passed-brightgreen)
 
 ---
 
@@ -22,7 +22,7 @@
 - **💰 EV-Proportional Sizing** — Dinamik max_bet_pct (edge band'ine göre: %2/%3/%5) + Kelly fraction + edge-band ladder
 - **📈 Ladder Betting** — 3 kademeli bahis; yüksek edge → L1 %70 (agresif), düşük edge → L1 %40
 - **🔄 Pyramiding** — Yüksek edge'de L2/L3 fiyat YÜKSELDİĞİNDE dolar (kazanana ekle), düşük edge'de averaging down
-- **🔍 Karpathy Search** — Genetic algoritma + mutation ladder ile strateji parametre optimizasyonu (walk-forward OOS doğrulama, temporal leakage yok). Pazar 02:00 otomatik veya `python main.py llm karpathy` ile manuel çalışır. (⚠️ hazır — trade verisi birikince hipotez kabul eder)
+- **🔍 Karpathy Search** — Genetic algoritma + mutation ladder ile strateji parametre optimizasyonu (walk-forward OOS doğrulama, temporal leakage yok). Manuel: `python main.py llm karpathy` (⚠️ hazır — trade verisi birikince hipotez kabul eder)
 - **🧪 LLM 3-Layer Loop** — Z.AI API ile araştırma, analiz ve karar katmanları (opsiyonel, fallback mutation ladder)
 - **📈 Canlı API** — FastAPI + WebSocket (scan_complete broadcast) + 10s/60s polling fallback
 - **🌙 Midnight Scan** — Gece yarısı sonrası 60 sn aralıkla 2 gün ileri piyasaları tarar
@@ -46,7 +46,7 @@
 │  ┌──────┐   │   └────────┘  │  └─────────┘ │                       │
 │  │Async │   │              │  ┌─────────┐ │  ┌──────────────────┐ │
 │  │Cache │   │              │  │SIA Loop │ │  │Risk Manager     │ │
-│  │5dkTTL│   │              │  │(Ağırlık │ │  │11 gate + 3 cap   │ │
+│  │5dkTTL│   │              │  │(Ağırlık │ │  │12 gate + 3 cap   │ │
 │  └──────┘   │              │  │Optim.)  │ │  │7 early-exit      │ │
 └─────────────┴───────────────┴──┴─────────┴─┴──────────────────────┘
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -89,27 +89,102 @@ Bot artık **EV'ye orantılı** bet sizing yapıyor — yüksek olasılıklı (y
 
 | Edge | max_bet_pct | Kelly Fraction | Ladder Split (L1/L2/L3) |
 |------|-------------|----------------|--------------------------|
-| ≥ %20 (yüksek EV) | %5 | 0.25 (quarter Kelly) | 70% / 20% / 10% (pyramiding) |
-| %10-%20 (orta EV) | %3 | 0.15 (sub-quarter) | 50% / 30% / 20% (averaging) |
-| %5-%10 (düşük EV) | %2 | 0.10 | 40% / 35% / 25% (conservative) |
-| < %5 | — | — | Bet açılmaz (min_edge filtresi) |
+| ≥ %30 | %5 | 0.25 (quarter Kelly) | 70% / 20% / 10% (pyramiding) |
+| %20-%30 | %3 | 0.15 (sub-quarter) | 50% / 30% / 20% (averaging) |
+| %10-%20 | %2 | 0.10 | 40% / 35% / 25% (conservative) |
+| < %30 | — | — | **min_edge=%30** — bet açılmaz (yükseltildi: %5→%30) |
 
 ### Örnek Hesaplama ($1000 portföy, price=0.50)
 
-| Edge | Eski Sabit Cap | Yeni Dinamik |
-|------|---------------|--------------|
-| %30 (yüksek EV) | $29.70 (CAP'e takıldı) | **$50.00** |
-| %10 (orta EV) | $29.70 (CAP'e takıldı) | **$30.00** |
-| %5 (düşük EV) | $14.85 | **$10.00** |
+| Edge | max_bet_pct | Bet Amount |
+|------|-------------|------------|
+| %30 | %5 | **$50.00** |
+| %20 | %3 | **$30.00** |
+| %10 | %2 | **$10.00** |
+| <%30 | — | **Açılmaz** (min_edge filtresi) |
 
 ### Pyramiding vs Averaging Down
 
-- **Yüksek edge (≥%20):** L2/L3 fiyat **YÜKSELDİĞİNDE** dolar (kazanan pozisyona ekle, tezi doğrula)
-- **Düşük edge:** L2/L3 fiyat **DÜŞTÜĞÜNDE** dolar (maliyet düşür, klasik averaging)
+- **Yüksek edge (≥%30):** L2/L3 fiyat **YÜKSELDİĞİNDE** dolar (kazanan pozisyona ekle, tezi doğrula)
+- **Düşük edge (<%30):** L2/L3 fiyat **DÜŞTÜĞÜNDE** dolar (maliyet düşür, klasik averaging)
 
 ### Min-Bet Floor (Over-Betting Önleme)
 
 Kelly `< min_bet/2` ise bet **açılmaz** (return 0). Eski kod Kelly $0.10 önerse bile $1.0'e yapışıyordu.
+
+---
+
+## Bileşenler
+
+ASIAbot 3 katmanlı otonom optimizasyon sistemine sahiptir:
+
+### 1. ISA / SIA Loop (Self-Improving Agent) — Saatlik
+
+**Dosya:** `asi_engine/sia_hourly.py`
+
+**Ne iş yapar:** Her saat başı çalışır. 8 hava modelinin ağırlıklarını Brier skoruna göre küçük adımlarla optimize eder.
+
+**İki güncelleme kanalı:**
+- **Weight update:** Model ağırlıklarını Brier skoruna göre %0.1-1 arası nudge eder (LLM olmadan da çalışır)
+- **Harness update:** (opsiyonel, LLM gerekli) `sia_harness.py` koduna yama önerir — syntax + smoke test geçerse kabul edilir
+
+**Çalışma sıklığı:** Her saat (bot loop içinde otomatik)
+**Bağımlılık:** LLM opsiyonel (yoksa sadece weight update çalışır)
+**Çıktı:** `data/sia_hourly_best.json`, `data/sia_hourly_results.tsv`
+
+**Son çalışma:** `SIA Loop tamamlandi. Win Rate=50.35%, ROI=10.50%` (22:31, 2026-07-06)
+
+---
+
+### 2. ASI-Evolve — Günlük
+
+**Dosya:** `asi_engine/asi_evolve.py`
+
+**Ne iş yapar:** Genetik algoritma (UCB1 selection + crossover + mutation ladder) ile strateji evrimi yapar. 50-200 aday hipotez üretir, walk-forward backtest ile OOS doğrular, en iyiyi seçer.
+
+**Parametreler:**
+- Model ağırlıkları (8 model × weight)
+- `min_edge` (edge eşiği)
+- `kelly_fraction` (Kelly çarpanı)
+
+**Çalışma sıklığı:** Günde 1 kez (arka plan loop'u)
+**Bağımlılık:** LLM opsiyonel (yoksa mutation ladder fallback)
+**Çıktı:** `data/asi_evolve_best.json`, `data/asi_evolve_results.tsv`
+
+---
+
+### 3. Karpathy Search — Haftalık
+
+**Dosya:** `asi_engine/karpathy_weekly.py`
+
+**Ne iş yapar:** Genetic algoritma + mutation ladder ile strateji parametrelerini geniş bir uzayda tarar. Walk-forward OOS doğrulama ile temporal leakage önler.
+
+**Taranan parametreler:**
+- `min_edge` (edge eşiği)
+- `kelly_fraction` (Kelly çarpanı)
+- `min_entry_price` (minimum giriş fiyatı)
+- `inefficiency_min` (minimum verimsizlik)
+
+**Çalışma sıklığı:** Manuel çalıştırma (otomatik cron/scheduler yok)
+**Manuel çalıştırma:** `python main.py llm karpathy`
+**Bağımlılık:** LLM opsiyonel (yoksa mutation ladder fallback)
+**Çıktı:** `data/strategy_params.json`, `data/karpathy_results.tsv`
+
+---
+
+### Katman Hiyerarşisi
+
+```
+Karpathy (haftalık, 50-200 aday, geniş tarama)
+    ↓ en iyi hipotez
+ASI-Evolve (günlük, 50-200 aday, UCB1)
+    ↓ en iyi hipotez
+ISA/SIA Loop (saatlik, 1-3 aday, küçük nudge)
+    ↓ weight + parametre güncellemesi
+Bot (canlı trading)
+```
+
+Her katman bir altındakine en iyi hipotezini devreder. LLM yoksa her katman mutation ladder'a fallback yapar.
 
 ---
 
@@ -367,7 +442,7 @@ sudo systemctl start asiabot
 | `stop_loss_pct` | `0.20` | Stop-loss eşiği (%20 zarar — hızlı kayıp kesme) |
 | `take_profit_pct` | `1.0` | Take-profit eşiği (%100 kâr) |
 | `trailing_stop_pct` | `0.15` | Trailing stop eşiği (%15 gerileme) |
-| `edge_erosion` | `min_edge/2` | Edge erozyonu eşiği |
+| `edge_erosion` | `min_edge/2` | Edge erozyonu eşiği (şimdi %15) |
 | `model_reversal` | `0.20` | Model ters dönme eşiği (%20 prob değişimi) |
 | `MIN_HOLD_MINUTES` | `3` | Minimum bekleme süresi (dakika) |
 
@@ -383,16 +458,16 @@ LLM_MODEL=glm-4.5-flash                       # Model adı
 
 ### Strateji Parametreleri
 
-Parametreler `data/strategy_params.json` üzerinden yönetilir — Karpathy Search veya SIA Loop tarafından otomatik güncellenir:
+Parametreler iki kaynaktan gelir: `data/strategy_params.json` (Karpathy/SIA tarafından güncellenir) ve `config/settings.py` (varsayılanlar):
 
-| Parametre | Varsayılan | Açıklama |
-|-----------|-----------|----------|
-| `min_edge` | `0.05` | Minimum net edge eşiği (%5) |
-| `kelly_fraction` | `0.15` | Base fractional Kelly (dinamik band: 0.10-0.25) |
-| `min_entry_price` | `0.01` | Minimum giriş fiyatı (Karpathy-tuned: 0.35) |
-| `inefficiency_min` | `-1.0` | Minimum verimsizlik (Karpathy-tuned: -0.124) |
-| `slippage_model` | `orderbook` | Slippage modeli: flat / tiered / orderbook |
-| `min_depth_usd` | `0.0` | Min orderbook derinliği ($; 0 = disabled) |
+| Parametre | Varsayılan | Kaynak | Açıklama |
+|-----------|-----------|--------|----------|
+| `min_edge` | `0.30` | `strategy_params.json` | Minimum net edge eşiği (%30) — 2026-07-06: %5→%30 yükseltildi |
+| `kelly_fraction` | `0.15` | `strategy_params.json` | Base fractional Kelly (dinamik band: 0.10-0.25) |
+| `min_entry_price` | `0.01` | `settings.py` | Minimum giriş fiyatı (Karpathy-tuned: 0.35) |
+| `inefficiency_min` | `-1.0` | `settings.py` | Minimum verimsizlik (Karpathy-tuned: -0.124) |
+| `slippage_model` | `orderbook` | `settings.py` | Slippage modeli: flat / tiered / orderbook |
+| `min_depth_usd` | `0.0` | `settings.py` | Min orderbook derinliği ($; 0 = disabled) |
 
 ### Midnight Scan
 
@@ -454,7 +529,7 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 
 ---
 
-## Bet Açma Gate'leri (11 adım)
+## Bet Açma Gate'leri (12 adım)
 
 `place_bet()` sırasıyla şu gate'leri kontrol eder:
 
@@ -615,6 +690,30 @@ Tüm finansal hesaplamalar `utils/formulas.py`'den gelir:
 **Kelly:** `utils/kelly.py` — `kelly_fraction(prob, price)` + `kelly_bet_amount(portfolio, prob, price, edge=...)`
 
 ---
+
+## Changelog
+
+### 2026-07-06 — min_edge %5 → %30; prioritization doğrulaması
+
+**Değişiklikler:**
+1. **`config/settings.py`** — `min_edge` varsayılanı **%5'ten %30'a çıkarıldı**. 713 kapanmış bet analizinde edge <%30 olan tüm dilimlerin net zararda olduğu tespit edildi (344 bet, -$127.96). Edge ≥%30 olan 369 bet ise +$587.60 kâr getirdi.
+2. **`config/settings.py`** — `MIN_EDGE_FLOOR` hard limiti %5 → %30 yükseltildi (strategy_params.json override'ları bu floor'un altına inemez).
+3. **`data/strategy_params.json`** — Persisted `min_edge` %5 → %30 güncellendi.
+4. **`executor/bet_placer.py`** — `_priority_key()` **değişmedi**, tier-first sıralama korundu:
+   - En uzak tarih (Tier 3, 2+ gün) en önce açılır
+   - Aynı tier'da en yüksek EV önce açılır
+   - Bu, bot'un erken pozisyon avantajını koruması içindir
+5. **Testler** — 3 test beklenti aralığı güncellendi (`test_config_consistency`, `test_days_ahead_regression`, `test_faz25_35`).
+
+**Neden:** Edge <%30 tüm dilimler net zarardaydı:
+| Edge Aralığı | Bet Sayısı | P&L |
+|---|---|---|
+| %0-%5 | 45 | -$58.98 |
+| %5-%10 | 109 | -$44.17 |
+| %10-%20 | 80 | -$29.21 |
+| %20-%30 | 88 | +$9.43 |
+| **Toplam <%30** | **344** | **-$127.96** |
+| **≥%30** | **369** | **+$587.60** |
 
 ## Lisans
 

@@ -68,16 +68,10 @@ def test_ev_proportional_sizing():
     print(f"  Düşük EV (edge %5):   ${bet_low}")
 
     # EV'ye orantılı: yüksek > orta > düşük
-    assert bet_high > bet_mid, (
-        f"Yüksek EV ({bet_high}) > orta EV ({bet_mid}) olmali"
-    )
-    assert bet_mid > bet_low, (
-        f"Orta EV ({bet_mid}) > düşük EV ({bet_low}) olmali"
-    )
+    assert bet_high > bet_mid, f"Yüksek EV ({bet_high}) > orta EV ({bet_mid}) olmali"
+    assert bet_mid > bet_low, f"Orta EV ({bet_mid}) > düşük EV ({bet_low}) olmali"
     # Yüksek EV eski $29.70'den büyük olmalı (cap kalktı)
-    assert bet_high > 30.0, (
-        f"Yüksek EV bet (${bet_high}) eski cap'ten ($30) büyük olmali"
-    )
+    assert bet_high > 30.0, f"Yüksek EV bet (${bet_high}) eski cap'ten ($30) büyük olmali"
 
 
 def test_min_bet_floor_no_force():
@@ -193,15 +187,12 @@ def test_backtest_uses_slippage_gas():
     import inspect
     from asi_engine.backtest_simulator import BacktestSimulator
 
-    src = inspect.getsource(BacktestSimulator.run_backtest) + inspect.getsource(
-        BacktestSimulator.run_extended_backtest
-    )
+    src = inspect.getsource(BacktestSimulator.run_backtest) + inspect.getsource(BacktestSimulator.run_extended_backtest)
     assert "estimate_slippage" in src
     assert "GAS_COST_USD" in src
     # Eski fixed 5% fee drag kalkmış olmalı (kod satırı olarak)
     code_lines = [
-        line for line in src.split("\n")
-        if not line.strip().startswith("#") and "ev = sim_edge - 0.05" in line
+        line for line in src.split("\n") if not line.strip().startswith("#") and "ev = sim_edge - 0.05" in line
     ]
     assert not code_lines, "Eski fixed 5% fee drag kalkmali"
 
@@ -233,7 +224,7 @@ def test_karpathy_uses_utils_kelly():
 
 def test_frontend_exit_price_simplified():
     """HATA-6: Frontend exit_price fallback basitleştirilmiş."""
-    with open("src/lib/api.ts") as f:
+    with open("src/lib/api.ts", encoding="utf-8") as f:
         content = f.read()
     assert "1.0 + h.realized_pnl" not in content
     assert "function portfolioValue(" in content, "portfolioValue helper olmali (HATA-13)"
@@ -311,16 +302,14 @@ def test_check_orderbook_depth_uses_live_api():
     # Eski resolved_markets_helper (mock) import'u kalkmış olmalı
     # (comment'te geçebilir, kod satırını kontrol et)
     code_lines = [
-        line for line in source.split("\n")
-        if not line.strip().startswith("#")
-        and "resolved_markets_helper" in line
-        and "import" in line
+        line
+        for line in source.split("\n")
+        if not line.strip().startswith("#") and "resolved_markets_helper" in line and "import" in line
     ]
-    assert not code_lines, (
-        f"resolved_markets_helper import kalkmali (HATA-2). Bulundu: {code_lines}"
-    )
+    assert not code_lines, f"resolved_markets_helper import kalkmali (HATA-2). Bulundu: {code_lines}"
 
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

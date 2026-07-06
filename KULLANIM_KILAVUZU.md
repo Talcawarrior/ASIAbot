@@ -1,626 +1,607 @@
-# ASIAbot Kullanim Kilavuzu
+# ASIAbot Kullanım Kılavuzu
 
-**Versiyon:** 1.0
-**Tarih:** Haziran 2026
-**Platform:** Polymarket (Hava Durumu Ticaret Botu)
+**Polymarket Hava Tahmin Piyasaları için Kendini Geliştiren Yapay Zeka Botu**
 
 ---
 
-## 1. ASIAbot Nedir?
+## İçindekiler
 
-ASIAbot, Polymarket uzerinde hava durumu piyasalarinda otonom tahmin ve ticaret yapan bir botudur. 8 farkli meteoroloji modelinden (GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, MeteoFrance) olusan bir ensambl kullanarak hava durumu olaylari icin olasilik hesaplar ve bu olasiliklari Polymarket fiyatlariyla karsilastirarak edge (kenar) bulur.
-
-**Temel Ozellikler:**
-
-- Python 3.12+ backend, FastAPI sunucusu
-- Next.js 16 + shadcn/ui dashboard (port 8092)
-- 8 model hava durumu ensamble sistemi
-- SIA (Strategic Intelligence Agency) otonom karar verme dongusu
-- ASI-Evolve genetik algoritma strateji evrimi
-- Karpathy Weekly haftalik strateji optimizasyonu
-- LLM 3 katmanli karar dongusu
-- DRY_RUN=true varsayilan (paper mode — gercek para kullanilmaz)
-
----
-
-## 2. Proje Yapisi
-
-```
-ASIAbot/
-  main.py              — CLI giris noktasi, port cozumleme
-  api.py               — FastAPI sunucusu, tum API endpoint'leri, WebSocket
-  bot_loop.py          — scan_and_bet_loop, settlement_loop, midnight strategy
-  config/
-    settings.py        — Config/BotConfig/MeteoConfig veri siniflari, tum env vars
-    logging_config.py  — RotatingFileHandler, UTF-8 guvenli loglama
-  database/
-    models.py          — WeatherMarket, WeatherForecast, Analysis, Bet, Portfolio,
-                         ModelPerformance, HistoricalCalibration
-    db.py              — SQLAlchemy engine, WAL PRAGMA, oturum yonetimi
-  engine/
-    calculator.py      — Calculator, WeatherEngine (ensamble agirlikli olasilik)
-    strategy.py        — RiskManager, BettingEngine, SIALoop, ActiveRiskManagement
-    market_parser.py   — MarketParser (polymarket piyasa verisi ayristirma)
-  executor/
-    bet_placer.py      — BetPlacer, ladder orders, daily_loss_limit kontrolu
-    settler.py         — SettlementEngine, Gamma API ile sonuc kontrolu
-  scrapers/
-    polymarket.py      — PolymarketScraper (Gamma API, 530 satir)
-    meteo.py           — MeteoFetcher (Open-Meteo + WeatherAPI, 411 satir)
-  asi_engine/
-    orchestrator.py    — ASI-Evolve koordinasyonu
-    asi_evolve.py      — Genetik algoritma strateji evrimi
-    calibration_engine.py — Model kalibrasyonu
-    cognition_base.py  — Persistan bilgi depolamasi (Cognition Nodes)
-    karpathy_weekly.py — Haftalik strateji optimizasyonu, OOS degerlendirme
-    backtest_simulator.py — Backtest motoru
-    llm_client.py      — LLM API istemcisi (ZAI API)
-    llm_loop_orchestrator.py — LLM 3 katmanli dongu
-  utils/
-    formulas.py        — Tum finansal formulor (polymarket_fee, kelly, vb.)
-    kelly.py           — Kelly kesirli bahis boyutlandirmasi
-    probability.py     — Olasilik tahmini (estimate_probability, normal_cdf)
-    slippage.py        — Flat/tiered/orderbook slippage modelleri
-    weights_store.py   — Agirlik saklama, strategy_params.json okuma/yazma
-  data/
-    strategy_params.json — Strateji parametreleri (min_edge, kelly_fraction)
-    asiabot.db         — SQLite veritabani
-    asi_cognition.json — Cognition dugumleri
-  jobs/
-    scheduler.py       — Zamanlanmis gorevler (fetch, parse, analyze, place, settle)
-  dashboard/           — Next.js 16 + shadcn/ui + Recharts
-  tests/               — 304 test dosyasi
-```
+1. [Gereksinimler](#1-gereksinimler)
+2. [Kurulum](#2-kurulum)
+3. [Yapılandırma (.env)](#3-yapılandırma-env)
+4. [Botu Başlatma](#4-botu-başlatma)
+5. [Mimari Genel Bakış](#5-mimari-genel-bakış)
+6. [API Endpoint'leri](#6-api-endpointleri)
+7. [ISA/SIA Loop (Saatlik)](#7-isasia-loop-saatlik)
+8. [ASI-Evolve (Günlük)](#8-asi-evolve-günlük)
+9. [Karpathy Search (Manuel)](#9-karpathy-search-manuel)
+10. [Risk Yönetimi](#10-risk-yönetimi)
+11. [Kelly Sizing ve Bet Büyüklüğü](#11-kelly-sizing-ve-bet-büyüklüğü)
+12. [Ladder Sistemi](#12-ladder-sistemi)
+13. [Slippage Modeli](#13-slippage-modeli)
+14. [Erken Çıkış Stratejileri](#14-erken-çıkış-stratejileri)
+15. [Duplicate Bet Önleme](#15-duplicate-bet-önleme)
+16. [Portföy Muhasebesi](#16-portföy-muhasebesi)
+17. [Formüller (Tek Kaynak)](#17-formüller-tek-kaynak)
+18. [Test Çalıştırma](#18-test-çalıştırma)
+19. [Troubleshooting](#19-troubleshooting)
+20. [Sık Sorulan Sorular](#20-sık-sorulan-sorular)
 
 ---
 
-## 3. Kurulum
+## 1. Gereksinimler
 
-### On Kosullar
+- **Python:** 3.12+
+- **Node.js:** 20+ (dashboard build için, opsiyonel)
+- **Bağımlılıklar:** `pip install -r requirements.txt`
+- **Polymarket hesabı:** Paper trade için gerekmez, live trade için cüzdan + API key
+- **Z.AI API key:** LLM katmanları için opsiyonel (yoksa mutation ladder fallback)
 
-| Gereklilik | Surum | Aciklama |
-|-----------|-------|----------|
-| Python | 3.12+ | Backend icin |
-| Node.js | 18+ | Dashboard icin |
-| Polymarket Hesabi | — | API key + ozel anahtar gerekli |
-| Open-Meteo API | Ucretsiz | Hava durumu verileri icin |
-| WeatherAPI | Opsiyonel | Ek hava durumu verisi icin |
-| ZAI API Key | — | LLM kararlari icin |
-
-### Kurulum Adimlari
+## 2. Kurulum
 
 ```bash
 # 1. Repoyu klonla
-git clone <repo-url> && cd ASIAbot
+git clone <repo-url> ASIAbot
+cd ASIAbot
 
-# 2. Python bagimliliklarini yukle
+# 2. Python bağımlılıklarını yükle
 pip install -r requirements.txt
 
-# 3. Dashboard bagimliliklarini yukle
-cd dashboard && npm install && cd ..
-
-# 4. Ortam degiskenleri dosyasini olustur
+# 3. Ortam değişkenlerini ayarla
 cp .env.example .env
+# .env dosyasını düzenle (ZAI_API_KEY, vb.)
+
+# 4. Dashboard build (opsiyonel — bot build'siz de çalışır)
+# src/ dizininde değişiklik yaptıysan:
+cd src
+npm install
+npx next build
+cd ..
 ```
 
-`.env` dosyasini duzenle — minimum gerekli degiskenler:
+## 3. Yapılandırma (.env)
 
-```env
-# Polymarket
-POLY_API_KEY=your_poly_api_key
-PRIVATE_KEY=your_wallet_private_key
-POLY_ADDRESS=your_wallet_address
+Tüm yapılandırma `.env` dosyasından okunur. Zorunlu alanlar:
 
-# LLM
-ZAI_API_KEY=your_zai_api_key
-
-# Calisma modu (paper mode icin true birak)
-DRY_RUN=true
-
-# Port
-PORT=8092
-```
-
----
-
-## 4. Yapilandirma
-
-Tum yapilandirma degiskenleri `.env` dosyasinda veya ortam degiskenleri olarak tanimlanir. Asagidaki tabloda varsayilan degerlerle birlikte verilmistir.
-
-### Temel Degiskenler
-
-| Degisken | Varsayilan | Aciklama |
+| Değişken | Varsayılan | Açıklama |
 |----------|-----------|----------|
-| DRY_RUN | true | Paper mode: gercek bahis yapilmaz |
-| INITIAL_PORTFOLIO | 10000 | Baslangic portfoy degeri ($) |
-| PORT | 8092 | API sunucu portu |
-| LOG_LEVEL | INFO | Loglama seviyesi |
+| `DRY_RUN` | `true` | `true` = paper trade, `false` = live Polymarket |
+| `INITIAL_PORTFOLIO` | `1000.0` | Başlangıç portföy büyüklüğü ($) |
+| `PORT` | `8091` | Dashboard/API portu |
+| `HOST` | `127.0.0.1` | Bağlantı adresi |
+| `SKIP_DASHBOARD_BUILD` | `false` | `true` = build atla (hızlı açılış) |
 
-### Risk Yonetimi Degiskenleri
+**Risk parametreleri:**
 
-| Degisken | Varsayilan | Aciklama |
+| Değişken | Varsayılan | Açıklama |
 |----------|-----------|----------|
-| DAILY_LOSS_LIMIT | 0.20 | Gunluk maksimum zarar orani (%20) |
-| MAX_POSITION_PCT | 0.15 | Tek bahiste maksimum pozisyon orani |
-| CITY_CAP | 3 | Sehir basina maksimum bahis sayisi |
-| MIN_EDGE | 0.05 | Minimum edge esigi (bahis icin gerekli) |
-| KELLY_FRACTION | 0.15 | Kelly kesri (bahis boyutlandirma) |
-| WEATHER_FEE_RATE | 0.05 | Polymarket hava durumu ucret orani |
+| `MAX_BET_PCT` | `0.03` | Maksimum tek bet büyüklüğü (portföyün %3'ü) |
+| `MAX_EXPOSURE_PCT` | `0.25` | Toplam exposure limiti (portföyün %25'i) |
+| `KELLY_FRACTION` | `0.15` | Fractional Kelly çarpanı |
+| `CITY_CAP` | `4` | Aynı şehirde maksimum açık bet sayısı |
+| `MIN_BET_SIZE` | `1.0` | Minimum bet büyüklüğü ($) |
+| `FLAT_BET_USD` | `0.0` | Sabit bet büyüklüğü (0 = Kelly kullan) |
+| `DAILY_LOSS_LIMIT` | `0.20` | Günlük kayıp limiti (portföyün %20'si) |
+| `FEE_DRAG` | `0.05` | Varsayılan Polymarket fee oranı (%5) |
+| `REOPEN_COOLDOWN_HOURS` | `24` | TP/SL sonrası re-entry bekleme süresi |
+| `LIVE_TRADING_ENABLED` | `false` | `true` = gerçek Polymarket emirleri gönder |
 
-### API ve Servis Degiskenleri
+**LLM yapılandırması (opsiyonel):**
 
-| Degisken | Varsayilan | Aciklama |
-|----------|-----------|----------|
-| POLY_API_KEY | — | Polymarket API anahtari |
-| PRIVATE_KEY | — | Cuzdan ozel anahtari |
-| POLY_ADDRESS | — | Cuzdan adresi |
-| ZAI_API_KEY | — | LLM API anahtari |
-| LLM_MODEL | stepfun/step-3.5-flash:free | Kullanilacak LLM modeli |
-| WEATHERAPI_KEY | — | WeatherAPI anahtari (opsiyonel) |
-| ASIABOT_API_KEY | — | API auth anahtari (bos ise devre disi) |
+```
+ZAI_API_KEY=<id.secret>          # Z.AI API anahtarı
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4/
+LLM_MODEL=glm-4.5-flash
+```
 
----
+**Not:** LLM API key yoksa bot yine çalışır — tüm LLM katmanları (Karpathy, ASI-Evolve, SIA) **deterministic mutation ladder**'a fallback yapar.
 
-## 5. Calistirma
+## 4. Botu Başlatma
 
-### Dashboard Baslatma
+### Ana komutlar
 
 ```bash
-cd dashboard
-npm run dev
-# Tarayicida http://localhost:8092 adresine git
+# Tam bot (scan + API + Dashboard + background loops)
+python main.py bot
+
+# Sadece API + Dashboard (arka plan döngüsü yok)
+python main.py run
 ```
 
-### Bot Baslatma
+Bot başladığında:
+1. **FastAPI** `http://localhost:8091` adresinde başlar
+2. **Next.js Dashboard** aynı portta serve edilir
+3. **WebSocket** `/ws` endpoint'inden scan_complete broadcast yayınlar
+4. **SIA Loop** saatlik otomatik çalışır
+5. **Settlement** 120sn aralıkla kapanan piyasaları kontrol eder
+
+### Tek seferlik işlemler
 
 ```bash
-# Yeni bir terminal ac ve calistir:
-python main.py start
+python main.py fetch       # Polymarket'ten açık piyasaları tara
+python main.py weather     # Open-Meteo'dan hava tahminlerini çek
+python main.py analyze     # Marketleri analiz et (edge hesapla)
+python main.py bet         # Uygun bet'leri aç
+python main.py settle      # Settlement kontrolü yap
+python main.py report      # Rapor oluştur
+
+# LLM katmanları
+python main.py llm karpathy      # Karpathy Search (haftalık)
+python main.py llm asi_evolve    # ASI-Evolve (günlük)
+python main.py llm sia           # SIA Loop (saatlik)
+python main.py llm status        # LLM katman durumu
 ```
 
-### Diger CLI Komutlari
+### API üzerinden kontrol
 
 ```bash
-# Sadece analiz (bahis yerlestirme olmadan)
-python main.py analyze
+# Bot'u başlat/durdur
+curl -X POST http://localhost:8091/api/start -H "X-API-Key: <key>"
+curl -X POST http://localhost:8091/api/stop -H "X-API-Key: <key>"
+curl -X POST http://localhost:8091/api/reset -H "X-API-Key: <key>"
 
-# Settlement (sonuclari kontrol et, odemeleri al)
-python main.py settle
-
-# Debug modu
-python main.py debug
+# ASI-Evolve çalıştır
+curl -X POST http://localhost:8091/api/asi/evolve -H "X-API-Key: <key>"
 ```
 
-### Botu Durdurma
+> **API Key:** Eğer `.env`'de `ASIABOT_API_KEY` set edilmişse, POST endpoint'leri `X-API-Key` header'ı gerektirir. Key yoksa API açık modda çalışır (sadece localhost).
 
-```bash
-# Terminalde Ctrl+C
-# Veya API uzerinden:
-curl -X POST http://localhost:8092/api/stop
-```
-
----
-
-## 6. Botun Calisma Akisi
-
-Bot her dongude (scan_and_bet_loop) asagidaki adimlari sirayla uygular:
-
-**Adim 1: Piyasa Tarama**
-- `scrapers/polymarket.py` ile Gamma API'dan aktif hava durumu piyalari cekilir
-- Sehir, tarih, piyasa türü (HIGH/LOW/RANGE) bilgileri ayristirilir
-- Mevcut piyasalar veritabanina kaydedilir
-
-**Adim 2: Hava Durumu Tahmini**
-- `scrapers/meteo.py` ile 8 modelden (GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, MeteoFrance) tahminler toplanir
-- Open-Meteo API ucretsiz olarak kullanilir
-- WeatherAPI ek veri saglayabilir
-
-**Adim 3: Ensamble Analiz**
-- `engine/calculator.py` ile model tahminleri agirlikli olarak birlestirilir
-- Agirliklar `asi_engine/` tarafindan dinamik olarak guncellenebilir
-- Sonuc: her piyasa icin bir YES olasiligi
-
-**Adim 4: Edge Hesaplama ve Sinyal Uretimi**
-- `engine/strategy.py` ile hesaplanan olasilik ile Polymarket fiyati karsilastirilir
-- Edge = model_olasiligi - piyasa_fiyati
-- Edge > MIN_EDGE ise bahis sinyali uretilir
-- `risk_manager` tarafindan risk kontrolu yapilir
-
-**Adim 5: Bahis Yerlestirme**
-- `executor/bet_placer.py` ile bahisler yerlestirilir
-- Kelly kesri ile bahis boyutlandirilir
-- Ladder order: bahis 3 dilimde yerlestirilir (farkli fiyat seviyelerinde)
-- Daily loss limit kontrolu: gunluk zarar limiti asilmamis olmali
-
-**Adim 6: Settlement**
-- `executor/settler.py` ile piyasa sonuclari kontrol edilir
-- Gamma API uzerinden resolved market bilgisi cekilir
-- Kazanilan bahisler icin odeme alinir
-
----
-
-## 7. Risk Yonetimi Sistemi
-
-### Kelly Kesirli Bahis Boyutlandirma
-
-Kelly formulu, uzun vadede portfoy buyumesini maksimize eden optimal bahis boyutunu hesaplar:
+## 5. Mimari Genel Bakış
 
 ```
-kelly_fraction = (edge * odds) / odds
-bahis_miktari = portfoy * kelly_fraction * kelly_orani
+ASIAbot/
+├── asi_engine/          # Yapay zeka katmanları
+│   ├── sia_hourly.py    #   SIA Loop (saatlik ağırlık optimizasyonu)
+│   ├── asi_evolve.py    #   ASI-Evolve (günlük genetik evrim)
+│   ├── karpathy_weekly.py  # Karpathy Search (manuel/opsiyonel)
+│   ├── cognition_base.py   # ASI bilişsel temel (distilled insights)
+│   ├── calibration.py      # Şehir bazlı bias kalibrasyonu
+│   ├── orchestrator.py     # ASI-Evolve orkestratörü
+│   └── llm_loop_orchestrator.py  # 3-katmanlı LLM koordinatörü
+├── config/              # settings.py + logging
+├── data/                # Runtime veri (weights, params, backtest)
+├── data_pipeline/       # Polymarket + ResolvedMarkets veri çekme
+├── database/            # SQLAlchemy ORM (Bet, Portfolio, Analysis, WeatherMarket)
+├── engine/              # Core mantık
+│   ├── calculator.py    #   Edge/EV hesaplama, slippage, fee
+│   ├── strategy.py      #   RiskManager, SIALoop, sinyal analizi
+│   └── decision.py      #   BetDecision (gate geçiş kaydı)
+├── executor/            # BetPlacer + Settlement
+├── jobs/                # Zamanlanmış görevler
+├── scrapers/            # Polymarket, Open-Meteo, async_client
+├── src/                 # Next.js 16 Dashboard
+├── tests/               # 330 test (43 dosya)
+├── utils/               # Kelly, slippage, probability, accounting, formulas
+├── main.py              # CLI + Bot giriş noktası
+└── api.py               # FastAPI (tüm endpoint'ler)
 ```
 
-`kelly_fraction` parametresi (varsayilan 0.15) Kelly sonucuyla carpilarak risk azaltilir.
-
-### Ladder Orders
-
-Her bahis 3 dilimde yerlestirilir:
-- Dilim 1: Dusuk fiyat, yuksek olasilik (guvenli)
-- Dilim 2: Orta fiyat, orta olasilik (dengeli)
-- Dilim 3: Yuksek fiyat, dusuk olasilik (agresif)
-
-### Gunluk Zarar Limiti
-
-`executor/bet_placer.py:101` ve `engine/strategy.py:110` dosyalarinda kontrol edilir:
-- Gunluk toplam zarar `INITIAL_PORTFOLIO * DAILY_LOSS_LIMIT` degerine ulastiginda bot kilitlenir
-- Yeni bahis yerlestirilmez
-- Ertesi gun sifirlanir
-
-### Diger Korumalar
-
-| Koruma | Dosya | Aciklama |
-|--------|-------|----------|
-| Fiyat gecerlilik | bet_placer.py | Piyasa fiyati 0.01-0.99 araliginda olmali |
-| Sehir limiti | strategy.py | Sehir basina max CITY_CAP bahis |
-| Pozisyon limiti | strategy.py | Tek bahiste max MAX_POSITION_PCT |
-| Slippage | slippage.py | Flat/tiered/orderbook modelleri |
-
----
-
-## 8. ASI Motoru
-
-### SIA (Strategic Intelligence Agency)
-
-`engine/strategy.py` icindeki `SIALoop` sinifi, otonom karar verme dongusunu yonetir:
-- Piyasa tarama, analiz, bahis, settlement dongusu
-- Her dongude risk kontrolu ve karar verme
-- `ActiveRiskManagement` ile gercek zamanli risk takibi
-
-### ASI-Evolve
-
-`asi_engine/asi_evolve.py` — Genetik algoritma ile strateji evrimi:
-- Hipotez uretimi (parametre mutasyonlari)
-- Backtest ile degerlendirme
-- OOS (Out-of-Sample) test ile genelleme kontrolu
-- En iyi stratejileri `CognitionBase`'e kaydetme
-
-### CognitionBase
-
-`asi_engine/cognition_base.py` — Persistan bilgi depolamasi:
-- Her strateji deneyi bir Cognition Node olarak kaydedilir
-- Varsayilan: brier_score=0.25 (uniform prior — tum modellere esit agirlik)
-- Dosya: `data/asi_cognition.json`
-
-### Karpathy Weekly
-
-`asi_engine/karpathy_weekly.py` — Haftalik strateji optimizasyonu:
-- `build_brier_dataset()` ile model performans verisi olusturma
-- Cross-validation split'leri ile OOS degerlendirme
-- Brier score, Sharpe ratio, ROI, win rate metrikleri
-- Hypothesis testing ile strateji guncelleme
-
-### LLM 3 Katmanli Dongu
-
-`asi_engine/llm_loop_orchestrator.py` — 3 katmanli LLM karar dongusu:
-- Karar katmani: Bahis yap/yapma
-- Analitik katmani: Veri analizi ve yorumlama
-- Stratejik katmani: Uzun vadeli planlama
-- `llm_client.py` ile ZAI API uzerinden model cagrisi
-
----
-
-## 9. Dashboard
-
-Next.js 16 + shadcn/ui + Recharts ile gelistirilmis web arayuzu.
-
-### Erisim
+### Veri Akışı
 
 ```
-http://localhost:8092
+1. FETCH    → Polymarket gamma-api ile açık hava piyasalarını tara
+                (tarih bazlı sorgular: bugün + 2 gün ileri)
+2. WEATHER  → Open-Meteo API'den 8 modelin tahminlerini çek
+                (tek çağrı, 5 gün forecast, 20 paralel city)
+3. WEIGHT   → SIA ağırlıkları ile weighted ensemble hesapla
+4. CALIBRATE→ Kalibrasyon düzeltmesi uygula (şehir bazlı bias)
+5. ANALYZE  → Edge = model_prob - market_price
+                net_edge = raw - slippage - fee - gas
+6. SIZE     → Dinamik Kelly: kelly_bet_amount(edge=...)
+                3 band: >=%20 → %5 cap, %10-20 → %3 cap, <%10 → %2 cap
+7. PLACE    → 3 kademeli ladder + 12 gate + 3 cap
+8. SETTLE   → Settlement sonrası PnL güncelle, SIA feedback
+9. ARCHIVE  → Hot DB (10g) → Cold Parquet (10-120g) → Purge (>120g)
 ```
 
-### Bolumler
+## 6. API Endpoint'leri
 
-| Bolum | Icerik |
-|-------|--------|
-| Ana Sayfa | Piyasa durumu, aktif bahisler, sinyaller |
-| ASI Tab | Model agirliklari, cognition dugumleri, evolve durumu |
-| Kalibrasyon | Model kalibrasyon metrikleri |
-| grafikler | Recharts ile equity egrisi, slippage analizi |
-| Ayarlar | Bot durumu kontrolu (start/stop/reset) |
+| Endpoint | Metot | Açıklama |
+|----------|-------|----------|
+| `/` | GET | Dashboard (Next.js static export) |
+| `/api/status` | GET | Bot durumu, portföy, istatistikler |
+| `/api/markets` | GET | Açık piyasalar + missed signal'lar |
+| `/api/bets?status=&limit=&offset=` | GET | Bet geçmişi (filtreleme + pagination) |
+| `/api/signals` | GET | Aktif (açık) pozisyonlar |
+| `/api/history` | GET | Kapanmış bet'ler (win/loss stats) |
+| `/api/equity-curve` | GET | Günlük equity curve (PnL) |
+| `/api/slippage` | GET | Son slippage verileri |
+| `/api/health-check` | GET | Kapsamlı sağlık kontrolü |
+| `/api/asi/weights` | GET | Model ağırlıkları + performans |
+| `/api/asi/cognition` | GET | ASI cognition base insights |
+| `/api/asi/calibration` | GET | Bias kalibrasyon haritası |
+| `/api/asi/orderbook?market_id=` | GET | CLOB orderbook derinliği |
+| `/api/asi/trades` | GET | On-chain trade verisi |
+| `/api/start` | POST | Bot'u başlat |
+| `/api/stop` | POST | Bot'u durdur |
+| `/api/reset` | POST | Sistemi sıfırla |
+| `/api/cleanup` | POST | Stale bet'leri temizle |
+| `/api/asi/evolve` | POST | ASI-Evolve çalıştır |
+| `/api/asi/backfill?days=90` | POST | Geçmiş veri backfill |
+| `/api/asi/calibration/recalculate` | POST | Kalibrasyonu yeniden hesapla |
 
----
+**WebSocket:** `/ws` — `scan_complete` event'ini broadcast eder. Frontend 10sn polling + 60sn fallback kullanır.
 
-## 10. API Endpoint'leri
+**Status Response (örnek):**
 
-### GET Endpoint'leri (Auth Gerektirmez)
-
-| Endpoint | Aciklama |
-|----------|----------|
-| `/` | Dashboard ana sayfa |
-| `/api/status` | Bot durumu (calisiyor/durdu) |
-| `/api/markets` | Aktif piyasalar + kacirilmis sinyaller |
-| `/api/bets` | Tum bahisler |
-| `/api/signals` | Uretilen sinyaller |
-| `/api/history` | Gecmis islemler |
-| `/api/equity-curve` | Equity egrisi verileri |
-| `/api/slippage` | Slippage analizi |
-| `/api/health-check` | Saglik kontrolu |
-| `/api/asi/weights` | Model agirliklari |
-| `/api/asi/cognition` | Cognition dugumleri |
-| `/api/asi/calibration` | Kalibrasyon durumu |
-| `/api/asi/trades` | ASI islemleri |
-| `/api/asi/orderbook` | Orderbook verisi |
-
-### POST Endpoint'leri (Auth Gerektirir — ASIABOT_API_KEY)
-
-| Endpoint | Aciklama |
-|----------|----------|
-| `/api/start` | Botu baslatir |
-| `/api/stop` | Botu durdurur |
-| `/api/reset` | Botu sifirlar |
-| `/api/cleanup` | Eski verileri temizler |
-| `/api/asi/evolve` | ASI-Evolve cagrisi (5 round) |
-| `/api/asi/backfill` | Backfill islemi |
-| `/api/asi/calibration/recalculate` | Kalibrasyonu yeniden hesaplar |
-
-### Ornek Kullanim
-
-```bash
-# Bot durumu sorgula
-curl http://localhost:8092/api/status
-
-# Botu baslat
-curl -X POST http://localhost:8092/api/start \
-  -H "X-API-Key: your_api_key"
-
-# ASI-Evolve calistir
-curl -X POST http://localhost:8092/api/asi/evolve \
-  -H "X-API-Key: your_api_key"
-```
-
----
-
-## 11. Kritik Kod Bulgulari
-
-Asagidaki bulgular, mevcut kod tabaninda tespit edilen onemli sorunlari ozetler. Bunlar eski-yeni karsilastirmasi degil, mevcut durumun degerlendirmesidir.
-
-### Bulgu 1: polymarket_fee_from_stake Hizli Yol Hatali
-
-**Dosya:** `utils/formulas.py`, satir 278
-
-**Mevcut kod:**
-```python
-fee = stake * fee_rate * (1.0 - price)
-```
-
-**Dogru olmasi gereken:**
-```python
-fee = stake * fee_rate * price * (1.0 - price)
-```
-
-**Etki:** `exponent=1` icin fast path, ucreti `price` faktoru kadar yanlis hesaplar. Ornek: $50 stake, $0.50 fiyat, %3 feeRate icin dogru ucret $0.375 olmali ama hali hazirda $0.75 hesaplanir (2x fazla).
-
-**Kullanim yeri:** `executor/bet_placer.py` dosyasinda entry_fee hesaplamasinda kullanilir.
-
-**Not:** `polymarket_fee()` fonksiyonu (satir 251) dogrudur. Sorun sadece `polymarket_fee_from_stake` fast path'indedir.
-
-### Bulgu 2: strategy_params.json Tehlikeli Varsayilan Degerler
-
-**Dosya:** `data/strategy_params.json`
-
-**Mevcut deger:**
 ```json
-{"min_edge": 0.01, "kelly_fraction": 0.25}
+{
+  "is_running": true,
+  "portfolio": {
+    "initial": 1000,
+    "current": 1469.18,
+    "total_pnl": 469.18,
+    "exposure": 176.79,
+    "max_exposure": 250.0
+  },
+  "stats": {
+    "total_signals": 950,
+    "total_bets": 11,
+    "win_count": 359,
+    "loss_count": 370,
+    "total_closed": 729
+  },
+  "limits": {
+    "max_bet_pct": 3.0,
+    "max_exposure_pct": 25.0,
+    "city_cap": 4
+  }
+}
 ```
 
-**Sorunlar:**
-- `min_edge=0.01`: Cok dusuk edge esigi. %1 kenarla bile bahis yapar. Bu, dusuk kaliteli sinyallerde gereksiz risk altina girmeye neden olur. Tavsiye: 0.05 veya daha yuksek.
-- `kelly_fraction=0.25`: %25 Kelly orani. Agresif bir bahis boyutlandirmasi. Tavsiye: 0.15.
+## 7. ISA/SIA Loop (Saatlik)
 
-**Not:** Bu dosya `utils/weights_store.py` uzerinden programatik olarak yuklenir. `.env` dosyasindaki `MIN_EDGE` ve `KELLY_FRACTION` degiskenleri bu degerlerin uzerine yazabilir, ancak dosya mevcut degilse bu degerler kullanilir.
+**Dosya:** `asi_engine/sia_hourly.py`
+**Çalışma sıklığı:** Saatte bir (bot çalışırken otomatik)
 
-### Bulgu 3: API Auth Varsayilan olarak Devre Disi
+### Ne iş yapar?
 
-**Dosya:** `api.py`, satir 52-64
+SIA (Self-Improving Agent), açık piyasalardan gelen gerçek sonuçlara göre **8 hava modelinin ağırlıklarını optimize eder:**
 
-```python
-API_KEY = os.getenv("ASIABOT_API_KEY", "")
+1. **Weight Update:** Her modelin Brier skorunu hesaplar, düşük Brier = yüksek weight
+2. **Harness Update:** Strateji parametrelerini finansal performansa göre ayarlar:
+   - Win Rate düşükse (< %50) → `min_edge` artır (daha seçici)
+   - Win Rate yüksekse (> %60) + ROI pozitifse → `min_edge` azalt (daha fazla trade)
+   - Büyük drawdown'da (< -%10 ROI) → `kelly_fraction` azalt
+3. **LLM opsiyonel:** Z.AI API key varsa LLM'den hipotez ister, yoksa mutation ladder
 
-async def verify_api_key(x_api_key: str = Header(default="")):
-    if not API_KEY:
-        return  # No key configured — dev mode, allow all
+### Model Ağırlıkları
+
+Başlangıçta uniform (%12.5), SIA saatlik optimize eder:
+
+| Model | Kaynak | Varsayılan Weight |
+|-------|--------|------------------|
+| GFS Seamless | NOAA | ~%12.2 |
+| ECMWF IFS 0.25 | ECMWF | ~%12.4 |
+| GEM Global | Environment Canada | ~%12.5 |
+| ICON Global | DWD (Almanya) | ~%12.9 |
+| JMA Seamless | Japan Meteorological Agency | ~%12.8 |
+| CMA Grapes Global | China Meteorological Administration | ~%12.3 |
+| UKMO Seamless | UK Met Office | ~%12.0 |
+| Météo-France Seamless | Météo-France | ~%12.9 |
+
+> **Not:** `MIN_MODEL_WEIGHT=0.05` floor uygulanır — hiçbir modelin ağırlığı %5'in altına düşmez.
+
+### Çıktılar
+
+- `data/model_weights.json` — Güncel ağırlıklar
+- `data/sia_hourly_best.json` — En iyi hipotez
+- `data/sia_hourly_results.tsv` — Tüm denemeler
+
+## 8. ASI-Evolve (Günlük)
+
+**Dosya:** `asi_engine/asi_evolve.py`
+**Çalışma sıklığı:** Günlük (manuel veya API ile)
+
+### Ne iş yapar?
+
+Genetik algoritma ile strateji evrimi:
+
+1. **UCB1 Selection:** En umut verici hipotezleri seç
+2. **Crossover:** İki başarılı hipotezi çaprazla
+3. **Mutation Ladder:** Rastgele mutasyon uygula (min_edge, kelly, model weights)
+4. **Walk-Forward OOS:** Temporal leakage önleyen backtest ile değerlendir
+5. **Accept/Reject:** Sharpe oranı iyiyse kabul et, veriyi cognition_base'e ekle
+
+### Kullanım
+
+```bash
+# Manuel çalıştırma
+python main.py llm asi_evolve
+
+# API üzerinden
+curl -X POST http://localhost:8091/api/asi/evolve -H "X-API-Key: <key>"
 ```
 
-**Sorunlar:**
-- `ASIABOT_API_KEY` ortam degiskeni ayarlanmazsa, tum POST endpoint'leri (start, stop, reset, asi/*) kimlik dogrulamasi olmadan calisir.
-- Tum GET endpoint'lerinde hic auth yok — herkes piyasa verilerini, bahis bilgilerini gorebilir.
-- CORS: `allow_origins=["*"]` — herhangi bir kaynaktan istek kabul eder.
+### Bağımlılıklar
 
-**Onem:** Uretim ortaminda `ASIABOT_API_KEY` mutlaka ayarlanmalidir.
+- **Karpathy Search** çıktısını tüketir (en iyi hipotezi seed olarak kullanır)
+- **Data Backfiller** ile geçmiş veriyi kullanır
+- **Cognition Base**'e yeni insight'lar ekler
 
-### Bulgu 4: Dead autoresearch Endpoint'i
+## 9. Karpathy Search (Manuel)
 
-**Durum:** `autoresearch/auto_scientist.py` dosyasi artik mevcut degil. Yerine `asi_engine/karpathy_weekly.py` kullaniliyor.
+**Dosya:** `asi_engine/karpathy_weekly.py`
+**Çalışma sıklığı:** Manuel (otomatik cron/scheduler yok)
 
-Eger dashboard veya dis bir servis `/api/asi/autoresearch/run` endpoint'ini cagiriyorsa, 404 hatasi alir. Dashboard kodunda boyle bir cagri olup olmadigi kontrol edilmelidir.
+### Ne iş yapar?
 
-### Bulgu 5: cognition_base Brier Score Heuristik
+Karpathy-style genetik arama ile **strateji parametrelerini** geniş bir uzayda tarar:
 
-**Dosya:** `asi_engine/cognition_base.py`, satir 67
+- **min_edge:** 0.02-0.50 arası
+- **kelly_fraction:** 0.05-0.50 arası
+- **min_entry_price:** 0.01-0.50 arası  
+- **inefficiency_min:** -0.50 ile 0 arası
+- **Model weights:** 8 model için ayrı ayrı
 
-**Mevcut deger:** `brier_score=0.25` (uniform prior)
+Walk-forward OOS doğrulama kullanır — temporal leakage yok. En iyi hipotezi `data/karpathy_best.json`'a kaydeder.
 
-Bu deger, tum hava durumu modellerine esit agirlik veren baslangic noktasidir. Dogrudur ve beklenen davranistir. Ancak yeni cognition dugumleri uretilirken bu prior'un etkisi unutulmamalidir — ilk strateji kararlari bu varsayimla yapilir.
+### Kullanım
 
----
+```bash
+# 6 round çalıştır (varsayılan)
+python main.py llm karpathy
 
-## 12. Veritabani
+# LLM ile çalıştır (ZAI_API_KEY gerekli)
+python main.py llm karpathy --llm
 
-**Tur:** SQLite + WAL mode
-**Dosya:** `data/asiabot.db`
+# Round sayısını belirle
+python main.py llm karpathy --rounds 10
 
-### Tablolar
+# Doğrudan modül olarak
+python -m asi_engine.karpathy_weekly --rounds 6
+```
 
-| Tablo | Aciklama |
+### Çıktılar
+
+- `data/karpathy_best.json` — En iyi hipotez
+- `data/karpathy_results.tsv` — Tüm denemeler
+- `data/strategy_params.json` — Kabul edilen parametreler
+
+> **⚠️** Karpathy, Karpathy'nin "Simple Scaling" makalesindeki yaklaşımı taklit eder. Trade verisi birikince hipotez kabul eder. Şu an hazır durumda — yeterli veri birikince aktif hipotez üretmeye başlar.
+
+## 10. Risk Yönetimi
+
+### 12 Gate (Bet Açma Kontrolleri)
+
+Her bet açılışında sırasıyla kontrol edilir:
+
+| # | Gate | Açıklama |
+|---|------|----------|
+| 1 | `analysis_exists` | Analysis kaydı var ve `should_bet=True` |
+| 2 | `edge_positive` | Edge > `min_edge` (SIA/Karpathy ile dinamik) |
+| 3 | `market_exists` | WeatherMarket bulundu |
+| 4 | `daily_loss_limit` | Circuit breaker tetiklenmedi (günlük kayıp limiti) |
+| 5 | `price_valid` | Binary price geçerli (0.01-0.99) |
+| 6 | `target_date_ok` | Target date gelecekte |
+| 7 | `min_entry_price` | Fiyat ≥ minimum giriş fiyatı (long-shot filter) |
+| 8 | `max_entry_price` | Fiyat ≤ 0.97 (çok yüksek fiyata girme) |
+| 9 | `no_existing_bet` | Duplicate önleme (cooldown dahil) |
+| 10 | `exposure_cap` | Toplam exposure ≤ %25 × conservative portfolio |
+| 11 | `city_cap` | Şehir başına < 4 bet |
+| 12 | `depth_ok` | Orderbook derinliği yeterli |
+
+### 3 Cap (Limitler)
+
+1. **Per-bet cap:** `min(proposed_amount, conservative_portfolio × dynamic_max_bet_pct)`
+   - Edge ≥ %20 → %5 cap
+   - Edge %10-%20 → %3 cap
+   - Edge < %10 → %2 cap
+2. **Exposure cap:** Toplam açık pozisyon ≤ conservative_portfolio × %25
+3. **City cap:** Aynı şehirde maksimum 4 açık bet
+
+### 7 Erken Çıkış (Early Exit)
+
+Açık bet'leri koşullara göre otomatik kapatır:
+
+| # | Strateji | Tetikleyici |
+|---|----------|-------------|
+| 1 | `take_profit` | Fiyat ≥ entry × (1 + TP threshold) |
+| 2 | `stop_loss` | Fiyat ≤ entry × (1 - SL threshold) |
+| 3 | `trailing_stop` | Peak'ten %15 düşüş |
+| 4 | `time_decay` | Target date'e çok yakın (margin erir) |
+| 5 | `edge_erosion` | Edge < min_edge/2'ye düştü |
+| 6 | `model_reversal` | Model probability %20+ ters döndü |
+| 7 | `stale_cleanup` | 24h+ açık pozisyon (API/cleanup ile) |
+
+### Circuit Breaker
+
+Günlük kayıp limiti aşılırsa (`DAILY_LOSS_LIMIT = %20`), o gün için yeni bet açılmaz.
+
+### Conservative Portfolio
+
+Portföy değeri hesaplanırken **unrealized PnL dahil edilmez**, sadece `initial + realized` kullanılır. Bu, feedback loop'u önler (açık pozisyonlardaki unrealized kâr portföyü şişirip daha fazla bet açtırmaz).
+
+## 11. Kelly Sizing ve Bet Büyüklüğü
+
+### Formül
+
+Kelly percentage: `f* = (p × odds - 1) / (odds - 1)` 
+Burada `odds = 1 / price` ve `p = model_probability`
+
+Fractional Kelly: `bet_amount = portfolio × kelly_fraction × f*`
+
+### Dinamik Band'ler
+
+| Edge Aralığı | max_bet_pct | Kelly Fraction | Mod |
+|-------------|-------------|----------------|-----|
+| ≥ %20 | %5 | 0.25 | Pyramiding (kazanana ekle) |
+| %10 - %20 | %3 | 0.15 | Averaging (maliyet düşür) |
+| < %10 | %2 | 0.10 | Conservative |
+
+**Kaynak kod:** `utils/kelly.py`
+
+## 12. Ladder Sistemi
+
+Her bet 3 kademeli ladder olarak açılır:
+
+### Yüksek Edge (≥ %20) — Pyramiding
+
+- L1: %70 (anında dolar) — agresif giriş
+- L2: %20, fiyat × 1.02 (fiyat yükselince dolar)
+- L3: %10, fiyat × 1.05
+
+### Orta Edge (%10 - %20) — Averaging Down
+
+- L1: %50 (anında dolar)
+- L2: %30, fiyat × 0.98 (fiyat düşünce dolar)
+- L3: %20, fiyat × 0.95
+
+### Düşük Edge (< %10) — Conservative
+
+- L1: %40 (anında dolar)
+- L2: %35, fiyat × 0.98
+- L3: %25, fiyat × 0.95
+
+> L1 anında dolar, L2/L3 fiyat koşulu sağlanınca `run_update_prices` döngüsünde dolar.
+
+**Kaynak kod:** `executor/bet_placer.py`
+
+## 13. Slippage Modeli
+
+3 kademeli slippage modeli (`utils/slippagepy`):
+
+| Model | Açıklama |
 |-------|----------|
-| weather_markets | Polymarket piyasa verileri |
-| weather_forecasts | Hava durumu tahminleri |
-| analyses | Analiz sonuclari ve bahis onerileri |
-| bets | Yapilan bahisler |
-| portfolios | Portfoy gecmisi |
-| model_performances | Model performans metrikleri |
-| historical_calibrations | Gecmis kalibrasyon verileri |
+| `flat` | Sabit % (varsayılan %0.5) |
+| `tiered` | Fiyat bazlı: < $0.05 → %3, $0.05-$0.10 → %1, > $0.10 → %0.5 |
+| `orderbook` | Gerçek CLOB derinliğinden VWAP fill (ResolvedMarkets API) |
 
-### WAL Mode
+Üretimde `orderbook` modeli kullanılır. API anahtarı yoksa graceful degradation ile `tiered`'e düşer.
 
-SQLite Write-Ahead Logging (WAL) modu etkindir. Bu, ayni anda okuma ve yazma islemlerinin guvenli sekilde yapilmasini saglar.
-
----
-
-## 13. Loglama
-
-**Tur:** RotatingFileHandler
-**Dosya:** `logs/asiabot.log`
-**Boyut:** 10MB x 5 dosya (max 50MB)
-**Kodlama:** UTF-8
-**Seviyeler:** DEBUG, INFO, WARNING, ERROR
-
-Log dosyalari `config/logging_config.py` ile yapilandirilir. Tum moduller `logging.getLogger("ASIAbot")` kullanarak log yazar.
-
----
-
-## 14. Testler
-
-**Test sayisi:** 304 dosya
-**Framework:** pytest
-
-```bash
-# Tum testleri calistir
-PYTHONPATH=. pytest -q
-
-# Belirli bir test dosyasi
-PYTHONPATH=. pytest tests/test_calculator.py
-
-# Coverage ile
-PYTHONPATH=. pytest --cov=.
+**Net edge formülü:**
+```
+net_edge = raw_edge - slippage_pct - fee_drag - gas_cost
 ```
 
----
+Burada:
+- `fee_drag = FEE_PCT × entry_price × (1 - entry_price)` (Polymarket resmi fee formülü)
+- `gas_cost = $0.10 / bet_amount × entry_price`
 
-## 15. Sikca Sorulan Sorular
+**Kaynak kod:** `utils/slippage.py`, `utils/formulas.py`
 
-**DRY_RUN nedir?**
-Paper mode. `DRY_RUN=true` iken bot sadece analiz yapar ve sinyal uretir, gercek bahis yerlestirmez. Piyasa kosullarini test etmek icin kullanilir.
+## 14. Erken Çıkış Stratejileri
 
-**Bot nasil durdurulur?**
-Terminalde `Ctrl+C` veya API uzerinden `POST /api/stop`.
-
-**Kelly nedir?**
-Optimal bahis boyutu hesaplama formuludur. Uzun vadede portfoy buyumesini maksimize eder. `kelly_fraction` parametresi ile risk azaltilir (ornek: %15 Kelly = Kelly sonucunun %0.15'i).
-
-**Ensamble nedir?**
-8 farkli meteoroloji modelinin agirlikli ortalamasi. Her modelin agirligi, gecmis performansina gore belirlenir.
-
-**SIA nedir?**
-Strategic Intelligence Agency — botun otonom karar verme dongusu. Piyasa tarama, analiz, bahis ve settlement adimlarini koordine eder.
-
-**ASI-Evolve nedir?**
-Genetik algoritma kullanan strateji evrim sistemi. Farkli parametre kombinasyonlarini test ederek en iyi stratejiyi bulur.
-
-**LLM neden kullaniliyor?**
-Hava durumu verilerini yorumlamak, piyasa analizi yapmak ve stratejik kararlar almak icin LLM kullanilir. 3 katmanli dongu: karar, analitik, stratejik.
-
-**Port 8092 neden degismiyor?**
-Dashboard ve API ayni portu paylasir. `main.py` port caprismasini otomatik olarak cozer.
-
-**Gunluk zarar limiti nasil calisir?**
-Gunluk toplam zarar `INITIAL_PORTFOLIO * DAILY_LOSS_LIMIT` degerine ulastiginda bot yeni bahis yapmayi birakir. Ertesi gun sifirlanir.
-
-**Ladder order nedir?**
-Bir bahsin 3 farkli fiyat diliminde yerlestirilmesidir. Riski dagitmak ve ortalama giris fiyatini iyilestirmek icin kullanilir.
-
----
-
-## 16. Hata Ayiklama
-
-### Bot Baslamadi
-
-| Kontrol | Cozum |
-|---------|-------|
-| `.env` dosyasi mevcut mu? | `cp .env.example .env` ve duzenle |
-| Python versiyonu 3.12+ mi? | `python --version` ile kontrol |
-| Bagimliliklar yuklu mu? | `pip install -r requirements.txt` |
-| Port 8092 baska bir surecte mi? | Task Manager'dan baska sureci durdur veya PORT degiskenini degistir |
-| Polymarket API key gecerli mi? | Gamma API'dan test istegi gonder |
-
-### Bahis Yerlestirilmedi
-
-| Kontrol | Cozum |
-|---------|-------|
-| DRY_RUN true mu? | `DRY_RUN=false` yap (gercek bahis icin) |
-| min_edge cok yuksek mi? | `.env`'de `MIN_EDGE=0.05` ayarla |
-| Gunluk zarar limiti asildi mi? | Loglari kontrol et, ertesi gunu bekle |
-| Piyasa fiyati gecerli mi? | Fiyat 0.01-0.99 araliginda olmali |
-| Yeterli bakiye var mi? | Wallet bakiyesini kontrol et |
-
-### Dashboard Acilmiyor
-
-| Kontrol | Cozum |
-|---------|-------|
-| Node.js yuklu mu? | `node --version` ile kontrol |
-| npm install calistirildi mi? | `cd dashboard && npm install` |
-| Port 8092 acik mi? | `http://localhost:8092` tarayicida ac |
-| Hata mesaji var mi? | Terminaldeki npm ciktilarini kontrol et |
-
-### API Hatalari
-
-| Kontrol | Cozum |
-|---------|-------|
-| Bot calisiyor mu? | `GET /api/status` ile kontrol |
-| Auth gerekli mi? | `ASIABOT_API_KEY` ayarliysa header'da gonder |
-| Network baglantisi | Polymarket Gamma API erisimini kontrol et |
-| Rate limit | Cok sik istek atma — Gamma API rate limit var |
-
----
-
-## 17. Gelistirme Rehberi
-
-### Yeni Bir Model Eklemek
-
-1. `scrapers/meteo.py` dosyasinda yeni fetch fonksiyonu ekle
-2. `config/settings.py`'da model agirligini tanimla
-3. `engine/calculator.py`'da ensamble'a dahil et
-4. Test yaz
-
-### Yeni Bir Piyasa Turu Eklemek
-
-1. `engine/market_parser.py`'da yeni parser ekle
-2. `engine/strategy.py`'da strateji mantigini guncelle
-3. `api.py`'da endpoint guncelle
-4. Dashboard'da gorunumu guncelle
-
-### Strateji Parametrelerini Degistirmek
-
-```bash
-# .env uzerinden
-MIN_EDGE=0.08
-KELLY_FRACTION=0.10
-
-# Veya data/strategy_params.json uzerinden
-echo '{"min_edge": 0.08, "kelly_fraction": 0.10}' > data/strategy_params.json
+```
+RiskManager (engine/strategy.py)
+├── take_profit():     entry_price × 2.0 → kapat
+├── stop_loss():       entry_price × 0.8 → kapat
+├── trailing_stop():   max_price'ten %15 düşüş → kapat
+├── time_decay():      target_date'e < 3 saat → kapat
+├── edge_erosion():    edge < min_edge/2 → kapat
+└── model_reversal():  model_prob > %20 ters → kapat
 ```
 
----
+Erken çıkan bet'ler `closed_early` statüsü alır ve `close_reason` ile işaretlenir (TP/SL/TS/TD/ER/MR). REOPEN_COOLDOWN_HOURS penceresi içinde aynı markete tekrar girilmez.
 
-*Bu belge ASIAbot v1.0 icin gecerlidir. Guncel bilgiler icin kod tabanini kontrol edin.*
+## 15. Duplicate Bet Önleme
+
+3 katmanlı koruma:
+
+1. **no_existing_bet gate (place_bet içinde):**
+   - Aynı `market_id`'de aktif bet varsa engelle
+   - Aynı gün açılmış bet varsa engelle
+   - Son N saatte (cooldown) kapanmış bet varsa engelle
+
+2. **Cooldown (REOPEN_COOLDOWN_HOURS=24):**
+   - TP/SL/trailing ile kapanan bet → 24 saat re-entry engeli
+   - Settled bet (won/lost) → 24 saat re-entry engeli
+   - Rolling 24h penceresi (calendar-day değil)
+
+3. **City+Threshold Dedup (place_all_pending içinde):**
+   - Aynı şehir + aynı metric + aynı threshold + aynı tarih → engelle
+
+### Senaryo: Ankara Yarın 25°C
+
+| Durum | Açılır mı? |
+|-------|-----------|
+| Aktif bet var | ❌ HAYIR |
+| TP ile kapandı, 1 saat sonra | ❌ HAYIR (cooldown) |
+| TP ile kapandı, 25 saat sonra | ✅ EVET |
+| `REOPEN_COOLDOWN_HOURS=8760` | ❌ 1 yıl boyunca açılmaz |
+
+## 16. Portföy Muhasebesi
+
+**Kaynak kod:** `utils/formulas.py` (tek kaynak), `utils/accounting.py`
+
+| Formül | Açıklama |
+|--------|----------|
+| `max_bet_cap(portfolio, pct)` | Per-bet cap |
+| `conservative_portfolio_value(initial, realized)` | Feedback loop önleme (unrealized hariç) |
+| `max_exposure_cap(initial, realized, pct)` | Toplam exposure limiti |
+| `unrealized_pnl(shares, current, entry)` | Açık pozisyon PnL |
+| `settlement_pnl(stake, entry, fee, won)` | Settled PnL |
+| `polymarket_fee(shares, price, rate)` | Resmi: `C × feeRate × p × (1-p)` |
+| `portfolio_total_value(cash, exposure)` | Book value |
+| `portfolio_current_value(initial, realized, unrealized)` | Market value |
+| `debit_stake(session, amount, reason)` | Nakit düş (bet açılışı) |
+| `credit_sale(session, amount, reason)` | Nakit ekle (settlement) |
+
+### Portföy Durumu (örnek)
+
+```
+Başlangıç:  $1,000.00
+Realized:   +$400.00
+Unrealized: +$69.18
+Toplam:     $1,469.18
+Exposure:   $176.79 (max $250)
+Açık bet:   11 adet
+Win Rate:   %49.4
+ROI:        %10.1
+```
+
+## 17. Test Çalıştırma
+
+```bash
+# Tüm testler (330 test, 43 dosya)
+PYTHONPATH=. pytest
+
+# Sadece belirli test
+PYTHONPATH=. pytest tests/test_calculator.py -v
+
+# Lint
+ruff check .
+
+# Type check
+mypy . --ignore-missing-imports
+
+# Coverage
+coverage run -m pytest
+coverage report
+
+# Full pipeline
+ruff check . && mypy . --ignore-missing-imports && PYTHONPATH=. pytest -q --tb=short
+```
+
+## 18. Sık Sorulan Sorular
+
+### Bot live trade yapıyor mu?
+
+Hayır. `DRY_RUN=true` (varsayılan) ile paper mode'da çalışır. Live trade için:
+1. `DRY_RUN=false` set et
+2. Polymarket cüzdanı bağla (private key)
+3. `LIVE_TRADING_ENABLED=true` set et
+
+### Portföy neden $1,000'den başlıyor?
+
+`INITIAL_PORTFOLIO=1000.0` varsayılan değerdir. İstediğiniz miktarı `.env`'de değiştirebilirsiniz.
+
+### Bot neden bet açmıyor?
+
+Sağlık kontrolü yapın: `GET /api/health-check`. Olası sebepler:
+- "Az kaynak: 0" → Open-Meteo o şehir/tarih için veri dönmedi (normal)
+- "edge_positive" → Edge min_edge ( %30) altında
+- "exposure_cap" → Exposure limiti doldu
+- "daily_loss_limit" → Günlük kayıp limiti aşıldı
+- "depth_ok" → Orderbook derinliği yetersiz
+
+### SIA Loop neden çalışmıyor?
+
+SIA saatlik çalışır. Bot'un çalıştığından emin olun (`/api/status` → `is_running: true`). İlk çalışma için yeterli sayıda kapanmış bet gerekir (min 10).
+
+### LLM key'im yok, bot çalışır mı?
+
+Evet. Tüm LLM katmanları (Karpathy, ASI-Evolve, SIA) API key olmadan **deterministic mutation ladder**'a fallback yapar. Bot LLM olmadan da tam işlevseldir.
+
+---
+*Son güncelleme: 2026-07-06*
