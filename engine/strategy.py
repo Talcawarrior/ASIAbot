@@ -1110,13 +1110,11 @@ class SIALoop:
             )
         elif win_rate > 0.60 and total_roi > 5:
             # High win rate & profit: relax filter to find more trades
-            # FLOOR: never go below the absolute MIN_EDGE_FLOOR (0.05 = %5).
-            # BUG FIX: Eski kod `max(bot_config.strategy.min_edge, ...)` kullanıyordu
-            # ama `bot_config.strategy` ile `strategy` aynı nesne — SIA bir kez
-            # düşürdüğünde sonraki döngüde floor da düşmüş oluyordu (self-referential).
-            # Artık sabit 0.05 floor kullanıyor (config.MIN_EDGE_FLOOR ile uyumlu).
+            # FLOOR: never go below the user-configured min_edge in
+            # strategy_params.json (default 0.30). This prevents the SIA loop
+            # from overriding manual risk decisions.
             old_edge = strategy.min_edge
-            strategy.min_edge = max(0.05, strategy.min_edge - 0.005)
+            strategy.min_edge = max(bot_config.strategy.min_edge, strategy.min_edge - 0.005)
             logger.info(
                 "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)",
                 old_edge,

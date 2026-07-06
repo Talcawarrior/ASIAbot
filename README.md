@@ -6,7 +6,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Tests](https://img.shields.io/badge/tests-330%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-329%20passed-brightgreen)
 
 ---
 
@@ -22,7 +22,7 @@
 - **💰 EV-Proportional Sizing** — Dinamik max_bet_pct (edge band'ine göre: %2/%3/%5) + Kelly fraction + edge-band ladder
 - **📈 Ladder Betting** — 3 kademeli bahis; yüksek edge → L1 %70 (agresif), düşük edge → L1 %40
 - **🔄 Pyramiding** — Yüksek edge'de L2/L3 fiyat YÜKSELDİĞİNDE dolar (kazanana ekle), düşük edge'de averaging down
-- **🔍 Karpathy Search** — Genetic algoritma + mutation ladder ile strateji parametre optimizasyonu (walk-forward OOS doğrulama, temporal leakage yok). Manuel çalıştırma: `python -m asi_engine.karpathy_weekly` veya `python -m asi_engine.llm_loop_orchestrator karpathy`. (⚠️ hazır — trade verisi birikince hipotez kabul eder; otomatik cron YOK, elle çalıştırılır)
+- **🔍 Karpathy Search** — Genetic algoritma + mutation ladder ile strateji parametre optimizasyonu (walk-forward OOS doğrulama, temporal leakage yok). Pazar 02:00 otomatik veya `python main.py llm karpathy` ile manuel çalışır. (⚠️ hazır — trade verisi birikince hipotez kabul eder)
 - **🧪 LLM 3-Layer Loop** — Z.AI API ile araştırma, analiz ve karar katmanları (opsiyonel, fallback mutation ladder)
 - **📈 Canlı API** — FastAPI + WebSocket (scan_complete broadcast) + 10s/60s polling fallback
 - **🌙 Midnight Scan** — Gece yarısı sonrası 60 sn aralıkla 2 gün ileri piyasaları tarar
@@ -46,7 +46,7 @@
 │  ┌──────┐   │   └────────┘  │  └─────────┘ │                       │
 │  │Async │   │              │  ┌─────────┐ │  ┌──────────────────┐ │
 │  │Cache │   │              │  │SIA Loop │ │  │Risk Manager     │ │
-│  │5dkTTL│   │              │  │(Ağırlık │ │  │12 gate + 3 cap   │ │
+│  │5dkTTL│   │              │  │(Ağırlık │ │  │11 gate + 3 cap   │ │
 │  └──────┘   │              │  │Optim.)  │ │  │7 early-exit      │ │
 └─────────────┴───────────────┴──┴─────────┴─┴──────────────────────┘
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -338,33 +338,25 @@ sudo systemctl start asiabot
 
 ### `.env` Değişkenleri
 
-**`.env.example`'da olanlar** (doğrudan set edilebilir):
-
 | Değişken | Varsayılan | Açıklama |
 |----------|-----------|----------|
 | `DRY_RUN` | `true` | Gerçek emir göndermeden simülasyon (paper mode) |
+| `LIVE_TRADING_ENABLED` | `false` | `DRY_RUN=false` + `true` → gerçek emir |
 | `INITIAL_PORTFOLIO` | `1000.0` | Başlangıç portföy değeri ($) |
 | `SCAN_INTERVAL` | `300` | Market tarama aralığı (saniye) |
 | `SETTLEMENT_INTERVAL` | `120` | Settlement kontrol aralığı (saniye) |
 | `MAX_EXPOSURE_PCT` | `0.25` | Maksimum toplam exposure (%25) |
 | `MAX_BET_PCT` | `0.03` | Maksimum bet (portföy %3'ü; **dinamik %2-5** edge band'ine göre) |
+| `MIN_BET_SIZE` | `1.0` | Minimum bet ($; Kelly < min/2 ise bet açılmaz) |
 | `KELLY_FRACTION` | `0.15` | Fractional Kelly (**dinamik 0.10-0.25** edge band'ine göre) |
+| `FLAT_BET_USD` | `0.0` | `>0` → sabit $ bet (Kelly override), `0` → Kelly sizing |
+| `DAILY_LOSS_LIMIT` | `0.20` | Günlük zarar limiti (%20 — circuit breaker) |
 | `CITY_CAP` | `4` | Şehir başına maksimum pozisyon |
+| `FEE_DRAG` | `0.05` | Polymarket Weather taker fee (%5) |
+| `REOPEN_COOLDOWN_HOURS` | `24` | TP/SL sonrası aynı markete re-entry cooldown (saat) |
 | `HOST` | `127.0.0.1` | Sunucu adresi |
 | `PORT` | `8091` | API portu |
 | `ASIABOT_API_KEY` | — | API koruması için anahtar (yoksa açık mod) |
-| `SKIP_DASHBOARD_BUILD` | `false` | `true` → npm install + next build atla (hızlı açılış) |
-
-**Kod default'ları** (`.env.example`'da yok, env ile override edilebilir):
-
-| Değişken | Default | Açıklama |
-|----------|---------|----------|
-| `MIN_BET_SIZE` | `1.0` | Minimum bet ($; Kelly < min/2 ise bet açılmaz) |
-| `FLAT_BET_USD` | `0.0` | `>0` → sabit $ bet (Kelly override), `0` → Kelly sizing |
-| `DAILY_LOSS_LIMIT` | `0.20` | Günlük zarar limiti (%20 — circuit breaker) |
-| `FEE_DRAG` | `0.05` | Polymarket Weather taker fee (%5) |
-| `REOPEN_COOLDOWN_HOURS` | `24` | TP/SL sonrası aynı markete re-entry cooldown (saat) |
-| `MIN_ENTRY_PRICE` | `0.01` | Minimum giriş fiyatı (long-shot filter) |
 
 > **Not:** `MAX_BET_PCT` ve `KELLY_FRACTION` artık **dinamik** — `dynamic_max_bet_pct(edge)` ve `dynamic_kelly_fraction(edge)` fonksiyonları edge band'ine göre %2-5 ve 0.10-0.25 arası otomatik ayarlar. `.env`'deki değer base/orta band'dir.
 
@@ -391,16 +383,16 @@ LLM_MODEL=glm-4.5-flash                       # Model adı
 
 ### Strateji Parametreleri
 
-Parametreler `data/strategy_params.json` üzerinden yönetilir — Karpathy Search veya SIA Loop tarafından otomatik güncellenir. **Mevcut dosya sadece 2 parametre içerir** (`min_edge`, `kelly_fraction`); diğerleri `config/settings.py` default'larında (Karpathy bulgularını `strategy_params.json`'a yazana kadar):
+Parametreler `data/strategy_params.json` üzerinden yönetilir — Karpathy Search veya SIA Loop tarafından otomatik güncellenir:
 
-| Parametre | Varsayılan | Nerede | Açıklama |
-|-----------|-----------|--------|----------|
-| `min_edge` | `0.05` | `strategy_params.json` | Minimum net edge eşiği (%5) |
-| `kelly_fraction` | `0.15` | `strategy_params.json` | Base fractional Kelly (dinamik band: 0.10-0.25) |
-| `min_entry_price` | `0.01` | `settings.py` (default) | Minimum giriş fiyatı (Karpathy-tuned: 0.35) |
-| `inefficiency_min` | `-1.0` | `settings.py` (default) | Minimum verimsizlik (Karpathy-tuned: -0.124) |
-| `slippage_model` | `orderbook` | `settings.py` (default) | Slippage modeli: flat / tiered / orderbook |
-| `min_depth_usd` | `0.0` | `settings.py` (default) | Min orderbook derinliği ($; 0 = disabled) |
+| Parametre | Varsayılan | Açıklama |
+|-----------|-----------|----------|
+| `min_edge` | `0.05` | Minimum net edge eşiği (%5) |
+| `kelly_fraction` | `0.15` | Base fractional Kelly (dinamik band: 0.10-0.25) |
+| `min_entry_price` | `0.01` | Minimum giriş fiyatı (Karpathy-tuned: 0.35) |
+| `inefficiency_min` | `-1.0` | Minimum verimsizlik (Karpathy-tuned: -0.124) |
+| `slippage_model` | `orderbook` | Slippage modeli: flat / tiered / orderbook |
+| `min_depth_usd` | `0.0` | Min orderbook derinliği ($; 0 = disabled) |
 
 ### Midnight Scan
 
@@ -462,12 +454,12 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 
 ---
 
-## Bet Açma Gate'leri (12 adım)
+## Bet Açma Gate'leri (11 adım)
 
 `place_bet()` sırasıyla şu gate'leri kontrol eder:
 
 1. `analysis_exists` — Analysis kaydı var ve `should_bet=True`
-2. `edge_positive` — Edge ≥ `bot_config.strategy.min_edge` (canlı min_edge, SIA/Karpathy ayarlar)
+2. `edge_positive` — Edge > `bot_config.strategy.min_edge` (canlı min_edge, SIA/Karpathy ayarlar)
 3. `market_exists` — WeatherMarket bulundu
 4. `daily_loss_limit` — Circuit breaker tetiklenmedi
 5. `price_valid` — Binary price geçerli (0.01-0.99)
@@ -480,9 +472,9 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 12. `depth_ok` — Orderbook derinliği yeterli (resolvedmarkets_ingest gerçek API)
 
 Tüm gate'leri geçen adaylar **tier-based priority** ile sıralanır:
-- **Tier 3** (>48 saat sonra, ~2+ gün): en yüksek öncelik — erken pozisyon avantajı
-- **Tier 2** (>24 saat sonra, ~1+ gün): orta öncelik
-- **Tier 1** (≤24 saat, bugün): düşük öncelik
+- **Tier 3** (2+ gün sonra): en yüksek öncelik — erken pozisyon avantajı
+- **Tier 2** (1+ gün sonra): orta öncelik
+- **Tier 1** (bugün): düşük öncelik
 - Aynı tier'da edge'i yüksek olan önce açılır
 
 ---
@@ -496,16 +488,11 @@ python main.py run          # Sadece API + Dashboard
 
 # Tek seferlik işlemler
 python main.py fetch        # Marketleri tara
-python main.py parse        # Marketleri parse et
 python main.py weather      # Hava durumunu çek
 python main.py analyze      # Analiz yap
 python main.py bet          # Bahis yerleştir
 python main.py settle       # Settlement
 python main.py report       # Rapor
-
-# LLM 3-Layer Loop (manuel, cron YOK)
-python -m asi_engine.karpathy_weekly              # Karpathy search
-python -m asi_engine.llm_loop_orchestrator karpathy  # LLM orchestrator
 ```
 
 ---

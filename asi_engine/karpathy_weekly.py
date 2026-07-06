@@ -280,12 +280,15 @@ def evaluate_hypothesis_oos(
         #     - Medium (0.05–0.10): 1.0% of stake
         #     - Low liquidity (entry < 0.05): 3.0% of stake (thin books)
         #   Gas / on-chain cost: ~$0.10 flat per trade (Polygon tx)
-        # BUG FIX: Eskiden SLIPPAGE_PCT burada yeniden tanımlanıyordu (DRY ihlali).
-        # Artık utils/slippage._tiered_slippage kullanıyor (tek kaynak).
         GAS_COST_USD = 0.10  # noqa: N806  # Polygon gas per trade
 
-        from utils.slippage import _tiered_slippage
-        SLIPPAGE_PCT = _tiered_slippage(entry)  # noqa: N806  # tek kaynak
+        # Adaptive slippage based on entry price (liquidity proxy)
+        if entry < 0.05:
+            SLIPPAGE_PCT = 0.03  # noqa: N806  # thin orderbook
+        elif entry < 0.10:
+            SLIPPAGE_PCT = 0.01  # noqa: N806  # moderate
+        else:
+            SLIPPAGE_PCT = 0.005  # noqa: N806  # deep book
 
         slippage_cost = stake * SLIPPAGE_PCT
         effective_stake = stake + slippage_cost  # you pay more than planned

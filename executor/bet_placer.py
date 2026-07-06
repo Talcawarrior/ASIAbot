@@ -157,17 +157,11 @@ class BetPlacer:
             # kapanan bir bet ayni gun veya 24 saat icinde tekrar acilmaz.
             # Cooldown kontrolu burada (place_bet icinde) yapilir — bu gate
             # hem place_all_pending hem de manuel/API/CLI cagrilarda aktiftir.
-            #
-            # BUG FIX: Eski kod `_today_start - timedelta(hours=24)` (calendar-day
-            # bazlı) kullanıyordu — bu rolling 24h DEĞİL, "bugün 00:00'dan 24h
-            # geri" demek. Bu nedenle 24h-47h59min arası cooldown süresi değişiyordu.
-            # Artık `datetime.now() - timedelta(hours=24)` (rolling 24h) kullanıyor,
-            # place_all_pending ile tutarlı.
-            _now = datetime.now(timezone.utc).replace(tzinfo=None)
-            _today_start = _now.replace(hour=0, minute=0, second=0, microsecond=0)
+            _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+            _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
             _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
-            _cooldown_cutoff = _now - timedelta(hours=_cooldown_hours)
+            _cooldown_cutoff = _today_start - timedelta(hours=_cooldown_hours)
 
             existing_open = (
                 session.query(Bet)
@@ -710,19 +704,10 @@ class BetPlacer:
                     .all()
                 )
                 _city_dup_set = {(r.city_l, r.metric, r.threshold, r.target_date) for r in open_city_dup}
-                # BUG FIX: N+1 sorgu yerine tek bulk sorgu. Eski kod her analysis
-                # için ayrı WeatherMarket sorgusu yapıyordu (N sorgu). Artık tek
-                # sorguda tüm market'leri çekip dict'e koyuyoruz (1 sorgu).
-                _mkt_ids_for_lookup = list({a.market_id for a in pending})
-                _markets_for_lookup = {
-                    m.id: m
-                    for m in sess.query(WeatherMarket)
-                    .filter(WeatherMarket.id.in_(_mkt_ids_for_lookup))
-                    .all()
-                }
+                # Build a lookup from analysis.market_id -> (city, metric, threshold, date)
                 _mkt_lookup = {}
                 for a in pending:
-                    mkt = _markets_for_lookup.get(a.market_id)
+                    mkt = sess.query(WeatherMarket).filter_by(id=a.market_id).first()
                     if mkt:
                         _mkt_lookup[a.market_id] = (
                             (mkt.city or "").lower(),
@@ -766,11 +751,9 @@ class BetPlacer:
                     else:
                         hours_left = -1.0
 
-                    # BUG FIX: README "2+ gün / 1+ gün" diyor. Eski 36h (1.5g) /
-                    # 12h (0.5g) threshold yanlıştı. Artık 48h (2g) / 24h (1g).
-                    if hours_left > 48:
+                    if hours_left > 36:
                         tier = 3
-                    elif hours_left > 24:
+                    elif hours_left > 12:
                         tier = 2
                     else:
                         tier = 1
