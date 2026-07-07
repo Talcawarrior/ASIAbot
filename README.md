@@ -15,6 +15,7 @@
 - **🤖 Tam Otomatik** — Market tarama → hava durumu çekme → analiz → bahis yerleştirme → settlement döngüsü
 - **🌤️ 8 Model Ensemble** — GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, Météo-France — SIA ağırlık optimizasyonu ile (tek Open-Meteo çağrısı, 8 model)
 - **🧠 SIA Loop** — Self-Improving Agent, saatlik Brier skoruna + financial feedback'e (Win Rate, ROI) göre model ağırlıklarını ve strateji parametrelerini otomatik günceller (✅ aktif)
+- **🌡️ Continuous Calibration** — Her SIA döngüsünde şehir bazlı sıcaklık bias düzeltmesi (60g rolling window, recency weighting, shrinkage)
 - **🔬 ASI-Evolve** — Genetik algoritma ile strateji evrimi (UCB1 selection + crossover + mutation ladder)
 - **📊 Dashboard** — Next.js 16 + shadcn/ui + Recharts ile canlı takip (http://localhost:8091), dark mode desteği
 - **⚡ Slippage Modeli** — 3 model (flat / tiered / orderbook) — VWAP walk + gerçek ResolvedMarkets API
@@ -72,7 +73,7 @@
 1. **Fetch** — Polymarket gamma-api ile açık hava piyasalarını tara (tarih bazlı sorgular: bugün+2 gün)
 2. **Weather** — Open-Meteo API'den 8 modelin tahminlerini çek (tek çağrı, 5 gün)
 3. **Weight** — SIA ağırlıkları ile weighted ensemble hesapla
-4. **Calibrate** — Kalibrasyon düzeltmesi uygula (şehir bazlı bias)
+4. **Calibrate** — Continuous calibration düzeltmesi uygula (şehir bazlı bias; 60g rolling window + recency weight)
 5. **Analyze** — Edge = model_prob - market_price; net edge = raw - slippage - fee - gas
 6. **Size** — Dinamik Kelly: `kelly_bet_amount(edge=...)` → yüksek edge → yüksek bet
 7. **Place** — 3 kademeli ladder; yüksek edge → L1 %70, düşük edge → L1 %40
@@ -117,6 +118,20 @@ Kelly `< min_bet/2` ise bet **açılmaz** (return 0). Eski kod Kelly $0.10 öner
 ## Bileşenler
 
 ASIAbot 3 katmanlı otonom optimizasyon sistemine sahiptir:
+
+### 0. Continuous Calibration (Her SIA döngüsünde)
+
+**Dosya:** `asi_engine/calibration_engine.py`
+
+**Ne iş yapar:** Her saatlik SIA döngüsünün **en başında** çalışır. Her şehir ve model için sistematik sıcaklık bias'ını (ör. "GFS İstanbul'da 1.5°C fazla tahmin ediyor") hesaplar ve ham tahmine otomatik düzeltme uygular.
+
+**Yenilikler (2026-07-07):**
+- **Rolling window:** Son 60 gün — eski model versiyonlarının bias'ı kullanılmaz
+- **Recency weighting:** 14 gün yarı ömürlü üstel ağırlık — dünkü bias, 55 gün öncekinden daha önemli
+- **Shrinkage:** Az verili kombinasyonlarda bias 0'a çekilir ("emin değilsen düzeltme yapma")
+- **Boş veri koruması:** Son 60 günde hiç veri yoksa eski kalibrasyon haritası korunur
+
+**Çalışma sıklığı:** Her SIA döngüsünde otomatik (eskiden sadece manuel API çağrısı ile)
 
 ### 1. ISA / SIA Loop (Self-Improving Agent) — Saatlik
 
@@ -692,6 +707,24 @@ Tüm finansal hesaplamalar `utils/formulas.py`'den gelir:
 ---
 
 ## Changelog
+
+### 2026-07-07 — 5 Bug Fix + Continuous Calibration
+
+**Değişiklikler:**
+1. **`asi_engine/calibration_engine.py`** — Tamamen yeniden yazıldı:
+   - **Rolling window:** Son 60 gün veri, eski model versiyonlarının bias'ı kullanılmaz
+   - **Recency weighting:** 14 gün yarı ömürlü üstel ağırlıklandırma
+   - **Shrinkage:** 20+'dan az gözlemde bias 0'a çekme (`trust_factor = min(count/20, 1.0)`)
+   - **Boş veri koruması:** Son 60 günde hiç veri yoksa eski harita korunur (`return self.bias_map`)
+   - **`_parse_dt()`:** Çoklu SQLite tarih formatı desteği
+2. **`engine/strategy.py`** — `run_optimization_cycle()`'a **Adım 0** eklendi: kalibrasyon artık her SIA döngüsünde otomatik tazelenir, manuel API çağrısı gerekmez
+3. **BUG-1 (dead-code):** `scrapers/meteo_cache.py` silindi — hiçbir yerde import edilmiyor, `meteo.py` kendi içinde aynı cache'i taşıyor
+4. **BUG-2 (concurrency):** `scrapers/meteo.py _throttle()` — `asyncio.get_running_loop()` + `loop.run_until_complete()` kaldırıldı, direkt `time.sleep()`. Çalışan event loop üzerinde `run_until_complete` tüm taskları donduruyordu
+5. **BUG-3 (performance):** `engine/market_parser.py parse_all_unparsed()` — 714 ayrı session/commit yerine **1 session + 1 commit**. `PolymarketScraper` her market için yeniden oluşturulmuyor (1 kez `__init__`'de)
+6. **BUG-4 (cosmetic):** `database/models.py` — duplicate `Market = WeatherMarket` satırı silindi
+7. **BUG-5 (redundant):** `jobs/scheduler.py run_cycle()` — gereksiz `session.commit()` silindi, `get_session()` with bloğu çıkışında auto-commit yapıyor
+
+**Test:** 329/330 passed (1 pre-existing failure: `min_edge=0.25 vs 0.30`)
 
 ### 2026-07-06 — min_edge %5 → %30; prioritization doğrulaması
 
