@@ -144,6 +144,12 @@ class StrategyConfig:
     slippage_pct: float = 0.005  # used when slippage_model="flat"
     gas_cost_usd: float = 0.10  # Polygon gas per round-trip
 
+    # ── Market blend weight ─────────────────────────────────────────────
+    # Blend between model probability and market price:
+    #   1.0 = pure model, 0.0 = pure market, 0.65 = default
+    # Optimized by SIA/ASI-Evolve/Karpathy 3-layer stack via Hypothesis.blend_weight.
+    blend_weight: float = 0.65
+
     # ── Flat bet override & Daily loss limit (synced from Config) ─────────
     flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
     daily_loss_limit: float = 0.20  # 20% daily max loss
@@ -671,6 +677,27 @@ def apply_persisted_strategy_params() -> dict:
                 )
             s.inefficiency_min = clamped
             applied["inefficiency_min"] = s.inefficiency_min
+        except (TypeError, ValueError):
+            pass
+
+    BLEND_WEIGHT_MIN = 0.35  # 35% model = mostly market anchor
+    BLEND_WEIGHT_MAX = 1.0  # 100% model = no blending
+    if "blend_weight" in persisted:
+        try:
+            raw = float(persisted["blend_weight"])
+            clamped = min(max(raw, BLEND_WEIGHT_MIN), BLEND_WEIGHT_MAX)
+            if clamped != raw:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "strategy_params.json blend_weight=%.4f clamped to [%.2f, %.2f] -> %.4f",
+                    raw,
+                    BLEND_WEIGHT_MIN,
+                    BLEND_WEIGHT_MAX,
+                    clamped,
+                )
+            s.blend_weight = clamped
+            applied["blend_weight"] = s.blend_weight
         except (TypeError, ValueError):
             pass
 

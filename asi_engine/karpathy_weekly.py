@@ -108,6 +108,7 @@ class Hypothesis:
     min_edge: float
     kelly_fraction: float
     max_bet_pct: float = 0.05
+    blend_weight: float = 0.65  # 0.0 = pure market, 1.0 = pure model
     tail_filter_enabled: bool = False
     tail_filter_threshold_high: float = 32.0  # °C
     tail_filter_threshold_low: float = 10.0  # °C
@@ -219,7 +220,7 @@ def evaluate_hypothesis_oos(
                 if disp > 0.35:
                     yes_prob = 0.5 + (yes_prob - 0.5) * 0.85
 
-        # 3. Market entry price — we need this to compute Kelly + edge.
+        # 3. Market entry price — we need this to compute blend, Kelly + edge.
         # In production this comes from resolvedmarkets_ingest snapshots.
         # We ONLY use snapshot_yes_price (the pre-resolution orderbook price).
         # The resolved yes_price (0.0/1.0) is NEVER used as entry proxy
@@ -229,14 +230,20 @@ def evaluate_hypothesis_oos(
         if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
             market_yes_price = float(row["snapshot_yes_price"])
 
-        # 4. Brier score (always — even without a market price)
+        # 4. Market blend — shrink model forecast toward the market prior.
+        # This is the same blend used in production (calculator.py/strategy.py).
+        # When market price is unreliable (0/1 extremes), skip blending.
+        if market_yes_price is not None and 0.01 < market_yes_price < 0.99:
+            yes_prob = hyp.blend_weight * yes_prob + (1 - hyp.blend_weight) * market_yes_price
+
+        # 5. Brier score (always — even without a market price)
         realized = row.get("realized_yes")
         if realized is None or pd.isna(realized):
             continue
         realized_f = float(realized)
         brier_errors.append((yes_prob - realized_f) ** 2)
 
-        # 5. Bet decision — only if we have a market price
+        # 6. Bet decision — only if we have a market price
         if market_yes_price is None:
             continue
         if market_yes_price <= 0.02 or market_yes_price >= 0.98:
@@ -489,6 +496,28 @@ _MUTATION_LADDER: list[dict[str, Any]] = [
         "kelly_delta": 0.0,
         "max_bet_pct_delta": +0.03,
     },
+    # ---- blend_weight diversity rungs ----
+    {
+        "description": "More market weight (blend=0.50) — let market anchor more",
+        "weights_delta": {},
+        "min_edge_delta": 0.0,
+        "kelly_delta": 0.0,
+        "blend_weight_delta": -0.15,
+    },
+    {
+        "description": "More model weight (blend=0.80) — trust forecasts more",
+        "weights_delta": {},
+        "min_edge_delta": 0.0,
+        "kelly_delta": 0.0,
+        "blend_weight_delta": +0.15,
+    },
+    {
+        "description": "Heavy market blend (blend=0.35) + tight edge",
+        "weights_delta": {},
+        "min_edge_delta": +0.02,
+        "kelly_delta": -0.03,
+        "blend_weight_delta": -0.30,
+    },
 ]
 
 
@@ -516,6 +545,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
     new_min_edge = max(0.01, min(0.15, parent.min_edge + mutation["min_edge_delta"]))
     new_kelly = max(0.05, min(0.30, parent.kelly_fraction + mutation["kelly_delta"]))
     new_max_bet = max(0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0)))
+    new_blend = max(0.35, min(1.0, parent.blend_weight + mutation.get("blend_weight_delta", 0.0)))
 
     return Hypothesis(
         description=mutation["description"],
@@ -523,6 +553,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
         min_edge=round(new_min_edge, 4),
         kelly_fraction=round(new_kelly, 4),
         max_bet_pct=round(new_max_bet, 4),
+        blend_weight=round(new_blend, 4),
         tail_filter_enabled=mutation.get("tail_filter_enabled", parent.tail_filter_enabled),
         tail_filter_threshold_high=parent.tail_filter_threshold_high,
         tail_filter_threshold_low=parent.tail_filter_threshold_low,
@@ -576,6 +607,8 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         "   - Underweight CMA and UKMO (noisier)\n"
         "   - min_edge 0.02-0.05 covers fees+slippage while keeping volume\n"
         "   - kelly_fraction 0.08-0.15 (conservative is better in small markets)\n"
+        "   - blend_weight 0.50-0.80: 0.65 is default. Lower = more market anchor, "
+        "higher = more model trust. If model overconfident, lower it.\n"
         "5. Weights MUST sum to 1.0.\n\n"
         "Return ONLY a JSON object:\n"
         "  {\n"
@@ -584,7 +617,8 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         '    "min_edge": 0.03,\n'
         '    "kelly_fraction": 0.10,\n'
         '    "max_bet_pct": 0.05,\n'
-        '    "tail_filter_enabled": false\n'
+        '    "tail_filter_enabled": false,\n'
+        '    "blend_weight": 0.65\n'
         "  }\n"
         "NO prose, NO markdown, ONLY the JSON object."
     )
@@ -619,6 +653,7 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
                 min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction))),
             ),
             max_bet_pct=max(0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))),
+            blend_weight=max(0.35, min(1.0, float(data.get("blend_weight", parent.blend_weight)))),
             tail_filter_enabled=bool(data.get("tail_filter_enabled", parent.tail_filter_enabled)),
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,

@@ -93,6 +93,7 @@ def save_strategy_params(params: dict[str, float]):
                 "kelly_fraction": (0.05, 0.25),  # ceiling 25% (quarter-Kelly)
                 "min_entry_price": (0.05, 0.95),  # floor 5%, ceiling 95%
                 "inefficiency_min": (-0.20, 0.0),  # floor -20%, ceiling 0
+                "blend_weight": (0.35, 1.0),  # floor 35% model (mostly market), ceiling 100% (pure model)
             }
             for key, (lo, hi) in _CLAMPS.items():
                 if key in params:

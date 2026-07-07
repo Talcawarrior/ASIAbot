@@ -313,6 +313,7 @@ class ResearcherAgent:
                 min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
+                blend_weight=0.65,
             )
             return parent, None
         parent = get_parent_hypothesis(self.conn, parent_id)
@@ -326,6 +327,7 @@ class ResearcherAgent:
                 min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
+                blend_weight=0.65,
             )
             return parent, None
         return parent, parent_id
@@ -447,6 +449,7 @@ def crossover(h1: Hypothesis, h2: Hypothesis) -> Hypothesis:
         min_edge=(h1.min_edge + h2.min_edge) / 2,
         kelly_fraction=(h1.kelly_fraction + h2.kelly_fraction) / 2,
         max_bet_pct=max(h1.max_bet_pct, h2.max_bet_pct),
+        blend_weight=(h1.blend_weight + h2.blend_weight) / 2,
         tail_filter_enabled=h1.tail_filter_enabled or h2.tail_filter_enabled,
         tail_filter_threshold_high=h1.tail_filter_threshold_high,
         tail_filter_threshold_low=h1.tail_filter_threshold_low,
@@ -620,6 +623,7 @@ def run_asi_evolve_daily(
             min_edge=0.05,
             kelly_fraction=0.15,
             max_bet_pct=0.05,
+            blend_weight=0.65,
         )
         best_stats = {
             "sharpe": -1e9,

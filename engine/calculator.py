@@ -233,15 +233,27 @@ class Calculator:
             )
 
             market_implied = market.yes_price or 0.5
-            raw_edge = estimated_prob - market_implied
+
+            # ── Market blend ───────────────────────────────────────────
+            # Blend model probability with market implied probability to
+            # prevent extreme edges from model overconfidence.
+            # blend_weight read from bot_config.strategy (default 0.65),
+            # auto-optimized by SIA/ASI-Evolve/Karpathy 3-layer stack.
+            bw = bot_config.strategy.blend_weight
+            if market_implied and 0.01 < market_implied < 0.99:
+                b_prob = bw * estimated_prob + (1 - bw) * market_implied
+            else:
+                b_prob = estimated_prob
+
+            raw_edge = b_prob - market_implied
 
             if raw_edge > 0:
                 # YES tarafı
-                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
+                kelly_frac = self.kelly_criterion(b_prob, market_implied, bot_config.strategy.kelly_fraction)
                 recommended_side = "YES"
             else:
                 # NO tarafı
-                no_prob = 1 - estimated_prob
+                no_prob = 1 - b_prob
                 no_implied = market.no_price or (1 - market_implied)
                 no_edge = no_prob - no_implied
 

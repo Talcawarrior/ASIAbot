@@ -707,6 +707,12 @@ class BettingEngine:
                     days_ahead=0,
                     market_type=str(market_type),
                 )
+                # ── Market blend ───────────────────────────────────────
+                # Blend model with market to prevent overconfidence.
+                # blend_weight read from bot_config.strategy, auto-optimized.
+                bw = bot_config.strategy.blend_weight
+                if 0.01 < yes_price < 0.99:
+                    model_prob = bw * model_prob + (1 - bw) * yes_price
                 # Edge-based side selection: pick whichever side gives positive edge
                 yes_edge = model_prob - yes_price
                 no_edge = (1.0 - model_prob) - (1.0 - yes_price)
@@ -1141,8 +1147,34 @@ class SIALoop:
                 strategy.kelly_fraction,
             )
 
+        # 3. Market blend weight (model trust vs market anchor)
+        # Low win rate + low ROI → model overconfident → trust market more
+        if win_rate < 0.40 and total_roi < -5:
+            old_bw = strategy.blend_weight
+            strategy.blend_weight = max(0.35, strategy.blend_weight - 0.05)
+            logger.info(
+                "  blend_weight: %.2f -> %.2f (Market anchor INCREASED — model overconfident)",
+                old_bw,
+                strategy.blend_weight,
+            )
+        elif win_rate > 0.60 and total_roi > 8:
+            # High performance → trust model more
+            old_bw = strategy.blend_weight
+            strategy.blend_weight = min(1.0, strategy.blend_weight + 0.03)
+            logger.info(
+                "  blend_weight: %.2f -> %.2f (Model trust INCREASED — strong performance)",
+                old_bw,
+                strategy.blend_weight,
+            )
+
         # Persist changes
-        save_strategy_params({"min_edge": strategy.min_edge, "kelly_fraction": strategy.kelly_fraction})
+        save_strategy_params(
+            {
+                "min_edge": strategy.min_edge,
+                "kelly_fraction": strategy.kelly_fraction,
+                "blend_weight": strategy.blend_weight,
+            }
+        )
 
     def run_optimization_cycle(self) -> bool:
         """Execute full SIA optimization cycle (Models + Strategy)."""

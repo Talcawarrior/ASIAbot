@@ -239,7 +239,7 @@ class TargetAgent:
         new_weights[trim] = max(0.01, new_weights[trim] - delta)
         new_weights = _normalise(new_weights)
 
-        # Also randomly nudge min_edge / kelly by a tiny amount
+        # Also randomly nudge min_edge / kelly / blend_weight by a tiny amount
         new_min_edge = max(
             0.01,
             min(0.15, parent.min_edge + self.rng.choice([-0.01, -0.005, 0, 0.005, 0.01])),
@@ -251,6 +251,13 @@ class TargetAgent:
                 parent.kelly_fraction + self.rng.choice([-0.02, -0.01, 0, 0.01, 0.02]),
             ),
         )
+        new_blend = max(
+            0.35,
+            min(
+                1.0,
+                parent.blend_weight + self.rng.choice([-0.05, -0.02, 0, 0.02, 0.05]),
+            ),
+        )
 
         return Hypothesis(
             description=f"SIA hourly: +{delta:.3f} {boost} / -{delta:.3f} {trim}",
@@ -258,6 +265,7 @@ class TargetAgent:
             min_edge=round(new_min_edge, 4),
             kelly_fraction=round(new_kelly, 4),
             max_bet_pct=parent.max_bet_pct,
+            blend_weight=round(new_blend, 4),
             tail_filter_enabled=parent.tail_filter_enabled,
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,
@@ -563,6 +571,7 @@ def run_sia_hourly(
                 min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
+                blend_weight=0.65,
             )
             # Re-eval on current splits
             feedback = FeedbackAgent(brier_df, splits)
