@@ -430,10 +430,8 @@ def run_cycle():
             logger.error("Cycle risk_management error: %s", e)
             results.append(f"risk_management error: {e}")
 
-        # Commit all changes atomically at end of cycle.
-        # Individual run_* functions that used the shared session
-        # skip their own commit (get_session_or doesn't auto-commit
-        # when given an existing session).
-        session.commit()
+        # NOT: session.commit() burada elle çağrılmıyor —
+        # get_session() context manager'ı with bloğundan normal
+        # çıkışta otomatik commit ediyor (bkz. database/db.py).
 
     return " | ".join(results)

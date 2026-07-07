@@ -124,9 +124,7 @@ class Analysis(Base):
 
     __tablename__ = "analyses"
 
-    __table_args__ = (
-        Index("ix_an_market_id", "market_id"),
-    )
+    __table_args__ = (Index("ix_an_market_id", "market_id"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)
@@ -236,9 +234,7 @@ class ModelPerformance(Base):
 
     __tablename__ = "model_performance"
 
-    __table_args__ = (
-        Index("ix_mp_model_name", "model_name"),
-    )
+    __table_args__ = (Index("ix_mp_model_name", "model_name"),)
 
     id = Column(Integer, primary_key=True)
     model_name = Column(String, nullable=False)
@@ -254,10 +250,6 @@ class ModelPerformance(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-
-# Compatibility Aliases
-Market = WeatherMarket
 
 
 class HistoricalCalibration(Base):

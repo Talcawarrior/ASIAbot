@@ -1186,6 +1186,19 @@ class SIALoop:
         try:
             logger.info("SIA Multi-Agent Loop baslatiliyor...")
 
+            # --- 0. Temperature Bias Calibration (rolling, recency-weighted) ---
+            # Runs on the same hourly cadence as the rest of SIA, instead of
+            # only on a manual API call. Failure here must never block model
+            # weight / strategy optimization below.
+            try:
+                from asi_engine.calibration_engine import CalibrationEngine
+
+                calib = CalibrationEngine()
+                bias_map = calib.calculate_biases()
+                logger.info("SIA Loop: calibration refreshed for %d cities.", len(bias_map))
+            except Exception as e:
+                logger.error("SIA Loop: calibration refresh failed (non-fatal): %s", e)
+
             # --- 1. Model Weights Optimization (Legacy SIA) ---
             performance = self.analyze_model_performance(days=30)
             if performance:
@@ -1238,10 +1251,3 @@ class SIALoop:
             return False
         finally:
             db.close()
-
-    def get_adjusted_probability(self, base_prob: float, _model_name: str, recent_brier: float) -> float:
-        """Adjust base probability based on recent model Brier Score."""
-        confidence_factor = 1.0 - (recent_brier * 0.5)
-        confidence_factor = max(0.5, min(1.0, confidence_factor))
-        adjusted_prob = 0.5 + (base_prob - 0.5) * confidence_factor
-        return round(max(0.0, min(1.0, adjusted_prob)), 4)

@@ -72,6 +72,14 @@ _THROTTLE_LOCK = threading.Lock()
 
 
 def _throttle(host: str) -> None:
+    """Block the calling thread until at least _MIN_INTERVAL_S seconds have
+    passed since the last call to `host`. The lock is released during the
+    sleep so other hosts are not blocked.
+
+    This is always called from sync code paths (even when an event loop is
+    running), so we use plain time.sleep.  Using loop.run_until_complete on
+    an already-running loop would freeze all other concurrent tasks.
+    """
     while True:
         with _THROTTLE_LOCK:
             now = time.monotonic()
@@ -80,12 +88,7 @@ def _throttle(host: str) -> None:
             if wait <= 0:
                 _LAST_CALL_AT[host] = now
                 return
-        # Use asyncio.sleep if running in an event loop, else time.sleep
-        try:
-            loop = asyncio.get_running_loop()
-            loop.run_until_complete(asyncio.sleep(wait))
-        except RuntimeError:
-            time.sleep(wait)
+        time.sleep(wait)
 
 
 class MeteoFetcher:
@@ -256,7 +259,6 @@ class MeteoFetcher:
 
     def fetch_all_markets(self) -> int:
         """Fetch ensemble forecast for all open markets with deduplication."""
-        import asyncio
         from collections import defaultdict
 
         from engine.calculator import WeatherEngine
