@@ -88,7 +88,7 @@ class StrategyConfig:
     # The depth is checked from the live orderbook via ResolvedMarkets API.
     # If the API call fails, the filter is skipped (graceful degradation).
     min_depth_usd: float = 0.0
-    kelly_fraction: float = 0.15  # Quarter/Fractional Kelly (aligned with ASIAbot 15%)
+    kelly_fraction: float = 0.06  # Sub-quarter Kelly (reduced from 0.15 for safety with <50% win rate)
     # Time-to-close edge escalation. As a market approaches its
     # resolution time, Polymarket prices move fast on the public
     # weather consensus and forecast uncertainty is already low.
@@ -681,7 +681,7 @@ def apply_persisted_strategy_params() -> dict:
             pass
 
     BLEND_WEIGHT_MIN = 0.35  # 35% model = mostly market anchor
-    BLEND_WEIGHT_MAX = 1.0  # 100% model = no blending
+    BLEND_WEIGHT_MAX = 0.50  # CRITICAL: asla pure-model'e gitme — NO bias tetikler
     if "blend_weight" in persisted:
         try:
             raw = float(persisted["blend_weight"])

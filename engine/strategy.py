@@ -1157,15 +1157,9 @@ class SIALoop:
                 old_bw,
                 strategy.blend_weight,
             )
-        elif win_rate > 0.60 and total_roi > 8:
-            # High performance → trust model more
-            old_bw = strategy.blend_weight
-            strategy.blend_weight = min(1.0, strategy.blend_weight + 0.03)
-            logger.info(
-                "  blend_weight: %.2f -> %.2f (Model trust INCREASED — strong performance)",
-                old_bw,
-                strategy.blend_weight,
-            )
+        # REMOVED: High performance → trust model more block
+        # Reward hacking pattern: kısa vadeli başarının 'model doğru' olarak
+        # yanlış nedenselleştirilmesi. Sadece düşük performansta düşür (yukarı asla).
 
         # Persist changes
         save_strategy_params(

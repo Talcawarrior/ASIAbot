@@ -504,13 +504,8 @@ _MUTATION_LADDER: list[dict[str, Any]] = [
         "kelly_delta": 0.0,
         "blend_weight_delta": -0.15,
     },
-    {
-        "description": "More model weight (blend=0.80) — trust forecasts more",
-        "weights_delta": {},
-        "min_edge_delta": 0.0,
-        "kelly_delta": 0.0,
-        "blend_weight_delta": +0.15,
-    },
+    # REMOVED: More model weight (blend=0.80) — NO bias riski
+    # 0.65 → 0.80 fırlatma MAX 0.50 clamp ile zaten bypass edilirdi
     {
         "description": "Heavy market blend (blend=0.35) + tight edge",
         "weights_delta": {},
