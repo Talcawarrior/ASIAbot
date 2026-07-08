@@ -104,7 +104,7 @@ def test_strategy_min_edge_is_lowered_to_one_percent():
     from config.settings import StrategyConfig
 
     me = float(StrategyConfig().min_edge)
-    assert 0.25 <= me <= 0.35, f"StrategyConfig.min_edge should be between 25%-35%, got {me}"
+    assert 0.20 <= me <= 0.30, f"StrategyConfig.min_edge should be between 20%-30%, got {me}"
 
 
 def test_bet_placer_overrides_amount_when_flat_bet_set():

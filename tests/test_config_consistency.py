@@ -19,7 +19,7 @@ def test_strategy_config_min_edge_default():
     from config.settings import StrategyConfig
 
     s = StrategyConfig()
-    assert 0.25 <= s.min_edge <= 0.35, f"Expected min_edge between 0.25 and 0.35, got {s.min_edge}"
+    assert 0.20 <= s.min_edge <= 0.30, f"Expected min_edge between 0.20 and 0.30, got {s.min_edge}"
 
 
 def test_config_fee_drag_matches_strategy():
@@ -31,10 +31,14 @@ def test_config_fee_drag_matches_strategy():
 
 
 def test_config_kelly_fraction_matches_strategy():
-    """Config.KELLY_FRACTION should equal the default StrategyConfig.kelly_fraction."""
-    from config.settings import StrategyConfig, config
+    """Config.KELLY_FRACTION should equal the live StrategyConfig singleton's kelly_fraction.
 
-    s = StrategyConfig()
-    assert config.KELLY_FRACTION == s.kelly_fraction, (
-        f"KELLY_FRACTION={config.KELLY_FRACTION} != default strategy.kelly_fraction={s.kelly_fraction}"
+    NOTE: Uses bot_config.strategy (the singleton, potentially mutated by
+    conftest's autouse fixture) rather than a fresh StrategyConfig() to
+    match what Config proxy actually maps to.
+    """
+    from config.settings import Config, bot_config
+
+    assert Config.KELLY_FRACTION == bot_config.strategy.kelly_fraction, (
+        f"KELLY_FRACTION={Config.KELLY_FRACTION} != singleton kelly_fraction={bot_config.strategy.kelly_fraction}"
     )

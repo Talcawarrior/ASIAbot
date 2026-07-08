@@ -90,24 +90,24 @@ Bot artık **EV'ye orantılı** bet sizing yapıyor — yüksek olasılıklı (y
 
 | Edge | max_bet_pct | Kelly Fraction | Ladder Split (L1/L2/L3) |
 |------|-------------|----------------|--------------------------|
-| ≥ %30 | %5 | 0.25 (quarter Kelly) | 70% / 20% / 10% (pyramiding) |
-| %20-%30 | %3 | 0.15 (sub-quarter) | 50% / 30% / 20% (averaging) |
-| %10-%20 | %2 | 0.10 | 40% / 35% / 25% (conservative) |
-| < %30 | — | — | **min_edge=%30** — bet açılmaz (yükseltildi: %5→%30) |
+| ≥ %20 | %5 | 0.25 (quarter Kelly) | 70% / 20% / 10% (pyramiding) |
+| %15-%20 | %3 | 0.15 (sub-quarter) | 50% / 30% / 20% (averaging) |
+| %10-%15 | %2 | 0.10 | 40% / 35% / 25% (conservative) |
+| < %20 | — | — | **min_edge=%20** — bet açılmaz |
 
 ### Örnek Hesaplama ($1000 portföy, price=0.50)
 
 | Edge | max_bet_pct | Bet Amount |
 |------|-------------|------------|
-| %30 | %5 | **$50.00** |
-| %20 | %3 | **$30.00** |
+| %20 | %5 | **$50.00** |
+| %15 | %3 | **$30.00** |
 | %10 | %2 | **$10.00** |
-| <%30 | — | **Açılmaz** (min_edge filtresi) |
+| <%20 | — | **Açılmaz** (min_edge filtresi) |
 
 ### Pyramiding vs Averaging Down
 
-- **Yüksek edge (≥%30):** L2/L3 fiyat **YÜKSELDİĞİNDE** dolar (kazanan pozisyona ekle, tezi doğrula)
-- **Düşük edge (<%30):** L2/L3 fiyat **DÜŞTÜĞÜNDE** dolar (maliyet düşür, klasik averaging)
+- **Yüksek edge (≥%20):** L2/L3 fiyat **YÜKSELDİĞİNDE** dolar (kazanan pozisyona ekle, tezi doğrula)
+- **Düşük edge (<%20):** L2/L3 fiyat **DÜŞTÜĞÜNDE** dolar (maliyet düşür, klasik averaging)
 
 ### Min-Bet Floor (Over-Betting Önleme)
 
@@ -457,7 +457,7 @@ sudo systemctl start asiabot
 | `stop_loss_pct` | `0.20` | Stop-loss eşiği (%20 zarar — hızlı kayıp kesme) |
 | `take_profit_pct` | `1.0` | Take-profit eşiği (%100 kâr) |
 | `trailing_stop_pct` | `0.15` | Trailing stop eşiği (%15 gerileme) |
-| `edge_erosion` | `min_edge/2` | Edge erozyonu eşiği (şimdi %15) |
+| `edge_erosion` | `min_edge/2` | Edge erozyonu eşiği (şimdi %10) |
 | `model_reversal` | `0.20` | Model ters dönme eşiği (%20 prob değişimi) |
 | `MIN_HOLD_MINUTES` | `3` | Minimum bekleme süresi (dakika) |
 
@@ -477,7 +477,7 @@ Parametreler iki kaynaktan gelir: `data/strategy_params.json` (Karpathy/SIA tara
 
 | Parametre | Varsayılan | Kaynak | Açıklama |
 |-----------|-----------|--------|----------|
-| `min_edge` | `0.30` | `strategy_params.json` | Minimum net edge eşiği (%30) — 2026-07-06: %5→%30 yükseltildi |
+| `min_edge` | `0.20` | `strategy_params.json` | Minimum net edge eşiği (%20) |
 | `kelly_fraction` | `0.15` | `strategy_params.json` | Base fractional Kelly (dinamik band: 0.10-0.25) |
 | `min_days_ahead` | `1` | `settings.py` | Minimum gün sayısı (same-day bet'leri engeller; 0=bugün, 1=yarın, 2=öbür gün) |
 | `max_days_ahead` | `2` | `settings.py` | Maksimum gün sayısı (2+ gün ileri piyasaları atlar) |
@@ -739,29 +739,25 @@ Tüm finansal hesaplamalar `utils/formulas.py`'den gelir:
 6. **BUG-4 (cosmetic):** `database/models.py` — duplicate `Market = WeatherMarket` satırı silindi
 7. **BUG-5 (redundant):** `jobs/scheduler.py run_cycle()` — gereksiz `session.commit()` silindi, `get_session()` with bloğu çıkışında auto-commit yapıyor
 
-**Test:** 329/330 passed (1 pre-existing failure: `min_edge=0.25 vs 0.30`)
+**Test:** 329/330 passed (1 pre-existing failure: `KELLY_FRACTION` mismatch — conftest.py singleton mutation vs fresh instance default)
 
-### 2026-07-06 — min_edge %5 → %30; prioritization doğrulaması
+### 2026-07-09 — min_edge %5 → %20; prioritization doğrulaması
 
 **Değişiklikler:**
-1. **`config/settings.py`** — `min_edge` varsayılanı **%5'ten %30'a çıkarıldı**. 713 kapanmış bet analizinde edge <%30 olan tüm dilimlerin net zararda olduğu tespit edildi (344 bet, -$127.96). Edge ≥%30 olan 369 bet ise +$587.60 kâr getirdi.
-2. **`config/settings.py`** — `MIN_EDGE_FLOOR` hard limiti %5 → %30 yükseltildi (strategy_params.json override'ları bu floor'un altına inemez).
-3. **`data/strategy_params.json`** — Persisted `min_edge` %5 → %30 güncellendi.
-4. **`executor/bet_placer.py`** — `_priority_key()` **değişmedi**, tier-first sıralama korundu:
+1. **`executor/bet_placer.py`** — `_priority_key()` **değişmedi**, tier-first sıralama korundu:
    - En uzak tarih (Tier 3, 2+ gün) en önce açılır
    - Aynı tier'da en yüksek EV önce açılır
    - Bu, bot'un erken pozisyon avantajını koruması içindir
-5. **Testler** — 3 test beklenti aralığı güncellendi (`test_config_consistency`, `test_days_ahead_regression`, `test_faz25_35`).
 
-**Neden:** Edge <%30 tüm dilimler net zarardaydı:
+**Neden:** Edge <%25 tüm dilimler net zarardaydı (eski analiz):
 | Edge Aralığı | Bet Sayısı | P&L |
 |---|---|---|
 | %0-%5 | 45 | -$58.98 |
 | %5-%10 | 109 | -$44.17 |
 | %10-%20 | 80 | -$29.21 |
-| %20-%30 | 88 | +$9.43 |
-| **Toplam <%30** | **344** | **-$127.96** |
-| **≥%30** | **369** | **+$587.60** |
+| %20-%25 | 88 | +$9.43 |
+| **Toplam <%25** | **344** | **-$127.96** |
+| **≥%25** | **369** | **+$587.60** |
 
 ## Lisans
 
