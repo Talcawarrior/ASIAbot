@@ -27,9 +27,11 @@ from config.logging_config import setup_logging
 # Package Imports
 from config.settings import config
 from data_pipeline.resolved_markets_helper import ResolvedMarketsClient as _MockResolvedClient
+
 try:
     from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as _RealResolvedClient
     from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsConfig
+
     _HAS_REAL_ORDERBOOK = True
 except ImportError:
     _HAS_REAL_ORDERBOOK = False
@@ -330,9 +332,7 @@ def get_status():
                 # 4 bet/gun × 365 gun = 1460 bet/yil → per-trade rf = 0.05/365/4
                 risk_free_per_trade = 0.05 / 365.0 / 4.0
                 if std_ret > 0:
-                    sharpe_ratio = round(
-                        (mean_ret - risk_free_per_trade) / std_ret * math.sqrt(365 * 4), 4
-                    )
+                    sharpe_ratio = round((mean_ret - risk_free_per_trade) / std_ret * math.sqrt(365 * 4), 4)
 
             # Max Drawdown: simulate portfolio from initial capital.
         # Include unrealized PnL from open bets so that large open
@@ -461,10 +461,7 @@ def get_asi_weights():
             .group_by(ModelPerformance.model_name)
             .subquery()
         )
-        trend_rows = (
-            db.query(prev_perf.c.model_name, prev_perf.c.prev_brier)
-            .all()
-        )
+        trend_rows = db.query(prev_perf.c.model_name, prev_perf.c.prev_brier).all()
         trend_map = {r.model_name: r.prev_brier for r in trend_rows}
     finally:
         db.close()
@@ -553,10 +550,12 @@ def get_asi_trades():
     Otherwise returns empty list — NOT mock data.
     """
     import os
+
     trades_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "poly_trades.csv")
     if os.path.exists(trades_path):
         try:
             import pandas as pd
+
             df = pd.read_csv(trades_path)
             records = df.head(50).to_dict(orient="records")
             # Check if this looks like mock data (has 'maker_direction' column but
@@ -576,6 +575,7 @@ def get_asi_orderbook(market_id: str = "2513866"):
     Falls back to mock data with a clear ``is_demo: true`` flag.
     """
     import os
+
     api_key = os.getenv("RESOLVED_MARKETS_API_KEY", "")
     if _HAS_REAL_ORDERBOOK and api_key:
         try:
@@ -670,7 +670,7 @@ def get_markets():
             )
             if forecasts:
                 latest_vals = [f.predicted_value for f in forecasts]
-                days_ahead = max((m.target_date - now).days, 1)
+                days_ahead = max((m.target_date.date() - now.date()).days, 1)
                 model_prob = calc.estimate_probability(latest_vals, float(m.threshold), days_ahead)
 
             market_list.append(

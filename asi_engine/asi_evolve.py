@@ -311,7 +311,7 @@ class ResearcherAgent:
                 description="Uniform prior (no parent)",
                 model_weights=_uniform_weights(),
                 min_edge=0.30,  # SAFETY CLAMP
-                kelly_fraction=0.15,
+                kelly_fraction=0.06,
                 max_bet_pct=0.05,
                 blend_weight=0.45,
             )
@@ -325,9 +325,9 @@ class ResearcherAgent:
                 description="Fallback",
                 model_weights=_uniform_weights(),
                 min_edge=0.30,  # SAFETY CLAMP
-                kelly_fraction=0.15,
+                kelly_fraction=0.06,
                 max_bet_pct=0.05,
-                blend_weight=0.65,
+                blend_weight=0.45,
             )
             return parent, None
         return parent, parent_id
@@ -620,10 +620,10 @@ def run_asi_evolve_daily(
         best_hyp = load_karpathy_best() or Hypothesis(
             description="Uniform prior (seed)",
             model_weights=_uniform_weights(),
-            min_edge=0.05,
-            kelly_fraction=0.15,
+            min_edge=0.30,  # SAFETY CLAMP
+            kelly_fraction=0.06,
             max_bet_pct=0.05,
-            blend_weight=0.65,
+            blend_weight=0.45,
         )
         best_stats = {
             "sharpe": -1e9,
