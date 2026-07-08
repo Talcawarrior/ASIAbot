@@ -1,4 +1,5 @@
 {
-  "min_edge": 0.05,
-  "kelly_fraction": 0.15
+  "min_edge": 0.25,
+  "kelly_fraction": 0.06,
+  "blend_weight": 0.45
 }
