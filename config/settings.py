@@ -100,10 +100,12 @@ class StrategyConfig:
     edge_escalation_multiplier: float = 2.0
     min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
     fee_drag: float = 0.05  # Polymarket taker fee %5
-    # Bot scope: today + 1 + 2 days ahead (0..2 inclusive).
-    # Tightened from 14 to 2 so the bot only trades near-term markets
-    # where the public weather ensemble (GFS/ECMWF/ICON/...) is still
-    # calibrated. Forecasts degrade past 3 days.
+    # Bot scope: 1-2 days ahead (min..max inclusive).
+    # max_days_ahead: Tightened from 14 to 2 so the bot only trades
+    #   near-term markets where forecasts are still calibrated.
+    # min_days_ahead: Reject same-day (day-0) bets — markets too close
+    #   to settlement, less edge from weather model advantage.
+    min_days_ahead: int = 1
     max_days_ahead: int = 2
 
     # ── Karpathy-search-discovered levers (asymmetric-payoff fix) ────────

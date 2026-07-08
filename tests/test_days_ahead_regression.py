@@ -64,18 +64,17 @@ def test_estimate_probability_clamps_to_open_unit_interval():
 
 def test_analyze_market_source_uses_inclusive_days_ahead_check():
     """Pin the actual code shape: the days_ahead check must use
-    `0 <= days_ahead <=` (inclusive lower bound), not `0 < days_ahead <=`.
-    A regression that adds a strict inequality would reject today's
-    markets and produce should_bet=False for everything.
+    `min_days_ahead <= days_ahead <=` (configurable lower bound), not a
+    hardcoded `0 <` strict inequality that would reject today's markets.
     """
     src = inspect.getsource(Calculator.analyze_market)
     # Look for the boolean expression that gates should_bet. Accept either
     # the inline form or the `days_ahead_for_check` form.
-    assert "0 <= days_ahead" in src or "0 <= days_ahead_for_check" in src, (
-        "Calculator.analyze_market must use `0 <= days_ahead <= ...` so that "
-        "today-resolving markets (days_ahead == 0) are not rejected."
+    assert "min_days_ahead <= days_ahead" in src or "min_days_ahead <= days_ahead_for_check" in src, (
+        "Calculator.analyze_market must use `min_days_ahead <= days_ahead <= ...` "
+        "with configurable lower bound from StrategyConfig."
     )
-    # And explicitly reject the old buggy form
+    # And explicitly reject the old hardcoded form
     assert "0 < days_ahead" not in src, "Strict `0 < days_ahead` rejects today's markets (regression)."
 
 

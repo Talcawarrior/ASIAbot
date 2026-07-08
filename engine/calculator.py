@@ -188,9 +188,12 @@ class Calculator:
                 avg = forecast_values[0] if forecast_values else 0.5
                 std_val = None
 
-            # days_ahead: use calendar days (>=0) and treat "today" as 1 day
-            # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
-            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
+            # days_ahead: use CALENDAR date difference (not timedelta) to avoid
+            # SQLite microsecond truncation causing 23h59m → days_ahead=0.
+            # Calendar arithmetic: target=2026-07-09, now=2026-07-08 → 1 day.
+            target_date_obj = market.target_date.date() if hasattr(market.target_date, "date") else market.target_date
+            now_date = datetime.now(timezone.utc).date()
+            days_ahead = (target_date_obj - now_date).days
             days_ahead_for_check = max(days_ahead, 1)
 
             # Olasılık hesapla — weighted mean/std ile (market_type-aware)
@@ -350,7 +353,7 @@ class Calculator:
                 net_edge >= effective_min_edge
                 and inefficiency_ok
                 and len(forecast_values) >= bot_config.strategy.min_sources
-                and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
+                and bot_config.strategy.min_days_ahead <= days_ahead <= bot_config.strategy.max_days_ahead
                 and liquidity_ok
                 and recommended_amount > 1.0
             )
@@ -366,6 +369,8 @@ class Calculator:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
                 reason_parts.append(f"Çok uzak: {days_ahead} gün")
+            if days_ahead < bot_config.strategy.min_days_ahead:
+                reason_parts.append(f"Çok yakın: {days_ahead} gün (min={bot_config.strategy.min_days_ahead})")
             if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
                 reason_parts.append(f"Düşük likidite: ${market.liquidity}")
 

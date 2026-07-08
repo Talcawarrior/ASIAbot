@@ -479,6 +479,8 @@ Parametreler iki kaynaktan gelir: `data/strategy_params.json` (Karpathy/SIA tara
 |-----------|-----------|--------|----------|
 | `min_edge` | `0.30` | `strategy_params.json` | Minimum net edge eşiği (%30) — 2026-07-06: %5→%30 yükseltildi |
 | `kelly_fraction` | `0.15` | `strategy_params.json` | Base fractional Kelly (dinamik band: 0.10-0.25) |
+| `min_days_ahead` | `1` | `settings.py` | Minimum gün sayısı (same-day bet'leri engeller; 0=bugün, 1=yarın, 2=öbür gün) |
+| `max_days_ahead` | `2` | `settings.py` | Maksimum gün sayısı (2+ gün ileri piyasaları atlar) |
 | `min_entry_price` | `0.01` | `settings.py` | Minimum giriş fiyatı (Karpathy-tuned: 0.35) |
 | `inefficiency_min` | `-1.0` | `settings.py` | Minimum verimsizlik (Karpathy-tuned: -0.124) |
 | `slippage_model` | `orderbook` | `settings.py` | Slippage modeli: flat / tiered / orderbook |
@@ -544,7 +546,7 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 
 ---
 
-## Bet Açma Gate'leri (12 adım)
+## Bet Açma Gate'leri (13 adım)
 
 `place_bet()` sırasıyla şu gate'leri kontrol eder:
 
@@ -554,12 +556,13 @@ Bot, aynı markete tekrar bet açmayı 3 katmanlı koruma ile engeller:
 4. `daily_loss_limit` — Circuit breaker tetiklenmedi
 5. `price_valid` — Binary price geçerli (0.01-0.99)
 6. `target_date_ok` — Target date gelecekte
-7. `min_entry_price` — Fiyat ≥ `bot_config.strategy.min_entry_price` (long-shot filter)
-8. `max_entry_price` — Fiyat ≤ 0.97 (çok yüksek fiyata girme)
-9. **`no_existing_bet`** — Duplicate önleme (cooldown dahil)
-10. `exposure_cap` — Toplam exposure ≤ %25 × conservative portfolio
-11. `city_cap` — Şehir başına < 4 bet
-12. `depth_ok` — Orderbook derinliği yeterli (resolvedmarkets_ingest gerçek API)
+7. **`min_days_ahead`** — `min_days_ahead <= days_ahead <= max_days_ahead` (same-day engeli; varsayılan: 1-2 gün)
+8. `min_entry_price` — Fiyat ≥ `bot_config.strategy.min_entry_price` (long-shot filter)
+9. `max_entry_price` — Fiyat ≤ 0.97 (çok yüksek fiyata girme)
+10. **`no_existing_bet`** — Duplicate önleme (cooldown dahil)
+11. `exposure_cap` — Toplam exposure ≤ %25 × conservative portfolio
+12. `city_cap` — Şehir başına < 4 bet
+13. `depth_ok` — Orderbook derinliği yeterli (resolvedmarkets_ingest gerçek API)
 
 Tüm gate'leri geçen adaylar **tier-based priority** ile sıralanır:
 - **Tier 3** (2+ gün sonra): en yüksek öncelik — erken pozisyon avantajı
@@ -707,6 +710,18 @@ Tüm finansal hesaplamalar `utils/formulas.py`'den gelir:
 ---
 
 ## Changelog
+
+### 2026-07-08 — min_days_ahead + days_ahead SQLite Bug Fix
+
+**Değişiklikler:**
+1. **`config/settings.py`** — `StrategyConfig`'e `min_days_ahead: int = 1` eklendi. Same-day (day-0) bet'leri artık reddedilir; bot sadece 1-2 gün ileri piyasalarda işlem yapar.
+2. **`engine/calculator.py`** — `days_ahead` hesaplaması **SQLite microsecond truncation** bug'ı düzeltildi: `timedelta.days` yerine takvim tarih farkı `(target_date.date() - now.date()).days` kullanılıyor. Önceki kodda 23saat59dakika kalan bir piyasa `days_ahead=0` olarak hesaplanıyordu.
+3. **`engine/calculator.py`** — `should_bet` gate'i güncellendi: `0 <= days_ahead <= max` → `min_days_ahead <= days_ahead <= max_days_ahead`.
+4. **`engine/calculator.py`** — Reddedilen bahisler için yeni sebep: `"Çok yakın: X gün (min=Y)"`.
+5. **`tests/test_days_ahead_regression.py`** — Test, yeni `min_days_ahead` check kod yapısına güncellendi.
+6. **Blend weight fix** (devamı): `blend_weight` hardcoded seed'leri 0.65→0.45, SIA "+0.03" boost kaldırıldı, Karpathy "+0.15" rung silindi, max clamp 1.0→0.50.
+
+**Test:** 330/330 passed
 
 ### 2026-07-07 — 5 Bug Fix + Continuous Calibration
 
