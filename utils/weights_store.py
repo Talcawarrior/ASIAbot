@@ -76,16 +76,30 @@ def load_strategy_params() -> dict[str, float] | None:
 def save_strategy_params(params: dict[str, float]):
     """Save strategy parameters to disk with safety clamps.
 
+    MERGE MODE: reads existing file first, then updates only the provided keys.
+    This prevents callers that write a subset of params from erasing others
+    (e.g. orchestrator writing min_edge+kelly but not blend_weight).
+
     SAFETY CLAMPS (hard limits — SIA/Karpathy/LLM cannot override):
-      - min_edge: [0.05, 0.20]  — floor 5% (breakeven ~1.74% after 5% fee
-        + ~1% slippage + gas). Values below 5% are negative-EV and clamped.
-      - kelly_fraction: [0.05, 0.25] — below 5% = no meaningful sizing,
-        above 25% = too aggressive (quarter-Kelly ceiling).
+      - min_edge: [0.05, 0.50]  — floor 5% (breakeven after fees).
+      - kelly_fraction: [0.05, 0.25] — quarter-Kelly ceiling.
       - min_entry_price: floor 0.05 — long-shot markets bleed asymmetrically.
       - inefficiency_min: floor -0.20 — anything more negative = noise.
+      - blend_weight: [0.35, 0.50] — MAX 0.50, model over-trust engelle.
     """
     with _lock:
         try:
+            # MERGE: load existing params so callers writing a subset don't
+            # erase keys they didn't pass (e.g. orchestrator omits blend_weight).
+            existing: dict[str, float] = {}
+            if os.path.exists(_STRATEGY_PATH):
+                try:
+                    with open(_STRATEGY_PATH, encoding="utf-8-sig") as f:
+                        existing = json.load(f)
+                except Exception:
+                    pass
+            merged = {**existing, **params}
+
             # Safety clamps — prevent SIA/Evolve/LLM from pushing values
             # into dangerous territory. These are HARD limits.
             _CLAMPS: dict[str, tuple[float, float]] = {
@@ -96,8 +110,8 @@ def save_strategy_params(params: dict[str, float]):
                 "blend_weight": (0.35, 0.50),  # MAX 0.50 — model over-trust'ı engelle
             }
             for key, (lo, hi) in _CLAMPS.items():
-                if key in params:
-                    raw = float(params[key])
+                if key in merged:
+                    raw = float(merged[key])
                     clamped = max(lo, min(hi, raw))
                     if clamped != raw:
                         logger.warning(
@@ -108,11 +122,11 @@ def save_strategy_params(params: dict[str, float]):
                             lo,
                             hi,
                         )
-                    params[key] = clamped
+                    merged[key] = clamped
 
             os.makedirs(os.path.dirname(_STRATEGY_PATH), exist_ok=True)
             with open(_STRATEGY_PATH, "w", encoding="utf-8") as f:
-                json.dump(params, f, indent=2)
+                json.dump(merged, f, indent=2)
             logger.info("Strategy parameters persisted to %s", _STRATEGY_PATH)
         except Exception as e:
             logger.warning("Could not save strategy parameters: %s", e)
