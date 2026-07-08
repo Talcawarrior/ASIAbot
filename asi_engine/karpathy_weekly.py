@@ -108,7 +108,7 @@ class Hypothesis:
     min_edge: float
     kelly_fraction: float
     max_bet_pct: float = 0.05
-    blend_weight: float = 0.65  # 0.0 = pure market, 1.0 = pure model
+    blend_weight: float = 0.45  # 0.0 = pure market, 1.0 = pure model
     tail_filter_enabled: bool = False
     tail_filter_threshold_high: float = 32.0  # °C
     tail_filter_threshold_low: float = 10.0  # °C
@@ -540,7 +540,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
     new_min_edge = max(0.01, min(0.15, parent.min_edge + mutation["min_edge_delta"]))
     new_kelly = max(0.05, min(0.30, parent.kelly_fraction + mutation["kelly_delta"]))
     new_max_bet = max(0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0)))
-    new_blend = max(0.35, min(1.0, parent.blend_weight + mutation.get("blend_weight_delta", 0.0)))
+    new_blend = max(0.35, min(0.50, parent.blend_weight + mutation.get("blend_weight_delta", 0.0)))
 
     return Hypothesis(
         description=mutation["description"],
@@ -602,7 +602,7 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         "   - Underweight CMA and UKMO (noisier)\n"
         "   - min_edge 0.02-0.05 covers fees+slippage while keeping volume\n"
         "   - kelly_fraction 0.08-0.15 (conservative is better in small markets)\n"
-        "   - blend_weight 0.50-0.80: 0.65 is default. Lower = more market anchor, "
+        "   - blend_weight 0.35-0.50: 0.45 is default. Lower = more market anchor, "
         "higher = more model trust. If model overconfident, lower it.\n"
         "5. Weights MUST sum to 1.0.\n\n"
         "Return ONLY a JSON object:\n"
@@ -613,7 +613,7 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         '    "kelly_fraction": 0.10,\n'
         '    "max_bet_pct": 0.05,\n'
         '    "tail_filter_enabled": false,\n'
-        '    "blend_weight": 0.65\n'
+        '    "blend_weight": 0.45\n'
         "  }\n"
         "NO prose, NO markdown, ONLY the JSON object."
     )
@@ -648,7 +648,7 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
                 min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction))),
             ),
             max_bet_pct=max(0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))),
-            blend_weight=max(0.35, min(1.0, float(data.get("blend_weight", parent.blend_weight)))),
+            blend_weight=max(0.35, min(0.50, float(data.get("blend_weight", parent.blend_weight)))),
             tail_filter_enabled=bool(data.get("tail_filter_enabled", parent.tail_filter_enabled)),
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,

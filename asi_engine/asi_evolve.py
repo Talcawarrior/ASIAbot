@@ -313,7 +313,7 @@ class ResearcherAgent:
                 min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
-                blend_weight=0.65,
+                blend_weight=0.45,
             )
             return parent, None
         parent = get_parent_hypothesis(self.conn, parent_id)

@@ -254,7 +254,7 @@ class TargetAgent:
         new_blend = max(
             0.35,
             min(
-                1.0,
+                0.50,
                 parent.blend_weight + self.rng.choice([-0.05, -0.02, 0, 0.02, 0.05]),
             ),
         )
@@ -571,7 +571,7 @@ def run_sia_hourly(
                 min_edge=0.30,  # SAFETY CLAMP
                 kelly_fraction=0.15,
                 max_bet_pct=0.05,
-                blend_weight=0.65,
+                blend_weight=0.45,
             )
             # Re-eval on current splits
             feedback = FeedbackAgent(brier_df, splits)
