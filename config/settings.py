@@ -148,7 +148,7 @@ class StrategyConfig:
     # Blend between model probability and market price:
     #   1.0 = pure model, 0.0 = pure market, 0.65 = default
     # Optimized by SIA/ASI-Evolve/Karpathy 3-layer stack via Hypothesis.blend_weight.
-    blend_weight: float = 0.65
+    blend_weight: float = 0.45  # CRITICAL: MAX 0.50 clamp ile limitli, pure-model trust engelle
 
     # ── Flat bet override & Daily loss limit (synced from Config) ─────────
     flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
