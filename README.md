@@ -19,7 +19,7 @@
 - **🔬 ASI-Evolve** — Genetik algoritma ile strateji evrimi (UCB1 selection + crossover + mutation ladder)
 - **📊 Dashboard** — Next.js 16 + shadcn/ui + Recharts ile canlı takip (http://localhost:8091), dark mode desteği
 - **⚡ Slippage Modeli** — 3 model (flat / tiered / orderbook) — VWAP walk + gerçek ResolvedMarkets API
-- **🛡️ Risk Yönetimi** — 12 gate (max_entry_price dahil) + 3 cap + 7 early-exit + daily circuit breaker + tier-based priority scoring
+- **🛡️ Risk Yönetimi** — 12 gate (max_entry_price dahil) + 3 cap + 7 early-exit (stop-loss/take-profit/trailing/time-decay/edge-erosion/**max_confidence**) + daily circuit breaker + tier-based priority scoring
 - **💰 EV-Proportional Sizing** — Dinamik max_bet_pct (edge band'ine göre: %2/%3/%5) + Kelly fraction + edge-band ladder
 - **📈 Ladder Betting** — 3 kademeli bahis; yüksek edge → L1 %70 (agresif), düşük edge → L1 %40
 - **🔄 Pyramiding** — Yüksek edge'de L2/L3 fiyat YÜKSELDİĞİNDE dolar (kazanana ekle), düşük edge'de averaging down
@@ -455,7 +455,7 @@ sudo systemctl start asiabot
 | Parametre | Varsayılan | Açıklama |
 |-----------|-----------|----------|
 | `stop_loss_pct` | `0.20` | Stop-loss eşiği (%20 zarar — hızlı kayıp kesme) |
-| `take_profit_pct` | `1.0` | Take-profit eşiği (%100 kâr) |
+| `take_profit_pct` | `0.80` | Take-profit eşiği (%80 kâr — 2026-07-09: %100→%80) |
 | `trailing_stop_pct` | `0.15` | Trailing stop eşiği (%15 gerileme) |
 | `edge_erosion` | `min_edge/2` | Edge erozyonu eşiği (şimdi %10) |
 | `model_reversal` | `0.20` | Model ters dönme eşiği (%20 prob değişimi) |
@@ -741,7 +741,19 @@ Tüm finansal hesaplamalar `utils/formulas.py`'den gelir:
 
 **Test:** 329/330 passed (1 pre-existing failure: `KELLY_FRACTION` mismatch — conftest.py singleton mutation vs fresh instance default)
 
-### 2026-07-09 — min_edge %5 → %20; prioritization doğrulaması
+### 2026-07-09 — take_profit %100→%80 + max_confidence auto-close + cleanup
+
+**Değişiklikler:**
+1. **`config/settings.py`** — `take_profit_pct: float = 1.0 → 0.80`. Artık %80 kârda otomatik kapatır (eskiden %100).
+2. **`engine/strategy.py`** — Yeni **max_confidence** gate (step 2.5): market fiyatı ≥0.99 (YES) veya ≤0.01 (NO) ise pozisyon otomatik kapanır. Bu, neredeyse kesinleşmiş kazancın settlement beklenmeden realize edilmesini sağlar.
+3. **`asi_engine/orchestrator.py`** — MIN_EDGE_FLOOR düzeltmesi: hardcoded 0.30 kaldırıldı, `bot_config.strategy.min_edge` referans alınıyor. `save_strategy_params` artık `blend_weight`'i de koruyor.
+4. **Temizlik:** 12 adet diagnostic script (`_*.py`, `.aider.*`) silindi.
+5. **`tests/conftest.py`** — save/restore eksik alanlar eklendi (`blend_weight`, `min_days_ahead`, `max_days_ahead`).
+6. **`tests/test_days_ahead_regression.py`** — min_edge assertion aralığı güncellendi (0.20-0.30 → 0.05-0.15).
+
+**Test:** 330/330 passed
+
+### 2026-07-08 — min_edge %5 → %20; prioritization doğrulaması
 
 **Değişiklikler:**
 1. **`executor/bet_placer.py`** — `_priority_key()` **değişmedi**, tier-first sıralama korundu:

@@ -443,8 +443,10 @@ class TestEdgeCases:
         """Farklı take_profit_pct değerleriyle test."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, _ = rm.check_take_profit(bet, 0.95)  # %90 kar
-        assert should_exit is False  # %100'ü geçmedi
+        should_exit, reason = rm.check_take_profit(bet, 0.89)  # %78 kar
+        assert should_exit is False, f"take_profit should not trigger at 78% gain, got {reason}"
+        should_exit, _ = rm.check_take_profit(bet, 0.91)  # %82 kar
+        assert should_exit is True  # %80 threshold aşıldı
 
     def test_rebalance_with_dict_signal(self):
         """Signal dict olarak da gelebilmeli."""

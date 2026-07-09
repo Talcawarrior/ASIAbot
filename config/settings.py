@@ -163,7 +163,7 @@ class RiskConfig:
 
     # Position-level limits
     stop_loss_pct: float = 0.20  # %20 kayıpta otomatik kapat
-    take_profit_pct: float = 1.0  # %100 karda otomatik kapat
+    take_profit_pct: float = 0.80  # %80 karda otomatik kapat
     trailing_stop_pct: float = 0.15  # %15 trailing stop (tepeden düşüşte)
 
     # Time-based exits

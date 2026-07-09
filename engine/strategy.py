@@ -422,6 +422,11 @@ class RiskManager:
         if exit_bool:
             return True, reason
 
+        # 2.5 Max confidence: market price >= 0.99 (YES) or <= 0.01 (NO)
+        # means near-certain win — close to lock profit before settlement.
+        if current_price >= 0.99 or current_price <= 0.01:
+            return True, f"max_confidence: price={current_price:.4f}"
+
         # 3. Trailing stop
         exit_bool, reason = self.check_trailing_stop(bet, current_price)
         if exit_bool:
