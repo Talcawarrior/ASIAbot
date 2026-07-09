@@ -19,7 +19,7 @@ def test_strategy_config_min_edge_default():
     from config.settings import StrategyConfig
 
     s = StrategyConfig()
-    assert 0.10 <= s.min_edge <= 0.20, f"Expected min_edge between 0.10 and 0.20, got {s.min_edge}"
+    assert 0.04 <= s.min_edge <= 0.10, f"Expected min_edge between 0.04 and 0.10, got {s.min_edge}"
 
 
 def test_config_fee_drag_matches_strategy():

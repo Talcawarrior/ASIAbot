@@ -69,12 +69,12 @@ class StrategyConfig:
     # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
     # vig + a thin profit margin in paper mode.  Can be lowered once a
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
-    min_edge: float = 0.10  # 10% edge
+    min_edge: float = 0.05  # 5% edge
     max_bet_amount: float = 6.0  # Maximum $6 per bet (0.6% of $1,000)
     # FIX: Was 0.006 (0.6%), .env.example uses 0.03 (3%). The 10x divergence
     # meant local dev (no .env) capped bets at $6 on a $1000 portfolio,
     # completely nullifying Kelly sizing. Align with .env.example.
-    max_bet_pct: float = 0.03  # Max bet as % of portfolio (3%, aligned with .env.example)
+    max_bet_pct: float = 0.006  # Max bet as % of portfolio (0.6%, reverted to pre-July-4)
     min_bet_size: float = 1.0  # Minimum bet size in USD
     total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search
@@ -607,7 +607,7 @@ def apply_persisted_strategy_params() -> dict:
 
     # Safety constants — these are HARD limits that cannot be overridden
     # by the SIA loop / Karpathy search / strategy_params.json.
-    MIN_EDGE_FLOOR = 0.10  # 10% edge floor
+    MIN_EDGE_FLOOR = 0.05  # 5% edge floor (pre-July-4)
     KELLY_FRACTION_MIN = 0.05  # 5% — below this = Kelly sizing is meaningless
     KELLY_FRACTION_MAX = 0.25  # 25% — above this = too aggressive
     MIN_ENTRY_PRICE_FLOOR = 0.05  # 5% — long-shot markets bleed
