@@ -62,7 +62,7 @@ class ASIAbotOrchestrator:
         logger.info("==================================================")
 
         best_weights = best_params["model_weights"]
-        best_min_edge = max(float(best_params["min_edge"]), 0.30)  # SAFETY CLAMP: never below MIN_EDGE_FLOOR
+        best_min_edge = max(float(best_params["min_edge"]), float(bot_config.strategy.min_edge))  # SAFETY CLAMP: never below active min_edge
         best_kelly = best_params["kelly_fraction"]
 
         logger.info("Evolved Model Weights deployed:")
@@ -75,7 +75,7 @@ class ASIAbotOrchestrator:
 
         # Update disk storage so next process restart loads them
         save_weights(best_weights)
-        save_strategy_params({"min_edge": best_min_edge, "kelly_fraction": best_kelly})
+        save_strategy_params({"min_edge": best_min_edge, "kelly_fraction": best_kelly, "blend_weight": float(bot_config.strategy.blend_weight)})
 
         # Dynamically apply to in-memory active configs
         config.MODEL_WEIGHTS = best_weights

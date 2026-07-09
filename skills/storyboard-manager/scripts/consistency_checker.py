@@ -6,12 +6,11 @@ This script analyzes markdown files in a storyboard project to detect inconsiste
 in character details, plot elements, and world-building across the story.
 """
 
-import os
 import re
 import sys
 import json
 from pathlib import Path
-from typing import List, Dict, Set, Tuple, Optional
+from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 
 
@@ -375,12 +374,12 @@ def main():
                     for issue in issues:
                         print(f"### {issue['description']}")
                         print(f"**Type:** {issue['type']}")
-                        print(f"**Locations:**")
+                        print("**Locations:**")
                         for loc in issue['locations']:
                             print(f"- {loc}")
 
                         if issue['details']:
-                            print(f"**Details:**")
+                            print("**Details:**")
                             for key, value in issue['details'].items():
                                 print(f"- {key}: {value}")
 

@@ -95,16 +95,17 @@ def test_flat_bet_usd_default_is_disabled():
     assert float(Config.FLAT_BET_USD) == 0.0, f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
 
 
-def test_strategy_min_edge_is_lowered_to_one_percent():
-    """The minimum edge threshold is set to 5%.
+def test_strategy_min_edge_default_is_lowered():
+    """The default minimum edge threshold is set to 10%.
 
-    After dogfooding, we raised min_edge from 1% to 5% to reduce
-    noise: only markets with >=5% edge after 2% fee drag are eligible.
+    After dogfooding, we lowered min_edge from 20% to 10% to expand
+    the opportunity set while the 30% persisted override still applies
+    in production via strategy_params.json.
     """
     from config.settings import StrategyConfig
 
     me = float(StrategyConfig().min_edge)
-    assert 0.20 <= me <= 0.30, f"StrategyConfig.min_edge should be between 20%-30%, got {me}"
+    assert 0.05 <= me <= 0.15, f"StrategyConfig.min_edge should be between 5%-15%, got {me}"
 
 
 def test_bet_placer_overrides_amount_when_flat_bet_set():

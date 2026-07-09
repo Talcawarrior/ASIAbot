@@ -25,8 +25,6 @@ Checks:
 import sys
 import os
 import re
-import json
-from collections import Counter
 
 try:
     import pymupdf  # PyMuPDF
@@ -69,20 +67,20 @@ class QAResult:
         self.issues = []     # (severity, category, message)
         self.passes = []     # passed checks
         self.info = []       # informational
-    
+
     def error(self, cat, msg):
         self.issues.append(('ERROR', cat, msg))
-    
+
     def fail(self, cat, msg):
         """Alias for error — used for hard failures."""
         self.issues.append(('ERROR', cat, msg))
-    
+
     def warn(self, cat, msg):
         self.issues.append(('WARN', cat, msg))
-    
+
     def ok(self, msg):
         self.passes.append(msg)
-    
+
     def add_info(self, msg):
         self.info.append(msg)
 
@@ -92,17 +90,17 @@ def check_last_page_fill(doc, result):
     if len(doc) < 2:
         result.ok("Single-page document, no last-page blank check needed")
         return
-    
+
     last_page = doc[-1]
     page_rect = last_page.rect
     page_area = page_rect.width * page_rect.height
-    
+
     # Get bounding boxes of all content on last page
     blocks = last_page.get_text("blocks")
     if not blocks:
         result.error("Last page blank", f"Page {len(doc)} (last page) has no content at all!")
         return
-    
+
     # Calculate max y-coordinate covered by content
     max_y = 0
     min_y = page_rect.height
@@ -110,16 +108,16 @@ def check_last_page_fill(doc, result):
         if b[4].strip():  # Has text content
             min_y = min(min_y, b[1])
             max_y = max(max_y, b[3])
-    
+
     if max_y == 0:
         result.error("Last page blank", f"Page {len(doc)} (last page) has no valid text content")
         return
-    
+
     content_height = max_y - min_y
     fill_ratio = content_height / page_rect.height
-    
+
     result.add_info(f"Last page fill ratio: {fill_ratio:.0%} (content height {content_height:.0f}px / page height {page_rect.height:.0f}px)")
-    
+
     if fill_ratio < 0.25:
         result.error("Last page blank", f"Last page fill ratio only {fill_ratio:.0%}, mostly blank! Consider compressing preceding page spacing or trimming content")
     elif fill_ratio < LAST_PAGE_MIN_FILL:
@@ -131,12 +129,12 @@ def check_last_page_fill(doc, result):
 def check_punctuation(doc, result):
     """Check CJK punctuation placement rules"""
     violations = []
-    
+
     for page_num in range(len(doc)):
         page = doc[page_num]
         # Extract text by line
         text_dict = page.get_text("dict")
-        
+
         for block in text_dict.get("blocks", []):
             if block.get("type") != 0:  # Only check text blocks
                 continue
@@ -144,21 +142,21 @@ def check_punctuation(doc, result):
                 line_text = ""
                 for span in line.get("spans", []):
                     line_text += span.get("text", "")
-                
+
                 line_text = line_text.strip()
                 if not line_text:
                     continue
-                
+
                 # Check line start
                 first_char = line_text[0]
                 if first_char in LINE_START_FORBIDDEN:
                     violations.append((page_num + 1, f"Forbidden line-start punctuation '{first_char}': ...{line_text[:30]}"))
-                
+
                 # Check line end
                 last_char = line_text[-1] if len(line_text) > 0 else ''
                 if last_char in LINE_END_FORBIDDEN:
                     violations.append((page_num + 1, f"Forbidden line-end punctuation '{last_char}': {line_text[-30:]}..."))
-    
+
     if violations:
         # Show at most 10
         shown = violations[:10]
@@ -179,10 +177,10 @@ def check_blank_pages(doc, result):
         # Also check for images
         images = page.get_images()
         drawings = page.get_drawings()
-        
+
         if not text and not images and not drawings:
             blank_pages.append(i + 1)
-    
+
     if blank_pages:
         result.error("Blank pages", f"Found blank pages: {blank_pages}")
     else:
@@ -192,11 +190,11 @@ def check_blank_pages(doc, result):
 def check_colors(doc, result):
     """Analyze colors used in the document (informational only, no pass/fail)"""
     colors = set()
-    
+
     for page_num in range(len(doc)):
         page = doc[page_num]
         text_dict = page.get_text("dict")
-        
+
         for block in text_dict.get("blocks", []):
             if block.get("type") != 0:
                 continue
@@ -209,7 +207,7 @@ def check_colors(doc, result):
                         b = color & 0xFF
                         hex_color = f"#{r:02x}{g:02x}{b:02x}"
                         colors.add(hex_color)
-        
+
         # Check drawing colors
         drawings = page.get_drawings()
         for d in drawings:
@@ -223,7 +221,7 @@ def check_colors(doc, result):
                 if isinstance(c, (tuple, list)) and len(c) >= 3:
                     hex_color = f"#{int(c[0]*255):02x}{int(c[1]*255):02x}{int(c[2]*255):02x}"
                     colors.add(hex_color)
-    
+
     # Filter out near-black/white/gray colors
     distinct_colors = []
     for c in colors:
@@ -233,9 +231,9 @@ def check_colors(doc, result):
         max_diff = max(abs(r-g), abs(g-b), abs(r-b))
         if max_diff > 20:
             distinct_colors.append(c)
-    
+
     result.add_info(f"Total text colors: {len(colors)} (chromatic: {len(distinct_colors)})")
-    
+
     if distinct_colors:
         result.add_info(f"Chromatic colors: {', '.join(sorted(distinct_colors)[:10])}")
 
@@ -251,7 +249,7 @@ def check_page_size_consistency(doc, result):
     if len(doc) < 2:
         result.ok("Single-page document, size consistent ✓")
         return
-    
+
     sizes = set()
     normalized = set()  # orientation-agnostic: always (short, long)
     for i in range(len(doc)):
@@ -260,7 +258,7 @@ def check_page_size_consistency(doc, result):
         h = round(page.rect.height, 1)
         sizes.add((w, h))
         normalized.add(tuple(sorted((w, h))))
-    
+
     if len(normalized) > 1:
         # True size mismatch (not just orientation) — this is a hard error.
         # Build remediation hint: identify the majority size as "expected"
@@ -271,18 +269,18 @@ def check_page_size_consistency(doc, result):
             w = round(page.rect.width, 1)
             h = round(page.rect.height, 1)
             page_sizes.append((w, h))
-        
+
         from collections import Counter
         size_counts = Counter(page_sizes)
         majority_size = size_counts.most_common(1)[0][0]
         outlier_pages = [i + 1 for i, s in enumerate(page_sizes) if s != majority_size]
         outlier_size = page_sizes[outlier_pages[0] - 1]
-        
+
         # Compute the correct --width value for html2poster.js
         # PDF pt → CSS px conversion: px = pt × 96 / 72
         expected_w_px = round(majority_size[0] * 96 / 72)
         expected_h_px = round(majority_size[1] * 96 / 72)
-        
+
         msg = (
             f"Inconsistent page sizes: {sizes}. "
             f"Page(s) {outlier_pages} are {outlier_size[0]}×{outlier_size[1]}pt "
@@ -311,12 +309,12 @@ def check_page_size_consistency(doc, result):
 def check_text_overflow(doc, result):
     """Check whether text overflows page boundaries"""
     overflow_pages = []
-    
+
     for i in range(len(doc)):
         page = doc[i]
         rect = page.rect
         blocks = page.get_text("blocks")
-        
+
         for b in blocks:
             # b = (x0, y0, x1, y1, text, block_no, block_type)
             if b[2] > rect.width + 2 or b[3] > rect.height + 2:  # 2px tolerance
@@ -325,7 +323,7 @@ def check_text_overflow(doc, result):
             if b[0] < -2 or b[1] < -2:
                 overflow_pages.append(i + 1)
                 break
-    
+
     if overflow_pages:
         result.warn("Content overflow", f"Pages {overflow_pages} may have content exceeding page boundaries")
     else:
@@ -344,31 +342,31 @@ def check_content_fill_ratio(doc, result):
     if len(doc) < 2:
         result.ok("Single-page document, skipping content fill ratio check ✓")
         return
-    
+
     low_fill_pages = []
-    
+
     for i in range(len(doc)):
         page = doc[i]
         page_rect = page.rect
         page_height = page_rect.height
-        
+
         # Skip page 1 (cover)
         if i == 0:
             continue
-        
+
         blocks = page.get_text("blocks")
         images = page.get_images()
         drawings = page.get_drawings()
-        
+
         if not blocks and not images and not drawings:
             continue  # Blank page check handles this
-        
+
         # Calculate content bbox
         max_y = 0
         for b in blocks:
             if b[4].strip():
                 max_y = max(max_y, b[3])
-        
+
         # Include images in bbox
         for img in images:
             try:
@@ -377,17 +375,17 @@ def check_content_fill_ratio(doc, result):
                     max_y = max(max_y, r.y1)
             except Exception:
                 pass
-        
+
         if max_y == 0:
             continue
-        
+
         fill_ratio = max_y / page_height
         is_last = (i == len(doc) - 1)
         threshold = 0.25 if is_last else 0.40
-        
+
         if fill_ratio < threshold:
             low_fill_pages.append((i + 1, fill_ratio, threshold))
-    
+
     if low_fill_pages:
         for pg, ratio, thresh in low_fill_pages:
             result.warn(
@@ -418,7 +416,7 @@ def check_cover_bleed(doc, result, poster=False):
         return
 
     pages_to_check = range(len(doc)) if poster else [0]
-    
+
     for page_idx in pages_to_check:
         page = doc[page_idx]
         page_rect = page.rect
@@ -747,21 +745,21 @@ def check_toc_without_cover(doc, result):
     if len(doc) < 2:
         # Single-page docs don't need TOC/cover checks
         return
-    
+
     page1 = doc[0]
     text = page1.get_text("text", sort=True).strip()
-    
+
     # Normalize for matching
     text_lower = text.lower()
     first_300 = text_lower[:300]
-    
+
     toc_keywords = [
         "table of contents", "contents",
         "目录", "目 录",
     ]
-    
+
     has_toc = any(kw in first_300 for kw in toc_keywords)
-    
+
     if has_toc:
         result.warn(
             "TOC without cover",
@@ -1033,18 +1031,18 @@ def check_formula_overflow(doc, result):
 
 def run_qa(pdf_path, poster=False, skip_cover=False, check_tables=True, check_formulas=False):
     result = QAResult()
-    
+
     if not os.path.exists(pdf_path):
         result.error("File", f"File not found: {pdf_path}")
         return result
-    
+
     doc = pymupdf.open(pdf_path)
-    
+
     result.add_info(f"File: {os.path.basename(pdf_path)}")
     result.add_info(f"Size: {os.path.getsize(pdf_path) / 1024:.1f} KB")
     if poster:
         result.add_info("Mode: poster (creative)")
-    
+
     # Run all checks
     check_metadata(doc, result)
     check_page_size_consistency(doc, result)
@@ -1068,7 +1066,7 @@ def run_qa(pdf_path, poster=False, skip_cover=False, check_tables=True, check_fo
         check_toc_without_cover(doc, result)
         check_toc_placeholder(doc, result)
         check_body_page_numbers(doc, result)
-    
+
     doc.close()
     return result
 
@@ -1078,37 +1076,37 @@ def format_report(result):
     lines.append("=" * 56)
     lines.append("  PDF Quality Assurance Report")
     lines.append("=" * 56)
-    
+
     # Info
     if result.info:
         lines.append("")
         lines.append("ℹ️  Info:")
         for msg in result.info:
             lines.append(f"   {msg}")
-    
+
     # Passes
     if result.passes:
         lines.append("")
         lines.append(f"✅ Passed ({len(result.passes)}):")
         for msg in result.passes:
             lines.append(f"   {msg}")
-    
+
     # Issues
     errors = [(s, c, m) for s, c, m in result.issues if s == 'ERROR']
     warns = [(s, c, m) for s, c, m in result.issues if s == 'WARN']
-    
+
     if errors:
         lines.append("")
         lines.append(f"❌ Errors ({len(errors)}):")
         for _, cat, msg in errors:
             lines.append(f"   [{cat}] {msg}")
-    
+
     if warns:
         lines.append("")
         lines.append(f"⚠️  Warnings ({len(warns)}):")
         for _, cat, msg in warns:
             lines.append(f"   [{cat}] {msg}")
-    
+
     # Summary
     lines.append("")
     lines.append("-" * 56)
@@ -1120,7 +1118,7 @@ def format_report(result):
     else:
         lines.append(f"⚠️  WARN — {len(warns)} warning(s), optimization recommended")
     lines.append("-" * 56)
-    
+
     return "\n".join(lines)
 
 
@@ -1134,7 +1132,7 @@ if __name__ == "__main__":
         print("  --no-tables   Disable table centering check")
         print("  --formulas    Enable formula overflow check")
         sys.exit(1)
-    
+
     import glob
     files = []
     poster = False
@@ -1156,11 +1154,11 @@ if __name__ == "__main__":
         args.remove('--formulas')
     for arg in args:
         files.extend(glob.glob(arg))
-    
+
     if not files:
         print(f"File not found: {args}")
         sys.exit(1)
-    
+
     for pdf_path in files:
         result = run_qa(
             pdf_path,

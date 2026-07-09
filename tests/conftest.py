@@ -28,6 +28,9 @@ def _reset_karpathy_strategy_params():
     original_strategy_ineff = bot_config.strategy.inefficiency_min
     original_strategy_min_edge = bot_config.strategy.min_edge
     original_strategy_kelly = bot_config.strategy.kelly_fraction
+    original_strategy_blend = bot_config.strategy.blend_weight
+    original_strategy_min_days = bot_config.strategy.min_days_ahead
+    original_strategy_max_days = bot_config.strategy.max_days_ahead
     original_config_kelly = Config.KELLY_FRACTION
     original_config_max_bet_pct = Config.MAX_BET_PCT
     original_config_min_entry = Config.MIN_ENTRY_PRICE
@@ -50,6 +53,9 @@ def _reset_karpathy_strategy_params():
     bot_config.strategy.inefficiency_min = original_strategy_ineff
     bot_config.strategy.min_edge = original_strategy_min_edge
     bot_config.strategy.kelly_fraction = original_strategy_kelly
+    bot_config.strategy.blend_weight = original_strategy_blend
+    bot_config.strategy.min_days_ahead = original_strategy_min_days
+    bot_config.strategy.max_days_ahead = original_strategy_max_days
     Config.KELLY_FRACTION = original_config_kelly
     Config.MAX_BET_PCT = original_config_max_bet_pct
     Config.MIN_ENTRY_PRICE = original_config_min_entry

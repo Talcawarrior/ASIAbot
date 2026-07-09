@@ -116,7 +116,7 @@ def write_xlsx(path: Path) -> None:
         formula1=f'"{",".join(SOURCE_OPTIONS)}"',
         allow_blank=True,
     )
-    dv_source.add(f"C2:C200")
+    dv_source.add("C2:C200")
     ws.add_data_validation(dv_source)
 
     # 下拉验证：当前阶段（F 列）
@@ -125,7 +125,7 @@ def write_xlsx(path: Path) -> None:
         formula1=f'"{",".join(STAGE_OPTIONS)}"',
         allow_blank=True,
     )
-    dv_stage.add(f"F2:F200")
+    dv_stage.add("F2:F200")
     ws.add_data_validation(dv_stage)
 
     # 条件格式：F 列 = Offer 绿色，Reject 灰色，沉默 黄色

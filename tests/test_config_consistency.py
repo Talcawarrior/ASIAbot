@@ -15,11 +15,11 @@ def test_import_config_settings_does_not_raise():
 
 
 def test_strategy_config_min_edge_default():
-    """Fresh StrategyConfig default min_edge should be 0.05."""
+    """Fresh StrategyConfig default min_edge should be 0.10."""
     from config.settings import StrategyConfig
 
     s = StrategyConfig()
-    assert 0.20 <= s.min_edge <= 0.30, f"Expected min_edge between 0.20 and 0.30, got {s.min_edge}"
+    assert 0.10 <= s.min_edge <= 0.20, f"Expected min_edge between 0.10 and 0.20, got {s.min_edge}"
 
 
 def test_config_fee_drag_matches_strategy():

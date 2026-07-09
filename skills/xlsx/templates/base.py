@@ -279,7 +279,6 @@ def make_chart_title(text, size_pt=12, bold=True, axis=False, max_line_chars=6):
     from openpyxl.drawing.text import (
         Paragraph, ParagraphProperties, CharacterProperties,
         Font as DrawingFont, RichTextProperties, RegularTextRun,
-        LineBreak,
     )
     from copy import deepcopy
     import re

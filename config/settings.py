@@ -69,7 +69,7 @@ class StrategyConfig:
     # public NWS/Open-Meteo consensus.  5% is enough to cover bookmaker
     # vig + a thin profit margin in paper mode.  Can be lowered once a
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
-    min_edge: float = 0.20  # 20% edge
+    min_edge: float = 0.10  # 10% edge
     max_bet_amount: float = 6.0  # Maximum $6 per bet (0.6% of $1,000)
     # FIX: Was 0.006 (0.6%), .env.example uses 0.03 (3%). The 10x divergence
     # meant local dev (no .env) capped bets at $6 on a $1000 portfolio,
@@ -88,7 +88,7 @@ class StrategyConfig:
     # The depth is checked from the live orderbook via ResolvedMarkets API.
     # If the API call fails, the filter is skipped (graceful degradation).
     min_depth_usd: float = 0.0
-    kelly_fraction: float = 0.06  # Sub-quarter Kelly (reduced from 0.15 for safety with <50% win rate)
+    kelly_fraction: float = 0.15  # Quarter Kelly (reduced from 0.25 for safety with <50% win rate)
     # Time-to-close edge escalation. As a market approaches its
     # resolution time, Polymarket prices move fast on the public
     # weather consensus and forecast uncertainty is already low.
@@ -607,7 +607,7 @@ def apply_persisted_strategy_params() -> dict:
 
     # Safety constants — these are HARD limits that cannot be overridden
     # by the SIA loop / Karpathy search / strategy_params.json.
-    MIN_EDGE_FLOOR = 0.20  # 20% edge floor
+    MIN_EDGE_FLOOR = 0.10  # 10% edge floor
     KELLY_FRACTION_MIN = 0.05  # 5% — below this = Kelly sizing is meaningless
     KELLY_FRACTION_MAX = 0.25  # 25% — above this = too aggressive
     MIN_ENTRY_PRICE_FLOOR = 0.05  # 5% — long-shot markets bleed

@@ -939,9 +939,9 @@ def meta_brand(argv: list):
         if not quiet:
             print(f"\u2713 Updated metadata for: {os.path.basename(input_path)}")
             print(f"  Title: {title}")
-            print(f"  Author: Z.ai")
-            print(f"  Creator: Z.ai")
-            print(f"  Producer: http://z.ai")
+            print("  Author: Z.ai")
+            print("  Creator: Z.ai")
+            print("  Producer: http://z.ai")
             if out != input_path:
                 print(f"  Output: {out}")
 
@@ -2808,7 +2808,7 @@ def palette_generate(argv: list):
         print("TABLE_ROW_ODD      = BG_SURFACE")
 
     if violations:
-        print(f"\n# \u26a0\ufe0f Palette audit warnings:", file=sys.stderr)
+        print("\n# \u26a0\ufe0f Palette audit warnings:", file=sys.stderr)
         for v in violations:
             print(f"#   - {v}", file=sys.stderr)
 
@@ -2875,11 +2875,11 @@ def palette_cascade(argv: list):
         for name, info in cascade["semantic"].items():
             print(f"     {name}: {info['hex']} (S={info['hsl'][1]:.3f})")
         if meta["audit"]:
-            print(f"\n   ⚠️ Violations:")
+            print("\n   ⚠️ Violations:")
             for v in meta["audit"]:
                 print(f"     - {v}")
         else:
-            print(f"\n   ✅ All tier constraints pass")
+            print("\n   ✅ All tier constraints pass")
 
     raise SystemExit(0)
 

@@ -749,19 +749,19 @@ def generate_flow_svg(w, h, color="#8a8a8a", curves=4, stroke_width=80, opacity=
     random.seed(42)
     svg = _svg_open(w, h)
     svg += '\n  <defs>'
-    svg += f'\n    <linearGradient id="fg" x1="0" y1="0" x2="1" y2="1">'
+    svg += '\n    <linearGradient id="fg" x1="0" y1="0" x2="1" y2="1">'
     svg += f'\n      <stop offset="0%" stop-color="{color}" stop-opacity="{opacity}"/>'
     svg += f'\n      <stop offset="50%" stop-color="{color}" stop-opacity="{opacity * 1.5:.3f}"/>'
     svg += f'\n      <stop offset="100%" stop-color="{color}" stop-opacity="{opacity * 0.5:.3f}"/>'
     svg += '\n    </linearGradient>'
     svg += '\n  </defs>'
-    
+
     for i in range(curves):
         path = _random_bezier_path(w, h)
         sw = stroke_width + random.uniform(-20, 30)
         svg += f'\n  <path d="{path}" fill="none" stroke="url(#fg)" '
         svg += f'stroke-width="{sw:.0f}" stroke-linecap="round" opacity="{opacity + i * 0.01:.3f}"/>'
-    
+
     svg += '\n</svg>'
     return svg
 
@@ -916,7 +916,7 @@ def generate_ordered_texture_svg(w, h, color="#8a8a8a", seed=42):
     dot_r = 2
     dot_origin_x = w - dot_cols * dot_spacing - 40  # right-aligned with margin
     dot_origin_y = 30  # top margin
-    svg += f'\n  <g opacity="0.08">'
+    svg += '\n  <g opacity="0.08">'
     for row in range(dot_rows):
         for col in range(dot_cols):
             dx = dot_origin_x + col * dot_spacing
@@ -1005,7 +1005,7 @@ def generate_continuous_flow_svg(w, h, total_pages, color="#8a8a8a", curves=4, s
     """
     total_h = h * total_pages
     random.seed(42)
-    
+
     # Build the master path data
     paths_data = []
     for _ in range(curves):
@@ -1016,7 +1016,7 @@ def generate_continuous_flow_svg(w, h, total_pages, color="#8a8a8a", curves=4, s
             ax = random.uniform(w * 0.1, w * 0.9)
             ay = (total_h / (num_anchors - 1)) * i
             anchors.append((ax, ay))
-        
+
         # Build cubic bezier path through anchors
         path = f"M{anchors[0][0]:.0f},{anchors[0][1]:.0f}"
         for i in range(1, len(anchors)):
@@ -1028,10 +1028,10 @@ def generate_continuous_flow_svg(w, h, total_pages, color="#8a8a8a", curves=4, s
             cx2 = random.uniform(w * 0.0, w * 1.0)
             cy2 = prev[1] + (curr[1] - prev[1]) * 0.66 + random.uniform(-100, 100)
             path += f" C{cx1:.0f},{cy1:.0f} {cx2:.0f},{cy2:.0f} {curr[0]:.0f},{curr[1]:.0f}"
-        
+
         sw = stroke_width + random.uniform(-20, 30)
         paths_data.append((path, sw))
-    
+
     # Generate per-page SVG slices
     page_svgs = []
     gradient_def = f'''<defs>
@@ -1041,7 +1041,7 @@ def generate_continuous_flow_svg(w, h, total_pages, color="#8a8a8a", curves=4, s
       <stop offset="100%" stop-color="{color}" stop-opacity="{opacity * 0.5:.3f}"/>
     </linearGradient>
   </defs>'''
-    
+
     for page_idx in range(total_pages):
         vy = page_idx * h
         svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 {vy} {w} {h}" width="{w}" height="{h}">'
@@ -1051,7 +1051,7 @@ def generate_continuous_flow_svg(w, h, total_pages, color="#8a8a8a", curves=4, s
             svg += f'stroke-width="{sw:.0f}" stroke-linecap="round" opacity="{opacity + i * 0.01:.3f}"/>'
         svg += '\n</svg>'
         page_svgs.append(svg)
-    
+
     return page_svgs
 
 
@@ -1156,9 +1156,9 @@ def calculate_layout(elements, w=720, h=960, style="offset"):
     safe_y = h * BREATHING_MARGIN
     safe_w = w * (1 - 2 * BREATHING_MARGIN)
     safe_h = h * (1 - 2 * BREATHING_MARGIN)
-    
+
     layout = {}
-    
+
     if style == "offset":
         # Asymmetric placement — elements shift left/right of center
         regions = _divide_vertical(safe_x, safe_y, safe_w, safe_h, len(elements))
@@ -1173,7 +1173,7 @@ def calculate_layout(elements, w=720, h=960, style="offset"):
                 "h": round(rh * 0.85, 1),
                 "rotation": round(random.uniform(-1.5, 1.5), 2) if name != "body" else 0,
             }
-    
+
     elif style == "centered":
         # Formal centered — golden ratio vertical split
         regions = _divide_vertical(safe_x, safe_y, safe_w, safe_h, len(elements))
@@ -1186,7 +1186,7 @@ def calculate_layout(elements, w=720, h=960, style="offset"):
                 "h": round(rh * 0.9, 1),
                 "rotation": 0,
             }
-    
+
     elif style == "overlap":
         # Controlled overlaps — elements bleed into each other's space
         regions = _divide_vertical(safe_x, safe_y, safe_w, safe_h, len(elements))
@@ -1201,7 +1201,7 @@ def calculate_layout(elements, w=720, h=960, style="offset"):
                 "rotation": 0,
                 "z_index": len(elements) - i,  # Later elements on top
             }
-    
+
     return layout
 
 def _divide_vertical(x, y, w, h, n):
@@ -1210,18 +1210,18 @@ def _divide_vertical(x, y, w, h, n):
         return []
     if n == 1:
         return [(x, y, w, h)]
-    
+
     # Weighted distribution: first element (hero) gets more space
     weights = [1.618 if i == 0 else 1.0 for i in range(n)]
     total = sum(weights)
-    
+
     regions = []
     current_y = y
     for i in range(n):
         region_h = h * weights[i] / total
         regions.append((x, current_y, w, region_h))
         current_y += region_h
-    
+
     return regions
 
 
@@ -1236,14 +1236,14 @@ def audit_palette(palette):
     """
     violations = []
     mode = palette.get("meta", {}).get("mode", "minimal")
-    
+
     for key in ["bg", "mid", "accent", "text"]:
         hex_val = palette.get(key, "")
         if not hex_val.startswith("#"):
             continue
         r, g, b = (int(hex_val[i:i+2], 16) / 255.0 for i in (1, 3, 5))
         h, l, s = colorsys.rgb_to_hls(r, g, b)
-        
+
         # Tight bg/mid saturation limits per mode
         if key in ("bg", "mid"):
             limits = {"minimal": 0.20, "dark": 0.16, "pastel": 0.42, "jewel": 0.62, "light": 0.28}
@@ -1270,7 +1270,7 @@ def audit_palette(palette):
                 violations.append(f"bg L={l:.3f} > 0.28 in jewel (not deep enough)")
             elif mode == "pastel" and l < 0.83:
                 violations.append(f"bg L={l:.3f} < 0.83 in pastel (too dark for Morandi)")
-    
+
     # WCAG contrast checks
     bg_hex = palette.get("bg", "")
     text_hex = palette.get("text", "")
@@ -1283,7 +1283,7 @@ def audit_palette(palette):
         cr = _contrast_ratio(accent_hex, bg_hex)
         if cr < 2.5:
             violations.append(f"accent:bg contrast {cr:.2f} < 2.5:1 (accent invisible)")
-    
+
     return violations
 
 
@@ -1309,7 +1309,7 @@ Examples:
         """
     )
     sub = parser.add_subparsers(dest="command")
-    
+
     # palette
     p_pal = sub.add_parser("palette", help="Generate HSL-locked color palette")
     p_pal.add_argument("--intent", default="neutral", choices=list(INTENT_HUES.keys()))
@@ -1317,19 +1317,19 @@ Examples:
     p_pal.add_argument("--harmony", default="auto", choices=["auto", "complementary", "split_complementary", "triadic", "analogous", "monochrome"])
     p_pal.add_argument("--seed", type=int, default=None)
     p_pal.add_argument("--format", default="css", choices=["css", "json"])
-    
+
     # svg
     p_svg = sub.add_parser("svg", help="Generate algorithmic SVG background")
     p_svg.add_argument("--svg-type", default="flow", choices=["flow", "grid", "noise", "supergraphic", "ordered_texture"])
     p_svg.add_argument("--dimensions", default="720x960")
     p_svg.add_argument("--color", default="#8a8a8a")
-    
+
     # layout
     p_lay = sub.add_parser("layout", help="Calculate element positions")
     p_lay.add_argument("--elements", default="hero,body,meta")
     p_lay.add_argument("--dimensions", default="720x960")
     p_lay.add_argument("--style", default="offset", choices=["offset", "centered", "overlap"])
-    
+
     # full
     p_full = sub.add_parser("full", help="Generate all assets at once")
     p_full.add_argument("--intent", default="neutral")
@@ -1341,7 +1341,7 @@ Examples:
     p_full.add_argument("--style", default="offset")
     p_full.add_argument("--seed", type=int, default=None)
     p_full.add_argument("--output-dir", default="./assets/")
-    
+
     # audit
     p_audit = sub.add_parser("audit", help="Audit a palette for constraint violations")
     p_audit.add_argument("--palette-json", required=True)
@@ -1358,38 +1358,38 @@ Examples:
     p_compile = sub.add_parser("compile", help="Compile a JSON Blueprint into a final HTML document")
     p_compile.add_argument("--blueprint", required=True, help="Path to the JSON blueprint generated by LLM")
     p_compile.add_argument("--output", default="poster.html", help="Path to save the output HTML")
-    
+
     # derive
     p_derive = sub.add_parser("derive", help="Auto-derive design intent from document description")
     p_derive.add_argument("text", help="Document title or description")
-    
+
     # Backward compat: positional command
     parser.add_argument("legacy_command", nargs="?")
     parser.add_argument("legacy_args", nargs="*")
-    
+
     args = parser.parse_args()
-    
+
     if args.command == "palette":
         pal = generate_color_palette(args.intent, args.mode, harmony=args.harmony, seed=args.seed)
         if args.format == "json":
             print(json.dumps(pal, indent=2))
         else:
             print(palette_to_css(pal))
-    
+
     elif args.command == "svg":
         w, h = map(int, args.dimensions.split("x"))
         print(generate_generative_svg(args.svg_type, w, h, args.color))
-    
+
     elif args.command == "layout":
         w, h = map(int, args.dimensions.split("x"))
         elements = [e.strip() for e in args.elements.split(",")]
         result = calculate_layout(elements, w, h, args.style)
         print(json.dumps(result, indent=2))
-    
+
     elif args.command == "full":
         w, h = map(int, args.dimensions.split("x"))
         os.makedirs(args.output_dir, exist_ok=True)
-        
+
         # 1. Palette
         pal = generate_color_palette(args.intent, args.mode, harmony=getattr(args, 'harmony', 'split_complementary'), seed=args.seed)
         css = palette_to_css(pal)
@@ -1400,7 +1400,7 @@ Examples:
         with open(json_path, "w") as f:
             json.dump(pal, f, indent=2)
         print(f"✅ {css_path}")
-        
+
         # 2. SVG
         svg_color = pal["accent"]  # Use accent for SVG strokes
         svg = generate_generative_svg(args.svg_intent, w, h, svg_color)
@@ -1408,7 +1408,7 @@ Examples:
         with open(svg_path, "w") as f:
             f.write(svg)
         print(f"✅ {svg_path}")
-        
+
         # 3. Layout
         elements = [e.strip() for e in args.elements.split(",")]
         lay = calculate_layout(elements, w, h, args.style)
@@ -1416,18 +1416,18 @@ Examples:
         with open(lay_path, "w") as f:
             json.dump(lay, f, indent=2)
         print(f"✅ {lay_path}")
-        
+
         # 4. Audit
         violations = audit_palette(pal)
         if violations:
-            print(f"\n⚠️  Palette violations:")
+            print("\n⚠️  Palette violations:")
             for v in violations:
                 print(f"   - {v}")
         else:
-            print(f"\n✅ Palette passes all constraints")
-        
+            print("\n✅ Palette passes all constraints")
+
         print(f"\n🎨 {args.intent}/{args.mode} | {w}×{h} | {len(elements)} elements")
-    
+
     elif args.command == "audit":
         with open(args.palette_json) as f:
             pal = json.load(f)
@@ -1439,7 +1439,7 @@ Examples:
             sys.exit(1)
         else:
             print("✅ Palette passes all constraints")
-    
+
     elif args.command == "derive":
         intent = derive_intent(args.text)
         print(f"Intent: {intent}")
@@ -1477,11 +1477,11 @@ Examples:
             for name, info in cascade["semantic"].items():
                 print(f"     {name}: {info['hex']} (S={info['hsl'][1]:.3f})")
             if meta["audit"]:
-                print(f"\n   ⚠️ Violations:")
+                print("\n   ⚠️ Violations:")
                 for v in meta["audit"]:
                     print(f"     - {v}")
             else:
-                print(f"\n   ✅ All tier constraints pass")
+                print("\n   ✅ All tier constraints pass")
 
     elif args.command == "compile":
         try:
@@ -1489,7 +1489,7 @@ Examples:
             print(f"✅ Blueprint compiled successfully to: {out_path}")
             violations = audit_palette(pal)
             if violations:
-                print(f"⚠️ Warning: Generated palette had minor violations (auto-corrected by engine):")
+                print("⚠️ Warning: Generated palette had minor violations (auto-corrected by engine):")
                 for v in violations: print(f"   - {v}")
 
         except Exception as e:
@@ -1951,12 +1951,12 @@ def simple_markdown_to_html(md_text):
     """Lightweight markdown → HTML for Glass Canvas. Handles paragraphs, headers, bold, italic, lists, and inline code."""
     if not md_text:
         return ""
-    
+
     lines = md_text.split('\n')
     html_parts = []
     in_list = False
     paragraph_buffer = []
-    
+
     def flush_paragraph():
         nonlocal paragraph_buffer
         if paragraph_buffer:
@@ -1969,17 +1969,17 @@ def simple_markdown_to_html(md_text):
             text = _prevent_orphan_chars(text)
             html_parts.append(f'<p style="margin:0 0 12px 0;line-height:1.7">{text}</p>')
             paragraph_buffer = []
-    
+
     def apply_inline(text):
         """Apply bold, italic, inline code."""
         text = re.sub(r'\*\*(.*?)\*\*', r'<strong>\1</strong>', text)
         text = re.sub(r'\*(.*?)\*', r'<em>\1</em>', text)
         text = re.sub(r'`(.*?)`', r'<code style="background:var(--c-surface);padding:2px 6px;border-radius:3px;font-size:max(12px, 0.9em)">\1</code>', text)
         return text
-    
+
     for line in lines:
         stripped = line.strip()
-        
+
         # Empty line — flush paragraph
         if not stripped:
             flush_paragraph()
@@ -1987,7 +1987,7 @@ def simple_markdown_to_html(md_text):
                 html_parts.append('</ul>')
                 in_list = False
             continue
-        
+
         # Headers
         if stripped.startswith('### '):
             flush_paragraph()
@@ -2010,7 +2010,7 @@ def simple_markdown_to_html(md_text):
                 in_list = False
             html_parts.append(f'<h1 style="font-size:24px;font-weight:800;margin:28px 0 14px 0;color:var(--c-text)">{apply_inline(stripped[2:])}</h1>')
             continue
-        
+
         # List items (- or *)
         list_match = re.match(r'^[-*]\s+(.*)', stripped)
         if list_match:
@@ -2020,7 +2020,7 @@ def simple_markdown_to_html(md_text):
                 in_list = True
             html_parts.append(f'<li style="margin:4px 0;line-height:1.6">{apply_inline(list_match.group(1))}</li>')
             continue
-        
+
         # Numbered list items
         num_match = re.match(r'^(\d+)[.)]\s+(.*)', stripped)
         if num_match:
@@ -2030,15 +2030,15 @@ def simple_markdown_to_html(md_text):
                 in_list = False
             html_parts.append(f'<p style="margin:4px 0 4px 20px;line-height:1.6"><strong>{num_match.group(1)}.</strong> {apply_inline(num_match.group(2))}</p>')
             continue
-        
+
         # Normal text — accumulate into paragraph
         paragraph_buffer.append(stripped)
-    
+
     # Flush remaining
     flush_paragraph()
     if in_list:
         html_parts.append('</ul>')
-    
+
     return '\n'.join(html_parts)
 
 
@@ -2105,7 +2105,7 @@ def _estimate_content_weight(comp):
     a small fixed weight since they don't grow with content.
     """
     ctype = comp.get("type", "")
-    
+
     # Fixed-height components: their visual size is independent of text length
     FIXED_WEIGHTS = {
         "Hero_Typography": 2.5,
@@ -2117,16 +2117,16 @@ def _estimate_content_weight(comp):
     }
     if ctype in FIXED_WEIGHTS:
         return FIXED_WEIGHTS[ctype]
-    
+
     # Text-heavy components: weight scales with content length
     text = comp.get("markdown_content", "") or comp.get("body", "") or ""
-    
+
     # Also count sub-items (Process_List steps)
     for step in comp.get("steps", []):
         text += step.get("title", "") + step.get("description", "")
-    
+
     char_count = len(text)
-    
+
     if ctype in ("Glass_Canvas", "Shaped_Canvas", "Process_List"):
         # Rough estimate: ~40 CJK chars per line at 16px in a ~500px wide container,
         # ~1.6 line-height, so each 40 chars ≈ 1 visual line ≈ ~25px.
@@ -2136,7 +2136,7 @@ def _estimate_content_weight(comp):
         base = 2.0  # minimum for padding + heading
         text_rows = char_count / 120.0  # ~120 chars per grid-row worth of space
         return base + text_rows
-    
+
     # Unknown component type: estimate from text length with a reasonable default
     if char_count > 0:
         return 2.0 + char_count / 120.0
@@ -2164,37 +2164,37 @@ def _distribute_rows_by_weight(content_comps, start_row=1, end_row=13, full_widt
     nn = len(content_comps)
     if nn == 0:
         return
-    
+
     total_rows = end_row - start_row  # available rows
-    
+
     # Calculate weights
     weights = [_estimate_content_weight(c) for c in content_comps]
     total_weight = sum(weights)
-    
+
     if total_weight == 0:
         total_weight = nn  # fallback: equal distribution
         weights = [1.0] * nn
-    
+
     # Allocate rows proportionally, with minimum 2 per component
     MIN_ROWS = 2
     raw_rows = [(w / total_weight) * total_rows for w in weights]
-    
+
     # Ensure minimum, then redistribute excess
     allocated = []
     for r in raw_rows:
         allocated.append(max(MIN_ROWS, round(r)))
-    
+
     # Adjust total to exactly fill the available rows
     # First pass: if total exceeds available, shrink the largest allocations
     while sum(allocated) > total_rows and any(a > MIN_ROWS for a in allocated):
         max_idx = max(range(nn), key=lambda i: allocated[i])
         allocated[max_idx] -= 1
-    
+
     # Second pass: if total is less than available, grow the heaviest components
     while sum(allocated) < total_rows:
         max_weight_idx = max(range(nn), key=lambda i: weights[i])
         allocated[max_weight_idx] += 1
-    
+
     # Assign grid_area
     col_start = 1
     col_end = 13 if full_width else 7  # can be overridden by caller
@@ -2218,14 +2218,14 @@ def _auto_assign_grid_areas(archetype, components):
     """
     # Filter out ghost numbers — they use absolute positioning, not grid
     gridded = [c for c in components if c.get("type") != "Page_Ghost_Number"]
-    
+
     # Only process components without grid_area
     needs_area = [c for c in gridded if not c.get("grid_area")]
     if not needs_area:
         return  # All components already have grid_area
-    
+
     n = len(gridded)
-    
+
     if archetype == "cover_hero":
         # Cover: stack vertically, full width, spread across page
         # Typical: 2-4 components (Hero + Floating_Meta + optional divider/ghost)
@@ -2238,7 +2238,7 @@ def _auto_assign_grid_areas(archetype, components):
         for i, comp in enumerate(gridded):
             if not comp.get("grid_area") and i < len(slots):
                 comp["grid_area"] = slots[i]
-    
+
     elif archetype == "data_dashboard":
         # Dashboard: tile components in a 2-column or 3-column grid
         has_area = [c for c in gridded if c.get("grid_area")]
@@ -2683,7 +2683,7 @@ def compile_blueprint(json_path, output_html_path):
         # ═══ CONTINUOUS CANVAS MODE (document-flow) ═══
         # Each page-section is a block-level box that stacks in normal flow.
         # Playwright slices at break-after:page boundaries — no absolute positioning.
-        html += f'\n<div class="continuous-canvas" style="background: var(--c-bg);">\n'
+        html += '\n<div class="continuous-canvas" style="background: var(--c-bg);">\n'
 
         # Note: unified_svg is now injected per page-section as a bg-layer
         # (since page-sections are block-level, a single spanning div won't work)

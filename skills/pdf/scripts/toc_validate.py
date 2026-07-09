@@ -40,7 +40,6 @@ import re
 import zipfile
 import tempfile
 import xml.etree.ElementTree as ET
-from pathlib import Path
 from typing import List, Dict, Tuple, Optional, Any
 
 # ---------------------------------------------------------------------------
@@ -1094,8 +1093,6 @@ def fix_docx(docx_path: str, output_path: Optional[str] = None) -> Dict[str, Any
     Returns the result dict.
     """
     from docx import Document as DocxDocument
-    from docx.shared import Pt, Twips
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
 
@@ -1796,8 +1793,6 @@ def fix_docx_accurate_pages(fixed_docx_path: str, pass1_pdf_path: str, output_pa
         output_path: Where to save the updated DOCX (defaults to overwrite fixed_docx_path)
     """
     import zipfile as zf_mod
-    import tempfile
-    import shutil
 
     try:
         import pdfplumber

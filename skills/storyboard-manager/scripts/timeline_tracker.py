@@ -6,13 +6,11 @@ This script analyzes markdown files in a storyboard project to extract and organ
 timeline events, helping writers maintain chronological consistency.
 """
 
-import os
 import re
 import json
 import sys
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
-from datetime import datetime, timedelta
+from typing import List, Dict, Tuple
 from collections import defaultdict
 
 

@@ -10,7 +10,7 @@ def generate_gift_card(product_name, price, evaluation, thank_you_json, return_g
     """
     生成现代风格的交互式礼品鉴定卡片。
     """
-    
+
     # --- 图片转 Base64 逻辑 (保持上一步功能) ---
     final_image_src = image_url
     try:
@@ -26,12 +26,12 @@ def generate_gift_card(product_name, price, evaluation, thank_you_json, return_g
                 mime_type, _ = mimetypes.guess_type(image_url)
                 with open(image_url, "rb") as f:
                     image_data = f.read()
-        
+
         if image_data:
             if not mime_type: mime_type = "image/jpeg"
             b64_str = base64.b64encode(image_data).decode('utf-8')
             final_image_src = f"data:{mime_type};base64,{b64_str}"
-            
+
     except Exception as e:
         print(f"⚠️ 图片转换 Base64 失败，使用原链接。错误: {e}")
 
@@ -48,7 +48,7 @@ def generate_gift_card(product_name, price, evaluation, thank_you_json, return_g
 
     # --- 2. 风格配置 ---
     styles = {
-        "luxury": { 
+        "luxury": {
             "page_bg": "bg-neutral-900",
             "card_bg": "bg-neutral-900/80 backdrop-blur-xl border border-white/10",
             "text_main": "text-white", "text_sub": "text-neutral-400",
@@ -56,7 +56,7 @@ def generate_gift_card(product_name, price, evaluation, thank_you_json, return_g
             "btn_hover": "hover:bg-amber-400 hover:text-black",
             "img_bg": "bg-neutral-800" # 图片衬底色
         },
-        "standard": { 
+        "standard": {
             "page_bg": "bg-stone-200",
             "card_bg": "bg-white/95 backdrop-blur-xl border border-stone-200",
             "text_main": "text-stone-800", "text_sub": "text-stone-500",
@@ -64,7 +64,7 @@ def generate_gift_card(product_name, price, evaluation, thank_you_json, return_g
             "btn_hover": "hover:bg-red-600 hover:text-white",
             "img_bg": "bg-stone-100"
         },
-        "budget": { 
+        "budget": {
             "page_bg": "bg-yellow-50",
             "card_bg": "bg-white border-4 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]",
             "text_main": "text-black", "text_sub": "text-gray-600",

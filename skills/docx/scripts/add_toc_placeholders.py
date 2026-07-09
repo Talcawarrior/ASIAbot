@@ -27,7 +27,6 @@ Example:
 """
 
 import argparse
-import html
 import json
 import re
 import shutil
@@ -211,7 +210,7 @@ def _fix_heading_outline_levels(styles_xml_path: Path) -> None:
         style_content = match.group(2)
 
         # Check if outlineLvl already exists in this style
-        if f'<w:outlineLvl' in style_content:
+        if '<w:outlineLvl' in style_content:
             continue
 
         # Find or create <w:pPr> within this style
@@ -254,7 +253,7 @@ def _fix_fld_char_structure(xml_content: str) -> str:
         r'<w:r(?:\s[^>]*)?>('
         r'<w:fldChar[^>]*w:fldCharType="begin"[^>]*/>'  # begin
         r')('
-        r'<w:instrText[^>]*>.*?</w:instrText>'           # instrText  
+        r'<w:instrText[^>]*>.*?</w:instrText>'           # instrText
         r')('
         r'<w:fldChar[^>]*w:fldCharType="separate"[^>]*/>'  # separate
         r')</w:r>'
