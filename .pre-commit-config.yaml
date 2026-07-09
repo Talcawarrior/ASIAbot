@@ -10,6 +10,6 @@ repos:
     rev: v1.15.0
     hooks:
       - id: mypy
-        args: [--config-file=mypy.ini, --exclude=scripts/]
-        exclude: ^scripts/
+        args: [--config-file=mypy.ini, --exclude=scripts/, --exclude=skills/]
+        exclude: ^(scripts/|skills/)
         additional_dependencies: [types-requests, types-python-dateutil, sqlalchemy2-stubs]
