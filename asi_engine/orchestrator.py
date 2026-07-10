@@ -62,25 +62,21 @@ class ASIAbotOrchestrator:
         logger.info("==================================================")
 
         best_weights = best_params["model_weights"]
-        best_min_edge = max(float(best_params["min_edge"]), float(bot_config.strategy.min_edge))  # SAFETY CLAMP: never below active min_edge
-        best_kelly = best_params["kelly_fraction"]
 
         logger.info("Evolved Model Weights deployed:")
         for m, w in best_weights.items():
             logger.info("  %s: %.2f%%", m, w * 100)
 
-        logger.info("Evolved Risk Strategy parameters deployed:")
-        logger.info("  min_edge: %.4f", best_min_edge)
-        logger.info("  kelly_fraction: %.4f", best_kelly)
+        # Only sync blend_weight and model_weights; min_edge and kelly_fraction
+        # are protected (KRT-6) and must not be touched by the SIA loop.
+        logger.info("Syncing blend_weight=%.4f and model_weights to disk...", bot_config.strategy.blend_weight)
 
         # Update disk storage so next process restart loads them
         save_weights(best_weights)
-        save_strategy_params({"min_edge": best_min_edge, "kelly_fraction": best_kelly, "blend_weight": float(bot_config.strategy.blend_weight)})
+        save_strategy_params({"blend_weight": float(bot_config.strategy.blend_weight)})
 
         # Dynamically apply to in-memory active configs
         config.MODEL_WEIGHTS = best_weights
-        bot_config.strategy.min_edge = best_min_edge
-        bot_config.strategy.kelly_fraction = best_kelly
 
         logger.info(
             "ASIAbot: Live trading models and configurations updated successfully!"

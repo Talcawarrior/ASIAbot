@@ -98,7 +98,12 @@ def save_strategy_params(params: dict[str, float]):
                         existing = json.load(f)
                 except Exception:
                     pass
-            merged = {**existing, **params}
+            # PROTECTED KEYS: once set in the file, these are never overwritten.
+            # The SIA/Evolve loop may only control blend_weight, not min_edge or
+            # kelly_fraction.  This preserves hand-tuned baseline values (KRT-6).
+            _PROTECTED = {"min_edge", "kelly_fraction"}
+            filtered_params = {k: v for k, v in params.items() if k not in _PROTECTED or k not in existing}
+            merged = {**existing, **filtered_params}
 
             # Safety clamps — prevent SIA/Evolve/LLM from pushing values
             # into dangerous territory. These are HARD limits.
