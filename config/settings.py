@@ -488,9 +488,12 @@ class BotConfig:
         if s.side_coeff is None:
             s.side_coeff = {"NO": 1.0, "YES": 0.5}
         if s.forecast_rmse_by_horizon is None:
-            # Real RMSE from backfill: {0: 2.17, 2: 1.49}
-            # Interpolated for missing horizons: 1=1.83, 3=2.0
-            s.forecast_rmse_by_horizon = {0: 2.17, 1: 1.83, 2: 1.49, 3: 2.0}
+            # WARN: These are NWP literature defaults, NOT from our backfill.
+            # Our backfill had selection bias (n=64, tropical cities skew days_ahead=0).
+            # Using ECMWF/GFS published RMSE for temperature_max as proxy:
+            # https://www.ecmwf.int/en/forecasts/documentation/ecmwf-forecast-verification
+            # TODO: Re-run backfill with stratified sampling across all cities/days.
+            s.forecast_rmse_by_horizon = {0: 1.2, 1: 1.5, 2: 2.0, 3: 2.5}
 
 
 # ── Config backward-compatibility proxy ────────────────────────────────────
