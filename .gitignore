@@ -45,7 +45,10 @@ bun.lock
 *.log
 server_err.txt
 server_out.txt
+# Coverage / Reports
 .coverage
+htmlcov/
+data/rmse_by_horizon.json
 out/
 graphify-out/
 tool-results/
@@ -82,6 +85,7 @@ create_*.py
 write_*.py
 test_*.py
 run_*.py
+!run_tests.py
 analyze_*.py
 calc_*.py
 *_output.txt
