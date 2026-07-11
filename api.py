@@ -20,8 +20,6 @@ from fastapi.responses import FileResponse, HTMLResponse
 from asi_engine.calibration_engine import CalibrationEngine
 from asi_engine.data_backfiller import DataBackfiller
 
-# ASI Engine imports (for ASI-Evolve dashboard endpoints)
-from asi_engine.orchestrator import ASIAbotOrchestrator
 from config.logging_config import setup_logging
 
 # Package Imports
@@ -99,7 +97,6 @@ class BotState:
         self.sia_interval_hours = 1  # run SIA hourly (was 24)
 
         # ASI-Evolve engines
-        self.orchestrator = None
         self.backfiller = None
         self.calibration_engine = None
 
@@ -114,7 +111,6 @@ class BotState:
         self.sia_loop = SIALoop(self.db_session_factory, self.config)
 
         # ASI-Evolve engines
-        self.orchestrator = ASIAbotOrchestrator()
         self.backfiller = DataBackfiller()
         self.calibration_engine = CalibrationEngine()
 
@@ -492,24 +488,6 @@ def get_asi_weights():
             "last_updated": perf.recorded_at.isoformat() if perf and perf.recorded_at else None,
             "trend": trend,
         }
-    return result
-
-
-@app.get("/api/asi/cognition")
-def get_asi_cognition():
-    """Retrieve ASI Cognition Base insights."""
-    if not state.orchestrator:
-        state.orchestrator = ASIAbotOrchestrator()
-    return state.orchestrator.cognition_base.get_all_insights()
-
-
-@app.post("/api/asi/evolve")
-async def run_asi_evolve(_key: str = Depends(verify_api_key)):
-    """Run an autonomous evolution pipeline round (5 rounds)."""
-    if not state.orchestrator:
-        state.orchestrator = ASIAbotOrchestrator()
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, state.orchestrator.run_evolution_pipeline, 5)
     return result
 
 
