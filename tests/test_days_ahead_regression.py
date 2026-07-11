@@ -113,14 +113,16 @@ def test_bet_placer_overrides_amount_when_flat_bet_set():
     import executor.bet_placer as bp
 
     src = inspect.getsource(bp.BetPlacer.place_bet)
-    assert "FLAT_BET_USD" in src, (
+    helper_src = inspect.getsource(bp.BetPlacer._calculate_proposed_amount)
+    combined = src + "\n" + helper_src
+    assert "FLAT_BET_USD" in combined, (
         "place_bet must reference Config.FLAT_BET_USD so the override "
         "actually fires. Without it the Kelly-based amount wins."
     )
     assert (
-        "proposed_amount = flat_bet" in src
-        or "proposed_amount = flat_bet_usd" in src
-        or ("flat_bet > 0" in src and "proposed_amount = flat_bet" in src)
+        "proposed_amount = flat_bet" in combined
+        or "proposed_amount = flat_bet_usd" in combined
+        or ("flat_bet > 0" in combined and "proposed_amount = flat_bet" in combined)
     ), (
         "place_bet must overwrite proposed_amount with the flat value when "
         "FLAT_BET_USD is set. Look for the assignment to proposed_amount."

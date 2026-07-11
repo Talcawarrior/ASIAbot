@@ -105,8 +105,16 @@ Examples:
     parser.add_argument(
         "command",
         choices=[
-            "bot", "run", "reset",
-            "fetch", "parse", "weather", "analyze", "bet", "settle", "report",
+            "bot",
+            "run",
+            "reset",
+            "fetch",
+            "parse",
+            "weather",
+            "analyze",
+            "bet",
+            "settle",
+            "report",
         ],
         help="Command to run. Use --help for details.",
     )
@@ -179,9 +187,7 @@ Examples:
                         if install_result.returncode == 0:
                             logger.info("%s SUCCESS", " ".join(install_cmd))
                         else:
-                            logger.warning(
-                                "%s failed: %s", " ".join(install_cmd), install_result.stderr[:500]
-                            )
+                            logger.warning("%s failed: %s", " ".join(install_cmd), install_result.stderr[:500])
                     except Exception as e:
                         logger.warning("npm install error: %s", e)
 
@@ -224,6 +230,18 @@ Examples:
                 ensure_initial_portfolio()
             except Exception as e:
                 logger.warning("Portfolio init warning: %s", e)
+
+            # PER-5 FIX: Warm-start WeatherEngine in-process cache from DB
+            # Loads last 3 days of ensemble forecasts so first scan is fast.
+            try:
+                from engine.calculator import WeatherEngine
+
+                we = WeatherEngine(db_session_factory=get_db_session)
+                loaded = we.warm_start_from_db()
+                if loaded > 0:
+                    logger.info("WeatherEngine warm-start: %d cities loaded from DB", loaded)
+            except Exception as e:
+                logger.warning("WeatherEngine warm-start failed: %s", e)
 
             state.is_running = True
             state.locked = False

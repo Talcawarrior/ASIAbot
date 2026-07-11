@@ -81,14 +81,15 @@ class RiskManager:
         self._last_pnl_date: datetime | None = None
         self._load_from_db()
 
-    def _load_portfolio_from_db(self):
+    def _load_portfolio_from_db(self, db_session=None):
         """Load current portfolio total_value from DB."""
-        if not self.db:
+        db = db_session or self.db
+        if not db:
             return
         try:
             from database.models import Portfolio
 
-            p = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+            p = db.query(Portfolio).filter(Portfolio.id == 1).first()
             if p and p.total_value:
                 self.portfolio_value = float(p.total_value)
         except Exception:
@@ -216,17 +217,34 @@ class RiskManager:
         """Günlük zarar limiti = dünkü kapanış sermayesi × DAILY_LOSS_LIMIT."""
         return self._conservative_portfolio_value() * self.config.DAILY_LOSS_LIMIT
 
-    def is_bot_locked(self) -> bool:
-        """Check if bot is locked."""
-        return self.daily_pnl <= -self.daily_loss_limit_amount
+    def is_bot_locked(self, db_session=None) -> bool:
+        """Check if bot is locked (circuit breaker triggered).
+
+        Includes both realized daily PnL and unrealized PnL from open bets.
+        """
+        # Calculate unrealized PnL from open bets
+        unrealized_pnl = 0.0
+        db = db_session or self.db
+        if db:
+            try:
+                active = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
+                for bet in active:
+                    if bet.unrealized_pnl is not None:
+                        unrealized_pnl += float(bet.unrealized_pnl)
+            except Exception:
+                pass
+
+        total_pnl = self.daily_pnl + unrealized_pnl
+        return total_pnl <= -self.daily_loss_limit_amount
 
     def get_daily_pnl(self) -> float:
         """Get daily PnL."""
         return self.daily_pnl
 
-    def get_total_exposure(self) -> float:
+    def get_total_exposure(self, db_session=None) -> float:
         """Get total exposure (sum of `amount` for all open/active/placed bets)."""
-        if self.db:
+        db = db_session or self.db
+        if db:
             try:
                 # Include all open-style statuses so freshly-placed bets are
                 # counted in exposure. "placed" is what BetPlacer writes
@@ -234,7 +252,7 @@ class RiskManager:
                 # (the column BetPlacer actually writes) rather than the
                 # legacy `stake_amount` which stays at 0.
                 total = (
-                    self.db.query(func.coalesce(func.sum(Bet.amount), 0.0))
+                    db.query(func.coalesce(func.sum(Bet.amount), 0.0))
                     .filter(Bet.status.in_(OPEN_BET_STATUSES))
                     .scalar()
                 )
@@ -248,17 +266,18 @@ class RiskManager:
         """Get portfolio value."""
         return self.portfolio_value
 
-    def _load_from_db(self):
+    def _load_from_db(self, db_session=None):
         """Load state from DB."""
-        if not self.db:
+        db = db_session or self.db
+        if not db:
             return
         try:
-            portfolio = self.db.query(Portfolio).filter(Portfolio.id == 1).first()
+            portfolio = db.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 self.portfolio_value = portfolio.current_value or portfolio.initial_value or self.portfolio_value
                 self.daily_pnl = portfolio.daily_pnl or 0.0
 
-            active = self.db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
+            active = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
             self.city_bet_counts = {}
             self.open_bets_count = len(active)
             for bet in active:
@@ -422,9 +441,10 @@ class RiskManager:
         if exit_bool:
             return True, reason
 
-        # 2.5 Max confidence: market price >= 0.98 or <= 0.02 (YES/NO)
-        # means near-certain win — close to lock profit before settlement.
-        if current_price >= 0.98 or current_price <= 0.02:
+        # 2.5 Max confidence: market price >= 0.98 (YES near-certain) or <= 0.02 (NO near-certain)
+        # Close to lock profit before settlement. Only trigger if price moves IN OUR FAVOR.
+        side = str(getattr(bet, "side", "YES")).upper()
+        if (side == "YES" and current_price >= 0.98) or (side == "NO" and current_price <= 0.02):
             return True, f"max_confidence: price={current_price:.4f}"
 
         # 3. Trailing stop

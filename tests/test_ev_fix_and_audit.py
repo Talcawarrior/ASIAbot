@@ -19,18 +19,27 @@ import os
 
 
 def test_dynamic_max_bet_pct_edge_bands():
-    """EV FIX: Edge band'ine göre dinamik max_bet_pct."""
+    """EV FIX: Edge band'ine göre dinamik max_bet_pct.
+
+    Not: base_pct default 0.006 (config.MAX_BET_PCT). Testlerde eski
+    band mantığını (base_pct=0.03) test etmek için explicit geçiyoruz.
+    """
     from utils.kelly import dynamic_max_bet_pct
 
-    # Yüksek EV → %5 cap
-    assert dynamic_max_bet_pct(0.30) == 0.05, "Edge %30 → %5 cap olmali"
-    assert dynamic_max_bet_pct(0.20) == 0.05, "Edge %20 → %5 cap olmali"
-    # Orta EV → %3 cap (base)
-    assert dynamic_max_bet_pct(0.15) == 0.03, "Edge %15 → %3 cap olmali"
-    assert dynamic_max_bet_pct(0.10) == 0.03, "Edge %10 → %3 cap olmali"
-    # Düşük EV → %2 cap
-    assert dynamic_max_bet_pct(0.05) == 0.02, "Edge %5 → %2 cap olmali"
-    assert dynamic_max_bet_pct(0.06) == 0.02, "Edge %6 → %2 cap olmali"
+    # Test with explicit base_pct=0.03 (old band logic)
+    assert dynamic_max_bet_pct(0.30, base_pct=0.03) == 0.05, "Edge %30 → %5 cap olmali"
+    assert dynamic_max_bet_pct(0.20, base_pct=0.03) == 0.05, "Edge %20 → %5 cap olmali"
+    # Orta EV → base_pct
+    assert dynamic_max_bet_pct(0.15, base_pct=0.03) == 0.03, "Edge %15 → base_pct cap olmali"
+    assert dynamic_max_bet_pct(0.10, base_pct=0.03) == 0.03, "Edge %10 → base_pct cap olmali"
+    # Düşük EV → base_pct * 0.5
+    assert dynamic_max_bet_pct(0.05, base_pct=0.03) == 0.015, "Edge %5 → base_pct*0.5 cap olmali"
+    assert dynamic_max_bet_pct(0.06, base_pct=0.03) == 0.015, "Edge %6 → base_pct*0.5 cap olmali"
+
+    # Test with production default base_pct=0.006
+    assert dynamic_max_bet_pct(0.30) == 0.05, "Edge %30 → %5 cap olmali (prod default)"
+    assert dynamic_max_bet_pct(0.10) == 0.006, "Edge %10 → base_pct cap olmali (prod default)"
+    assert dynamic_max_bet_pct(0.05) == 0.003, "Edge %5 → base_pct*0.5 cap olmali (prod default)"
 
 
 def test_dynamic_kelly_fraction_edge_bands():
@@ -52,15 +61,20 @@ def test_ev_proportional_sizing():
 
     Eski sabit %3 cap yüksek EV'yi sınırlıyordu (edge %30 ve %10 aynı $29.70).
     Artık dinamik sizing ile EV'ye orantılı.
+
+    Not: max_bet_pct default 0.006 (config), dynamic bands:
+    - edge >= 0.20 → 0.05
+    - edge >= 0.10 → 0.006
+    - edge < 0.10 → 0.003
     """
     from utils.kelly import kelly_bet_amount
 
     portfolio = 1000.0
-    # Edge %30 (yüksek EV)
+    # Edge %30 (yüksek EV) → max_bet_pct=0.05
     bet_high = kelly_bet_amount(portfolio, 0.80, 0.50, edge=0.30)
-    # Edge %10 (orta EV)
+    # Edge %10 (orta EV) → max_bet_pct=0.006
     bet_mid = kelly_bet_amount(portfolio, 0.60, 0.50, edge=0.10)
-    # Edge %5 (düşük EV)
+    # Edge %5 (düşük EV) → max_bet_pct=0.003
     bet_low = kelly_bet_amount(portfolio, 0.55, 0.50, edge=0.05)
 
     print(f"  Yüksek EV (edge %30): ${bet_high}")
@@ -83,10 +97,20 @@ def test_min_bet_floor_no_force():
     from utils.kelly import kelly_bet_amount
 
     # Kelly çok düşük (edge %5.1, p=0.551, price=0.50)
+    # f_star ≈ 0.102, fraction=0.10 → fractional=0.0102 → amount=$1.02
+    # max_bet_pct=0.003 → max_amount=$3 → capped at $1.02
+    # amount >= min_bet/2 (0.5) → returns max(1.02, 1.0) = 1.02
     bet = kelly_bet_amount(100.0, 0.551, 0.50, edge=0.051, min_bet=1.0)
-    # Ya 0 döner (Kelly < min_bet/2) ya da min_bet'e yapışır
-    # Ama eski gibi zorla $1 açmamalı
-    assert bet == 0.0 or bet >= 1.0, f"Bet {bet} — ya 0 ya da >= min_bet olmali"
+    # With dynamic max_bet_pct=0.003, max_amount=$0.3, so bet=$0.3
+    # This is < min_bet/2 (0.5) → should return 0
+    assert bet == 0.0, f"Kelly çok düşükse bet=0 olmali, got {bet}"
+
+    # Kelly biraz daha yüksek (edge %10, p=0.60, price=0.50)
+    # f_star ≈ 0.20, fraction=0.15 → fractional=0.03 → amount=$30
+    # max_bet_pct=0.006 → max_amount=$60 → capped at $30
+    # amount >= min_bet/2 → returns max(30, 1.0) = 30
+    bet2 = kelly_bet_amount(1000.0, 0.60, 0.50, edge=0.10, min_bet=1.0)
+    assert bet2 >= 1.0, f"Yeterli Kelly varsa min_bet'e floor olmali, got {bet2}"
 
 
 # ── Duplicate Bet Prevention Testleri ────────────────────────────────────
@@ -97,14 +121,17 @@ def test_no_existing_bet_gate_in_place_bet():
     import inspect
     from executor.bet_placer import BetPlacer
 
+    # Check both place_bet and the helper method
     source = inspect.getsource(BetPlacer.place_bet)
-    assert "no_existing_bet" in source
-    assert "OPEN_BET_STATUSES" in source
+    helper_source = inspect.getsource(BetPlacer._check_no_existing_bet)
+    combined = source + helper_source
+    assert "no_existing_bet" in combined
+    assert "OPEN_BET_STATUSES" in combined
     # HATA-3 + HATA-14: closed_at + settled_at cooldown
-    assert "closed_at" in source, "closed_at cooldown olmali (HATA-3)"
-    assert "settled_at" in source, "settled_at cooldown olmali (HATA-3)"
-    assert "REOPEN_COOLDOWN_HOURS" in source, "cooldown env var olmali (HATA-1)"
-    assert "_cooldown_cutoff" in source
+    assert "closed_at" in combined, "closed_at cooldown olmali (HATA-3)"
+    assert "settled_at" in combined, "settled_at cooldown olmali (HATA-3)"
+    assert "REOPEN_COOLDOWN_HOURS" in combined, "cooldown env var olmali (HATA-1)"
+    assert "_cooldown_cutoff" in combined
 
 
 def test_bet_status_enum_complete():
@@ -163,10 +190,12 @@ def test_ladder_pyramiding_in_bet_placer():
     from executor.bet_placer import BetPlacer
 
     source = inspect.getsource(BetPlacer.place_bet)
-    assert "pyramiding" in source, "Pyramiding modu olmali"
-    assert "averaging" in source, "Averaging modu olmali"
+    helper_source = inspect.getsource(BetPlacer._build_ladder_orders)
+    combined = source + "\n" + helper_source
+    assert "pyramiding" in combined, "Pyramiding modu olmali"
+    assert "averaging" in combined, "Averaging modu olmali"
     # Yüksek edge için L1 %70
-    assert "0.70" in source, "Yüksek edge için L1 %70 olmali"
+    assert "0.70" in combined, "Yüksek edge için L1 %70 olmali"
 
 
 def test_ladder_fill_pyramiding_in_scheduler():
@@ -219,15 +248,13 @@ def test_karpathy_uses_utils_kelly():
     assert "b = (1.0 / entry) - 1.0" not in source
 
 
-# ── Frontend Testleri ────────────────────────────────────────────────────
-
-
-def test_frontend_exit_price_simplified():
-    """HATA-6: Frontend exit_price fallback basitleştirilmiş."""
-    with open("src/lib/api.ts", encoding="utf-8") as f:
-        content = f.read()
-    assert "1.0 + h.realized_pnl" not in content
-    assert "function portfolioValue(" in content, "portfolioValue helper olmali (HATA-13)"
+# ── Frontend Testleri (Removed - dashboard moved to separate repo) ───────────
+# def test_frontend_exit_price_simplified():
+#     """HATA-6: Frontend exit_price fallback basitleştirilmiş."""
+#     with open("src/lib/api.ts", encoding="utf-8") as f:
+#         content = f.read()
+#     assert "1.0 + h.realized_pnl" not in content
+#     assert "function portfolioValue(" in content, "portfolioValue helper olmali (HATA-13)"
 
 
 # ── WebSocket Testi ──────────────────────────────────────────────────────
@@ -245,13 +272,13 @@ def test_websocket_broadcast_in_bot_loop():
 # ── Performance Testleri ─────────────────────────────────────────────────
 
 
-def test_forecast_days_is_5():
-    """PER-4: forecast_days 5 olmalı."""
+def test_forecast_days_is_16():
+    """Open-Meteo supports up to 16 days forecast."""
     import inspect
     from engine.calculator import WeatherEngine
 
     source = inspect.getsource(WeatherEngine.get_multi_model_forecast)
-    assert '"forecast_days": 5' in source
+    assert '"forecast_days": 16' in source
 
 
 def test_weather_concurrency_increased():

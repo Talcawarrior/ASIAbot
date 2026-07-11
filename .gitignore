@@ -1,3 +1,4 @@
+# Python
 .venv/
 .env
 .env.*
@@ -61,3 +62,27 @@ dashboard-verification/
 asiabot.db
 Caddyfile
 examples/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# One-time scripts / debug artifacts
+check_*.py
+debug_*.py
+fix_*.py
+fetch_*.py
+create_*.py
+write_*.py
+test_*.py
+run_*.py
+analyze_*.py
+calc_*.py
+*_output.txt
+fix_output.txt

@@ -51,7 +51,7 @@ from __future__ import annotations
 #   edge >= 0.10  → max_bet_pct=0.03, kelly_fraction=0.15 (sub-quarter, standart)
 #   edge >= 0.05  → max_bet_pct=0.02, kelly_fraction=0.10 (daha保守)
 #   edge < 0.05   → should_bet=False (zaten min_edge filtresi engeller)
-def dynamic_max_bet_pct(edge: float, base_pct: float = 0.03) -> float:
+def dynamic_max_bet_pct(edge: float, base_pct: float = 0.006) -> float:
     """EV FIX: Edge band'ine göre dinamik max_bet_pct döndür.
 
     Yüksek edge → yüksek cap, düşük edge → düşük cap.
@@ -63,7 +63,7 @@ def dynamic_max_bet_pct(edge: float, base_pct: float = 0.03) -> float:
     edge : float
         Net edge (model_prob - market_price), 0.0-1.0 arası.
     base_pct : float
-        Base max_bet_pct (default 0.03 = %3). Yüksek edge band'inde
+        Base max_bet_pct (default 0.006 = %0.6). Yüksek edge band'inde
         bu değerin üstüne çıkılır.
 
     Returns
@@ -74,8 +74,8 @@ def dynamic_max_bet_pct(edge: float, base_pct: float = 0.03) -> float:
     if edge >= 0.20:
         return 0.05  # %5 — yüksek EV'ye izin ver
     if edge >= 0.10:
-        return base_pct  # %3 — standart
-    return 0.02  # %2 — düşük EV'de daha保守
+        return base_pct  # base_pct — standart
+    return base_pct * 0.5  # %0.3 — düşük EV'de daha保守
 
 
 def dynamic_kelly_fraction(edge: float, base_fraction: float = 0.15) -> float:
@@ -146,7 +146,7 @@ def kelly_bet_amount(
     *,
     fraction: float = 0.15,
     min_bet: float = 1.0,
-    max_bet_pct: float = 0.03,
+    max_bet_pct: float = 0.006,
     edge: float | None = None,
 ) -> float:
     """Compute a Kelly-sized dollar bet for the given portfolio.
@@ -195,4 +195,7 @@ def kelly_bet_amount(
 
     max_amount = portfolio_value * max_bet_pct
     amount = min(amount, max_amount)
+    # EV FIX: Final cap sonrası da min_bet/2 altındaysa bet açma
+    if amount < min_bet * 0.5:
+        return 0.0
     return round(amount, 2)

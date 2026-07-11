@@ -20,10 +20,10 @@ import json
 import logging
 import math
 import os
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
-from database.db import DB_PATH
+from database.db import get_session, DB_PATH
+from database.models import HistoricalCalibration
 
 logger = logging.getLogger("ASI_CALIBRATION")
 
@@ -75,27 +75,27 @@ class CalibrationEngine:
             RECENCY_HALF_LIFE_DAYS,
         )
 
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-
         cutoff = datetime.now(timezone.utc) - timedelta(days=ROLLING_WINDOW_DAYS)
 
         # Pull raw rows (not pre-aggregated) so we can apply recency weights
         # and shrinkage in Python before collapsing to one row per group.
-        query = """
-            SELECT city_code, city, metric, model, bias, date
-            FROM historical_calibrations
-            WHERE date >= ?
-        """
-        try:
-            cursor.execute(query, (cutoff.isoformat(),))
-            rows = cursor.fetchall()
-        except sqlite3.OperationalError:
-            logger.warning("ASI Calibration: historical_calibrations table is empty. Backfill is required first.")
-            conn.close()
-            return {}
-
-        conn.close()
+        with get_session() as session:
+            try:
+                rows = (
+                    session.query(
+                        HistoricalCalibration.city_code,
+                        HistoricalCalibration.city,
+                        HistoricalCalibration.metric,
+                        HistoricalCalibration.model,
+                        HistoricalCalibration.bias,
+                        HistoricalCalibration.date,
+                    )
+                    .filter(HistoricalCalibration.date >= cutoff)
+                    .all()
+                )
+            except Exception as e:
+                logger.warning("ASI Calibration: historical_calibrations table is empty or query failed: %s", e)
+                return {}
 
         if not rows:
             logger.warning(

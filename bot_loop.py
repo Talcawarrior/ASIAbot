@@ -18,6 +18,7 @@ async def _safe_broadcast(message: dict):
     """Broadcast message to WebSocket clients (best-effort)."""
     try:
         from api import broadcast_message
+
         await broadcast_message(message)
     except ImportError:
         pass
@@ -58,6 +59,14 @@ async def scan_and_bet_loop(state):
         run_parse_markets,
     )
 
+    # BUG-5 FIX: All asyncio.to_thread() calls now have timeouts.
+    # If a function hangs (deadlock, infinite loop), the bot loop
+    # recovers after the timeout instead of hanging forever.
+    _FETCH_TIMEOUT = 300  # 5 min for market/weather fetch
+    _CYCLE_TIMEOUT = 600  # 10 min for analyze/bet cycle
+    _SETTLE_TIMEOUT = 300  # 5 min for settlement
+    _CLEANUP_TIMEOUT = 120  # 2 min for stale cleanup
+
     stale_check_counter = 0
     last_day = None  # Track day changes for immediate midnight scan
 
@@ -76,23 +85,29 @@ async def scan_and_bet_loop(state):
 
             # Data fetching — PER-2 FIX: Paralellestirme.
             # fetch_markets once (market listesi lazim), sonra parse + weather paralel.
-            await asyncio.to_thread(run_fetch_markets)
+            await asyncio.wait_for(asyncio.to_thread(run_fetch_markets), timeout=_FETCH_TIMEOUT)
             parse_and_weather = await asyncio.gather(
-                asyncio.to_thread(run_parse_markets),
-                asyncio.to_thread(run_fetch_weather),
+                asyncio.wait_for(asyncio.to_thread(run_parse_markets), timeout=_FETCH_TIMEOUT),
+                asyncio.wait_for(asyncio.to_thread(run_fetch_weather), timeout=_FETCH_TIMEOUT),
                 return_exceptions=True,
             )
             for result in parse_and_weather:
                 if isinstance(result, Exception):
                     logger.error("Parallel step error: %s", result)
             # Core DB operations — single shared session for consistency
-            await asyncio.to_thread(run_cycle)
+            await asyncio.wait_for(asyncio.to_thread(run_cycle), timeout=_CYCLE_TIMEOUT)
 
             # Her 10 döngüde bir stale bet temizliği
             stale_check_counter += 1
             if stale_check_counter >= 10:
                 stale_check_counter = 0
-                await asyncio.to_thread(_cleanup_stale_bets)
+                await asyncio.wait_for(asyncio.to_thread(_cleanup_stale_bets), timeout=_CLEANUP_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.error(
+                "Scan step timed out — fetch=%ds, cycle=%ds. Recovering.",
+                _FETCH_TIMEOUT,
+                _CYCLE_TIMEOUT,
+            )
         except Exception as e:
             logger.error("Scan error: %s", e)
         state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -100,11 +115,13 @@ async def scan_and_bet_loop(state):
         # HATA-15 FIX: WebSocket broadcast. Onceki kod broadcast_message
         # fonksiyonu vardi ama hic cagrilmadi. Simdi her scan sonrasi
         # bagli WebSocket istemcilerine status guncellemesi gonderiliyor.
-        await _safe_broadcast({
-            "type": "scan_complete",
-            "last_scan": state.last_scan.isoformat(),
-            "is_running": state.is_running,
-        })
+        await _safe_broadcast(
+            {
+                "type": "scan_complete",
+                "last_scan": state.last_scan.isoformat(),
+                "is_running": state.is_running,
+            }
+        )
 
         # Dynamic interval: fast during midnight window, normal otherwise
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -159,18 +176,21 @@ async def settlement_loop(state):
     """Background loop: run SIA optimization (hourly) and settle resolved bets."""
     from jobs.scheduler import run_settle
 
+    _SETTLE_TIMEOUT = 300  # 5 min
+    _SIA_TIMEOUT = 600  # 10 min for SIA optimization
+
     last_cleanup_date = None
 
     while state.is_running:
         try:
-            await asyncio.to_thread(run_settle)
+            await asyncio.wait_for(asyncio.to_thread(run_settle), timeout=_SETTLE_TIMEOUT)
 
             # Daily DB cleanup: archive old forecasts, VACUUM
             today = datetime.now(timezone.utc).date()
             if last_cleanup_date != today:
                 from database.db_cleanup import auto_cleanup
 
-                await asyncio.to_thread(auto_cleanup, hot_days=10, cold_days=120)
+                await asyncio.wait_for(asyncio.to_thread(auto_cleanup, hot_days=10, cold_days=120), timeout=120)
                 last_cleanup_date = today
 
             # SIA optimization: hourly
@@ -179,8 +199,10 @@ async def settlement_loop(state):
                 state.sia_last_run is None
                 or (now - state.sia_last_run).total_seconds() >= state.sia_interval_hours * 3600
             ):
-                await asyncio.to_thread(state.sia_loop.run_optimization_cycle)
+                await asyncio.wait_for(asyncio.to_thread(state.sia_loop.run_optimization_cycle), timeout=_SIA_TIMEOUT)
                 state.sia_last_run = datetime.now(timezone.utc).replace(tzinfo=None)
+        except asyncio.TimeoutError:
+            logger.error("Settlement step timed out — recovering.")
         except Exception as e:
             logger.error("Settle error: %s", e)
         await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)

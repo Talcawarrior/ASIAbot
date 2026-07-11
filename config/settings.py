@@ -35,19 +35,15 @@ class PolymarketConfig:
     def __post_init__(self):
         self.weather_keywords = [
             "temperature",
-            "heat",
-            "cold",
-            "snow",
-            "rain",
-            "hurricane",
-            "storm",
-            "weather",
-            "°F",
-            "°C",
+            "temp ",
+            "°c",
+            "°f",
             "celsius",
             "fahrenheit",
-            "precipitation",
             "highest",
+            "lowest",
+            "warmest",
+            "coldest",
         ]
 
 
@@ -87,7 +83,7 @@ class StrategyConfig:
     # Recommended: 50.0 (require $50 of depth near our fill).
     # The depth is checked from the live orderbook via ResolvedMarkets API.
     # If the API call fails, the filter is skipped (graceful degradation).
-    min_depth_usd: float = 0.0
+    min_depth_usd: float = 50.0
     kelly_fraction: float = 0.15  # Quarter Kelly (reduced from 0.25 for safety with <50% win rate)
     # Time-to-close edge escalation. As a market approaches its
     # resolution time, Polymarket prices move fast on the public
@@ -144,7 +140,7 @@ class StrategyConfig:
     # "orderbook" — live depth-based (future, falls back to tiered)
     slippage_model: str = "orderbook"
     slippage_pct: float = 0.005  # used when slippage_model="flat"
-    gas_cost_usd: float = 0.10  # Polygon gas per round-trip
+    gas_cost_usd: float = 0.01  # Polygon gas (gasless tx ~$0.01)
 
     # ── Market blend weight ─────────────────────────────────────────────
     # Blend between model probability and market price:
@@ -155,6 +151,19 @@ class StrategyConfig:
     # ── Flat bet override & Daily loss limit (synced from Config) ─────────
     flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
     daily_loss_limit: float = 0.20  # 20% daily max loss
+
+    # ── Adjusted Edge Coefficients (derived from historical ROI analysis) ────
+    # Time coefficients: days_ahead -> multiplier (0-1 days: 0.25, 1-2: 1.0, 2-3: 1.1, 3+: 1.0)
+    time_coefficients: dict = None  # type: ignore[assignment]
+    # Market type coefficients: temperature_max=1.0, temperature_min=0.02
+    market_type_coeff: dict = None  # type: ignore[assignment]
+    # Side coefficients: NO=1.0, YES=0.5 (reduce but don't eliminate YES bets)
+    side_coeff: dict = None  # type: ignore[assignment]
+    # Forecast RMSE by days_ahead (for 1/rmse^2 penalty) — REAL VALUES from backfill
+    forecast_rmse_by_horizon: dict = None  # type: ignore[assignment]
+    # Spread penalty: ensemble spread -> penalty multiplier
+    spread_penalty_threshold: float = 1.5  # °C above which penalty applies
+    spread_penalty_factor: float = 0.5  # multiplier when spread > threshold
 
 
 @dataclass
@@ -470,6 +479,18 @@ class BotConfig:
         s.min_entry_price = float(os.getenv("MIN_ENTRY_PRICE", str(s.min_entry_price)))
         s.min_yes_prob = float(os.getenv("MIN_YES_PROB", str(s.min_yes_prob)))
         s.flat_bet_usd = float(os.getenv("FLAT_BET_USD", str(s.flat_bet_usd)))
+
+        # ── Adjusted Edge Coefficients (defaults, can be overridden by .env) ────
+        if s.time_coefficients is None:
+            s.time_coefficients = {0: 0.25, 1: 1.00, 2: 1.10, 3: 1.00}
+        if s.market_type_coeff is None:
+            s.market_type_coeff = {"temperature_max": 1.0, "temperature_min": 0.02}
+        if s.side_coeff is None:
+            s.side_coeff = {"NO": 1.0, "YES": 0.5}
+        if s.forecast_rmse_by_horizon is None:
+            # Real RMSE from backfill: {0: 2.17, 2: 1.49}
+            # Interpolated for missing horizons: 1=1.83, 3=2.0
+            s.forecast_rmse_by_horizon = {0: 2.17, 1: 1.83, 2: 1.49, 3: 2.0}
 
 
 # ── Config backward-compatibility proxy ────────────────────────────────────

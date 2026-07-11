@@ -35,6 +35,7 @@ patches) — this keeps the layer useful in CI.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import json
 import logging
@@ -128,11 +129,258 @@ def predict_yes_probability(
 
 
 def _ensure_harness() -> None:
-    """Create the default harness file if it doesn't exist."""
+    """Ensure the harness file exists (create default if missing)."""
     if not os.path.exists(HARNESS_PATH):
         with open(HARNESS_PATH, "w", encoding="utf-8") as f:
             f.write(DEFAULT_HARNESS_SRC)
         logger.info("Wrote default SIA harness to %s", HARNESS_PATH)
+
+
+# ---------------------------------------------------------------------------
+# Harness patch validation (security)
+# ---------------------------------------------------------------------------
+
+# Allowed imports for the harness patch (whitelist)
+ALLOWED_IMPORTS = {
+    "math",
+    "statistics",
+    "typing",
+    "dataclasses",
+    "functools",
+    "itertools",
+    "collections",
+    "decimal",
+    "fractions",
+    "numbers",
+    "statistics",
+    "random",
+    "hashlib",
+    "json",
+    "re",
+    "string",
+    "textwrap",
+    "datetime",
+    "time",
+    "calendar",
+    "zoneinfo",
+}
+
+# Allowed builtins/functions for the harness
+ALLOWED_BUILTINS = {
+    "abs",
+    "min",
+    "max",
+    "sum",
+    "len",
+    "round",
+    "pow",
+    "divmod",
+    "float",
+    "int",
+    "str",
+    "list",
+    "dict",
+    "tuple",
+    "set",
+    "frozenset",
+    "range",
+    "enumerate",
+    "zip",
+    "map",
+    "filter",
+    "sorted",
+    "reversed",
+    "all",
+    "any",
+    "isinstance",
+    "hasattr",
+    "getattr",
+    "setattr",
+    "type",
+    "object",
+    "Exception",
+    "ValueError",
+    "TypeError",
+}
+
+# Dangerous patterns that should never appear in harness
+FORBIDDEN_PATTERNS = [
+    "import os",
+    "import sys",
+    "import subprocess",
+    "import shutil",
+    "import socket",
+    "import urllib",
+    "import requests",
+    "import http",
+    "import pickle",
+    "import marshal",
+    "import shelve",
+    "import dbm",
+    "import sqlite3",
+    "import ctypes",
+    "import ctypes.util",
+    "from os import",
+    "from sys import",
+    "from subprocess import",
+    "from shutil import",
+    "from socket import",
+    "from urllib import",
+    "from pickle import",
+    "from marshal import",
+    "from shelve import",
+    "from dbm import",
+    "from sqlite3 import",
+    "from ctypes import",
+    "__import__",
+    "eval(",
+    "exec(",
+    "compile(",
+    "open(",
+    "getattr(",
+    "setattr(",
+    "delattr(",
+    "globals(",
+    "locals(",
+    "vars(",
+    "dir(",
+    "breakpoint(",
+    "input(",
+    "os.",
+    "sys.",
+    "subprocess.",
+    "shutil.",
+    "socket.",
+    "urllib.",
+    "requests.",
+    "http.",
+    "pickle.",
+    "marshal.",
+    "shelve.",
+    "dbm.",
+    "sqlite3.",
+    "ctypes.",
+    "pathlib.",
+    "pathlib.Path",
+    "open(",
+    "file(",
+    "execfile(",
+]
+
+
+def _validate_harness_patch(source: str) -> tuple[bool, str]:
+    """
+    Validate that a harness patch is safe to execute.
+
+    Checks:
+    1. Only contains a single function definition: predict_yes_probability
+    2. No forbidden imports or patterns
+    3. No dangerous builtins or function calls
+    4. AST only contains allowed node types
+
+    Returns (is_valid, error_message)
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return False, f"SyntaxError: {e}"
+
+    # Check for forbidden patterns in source text (quick check)
+    for pattern in FORBIDDEN_PATTERNS:
+        if pattern in source:
+            return False, f"Forbidden pattern detected: {pattern}"
+
+    # Walk AST and validate
+    function_count = 0
+    for node in ast.walk(tree):
+        # Check imports
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name not in ALLOWED_IMPORTS:
+                    return False, f"Forbidden import: {alias.name}"
+
+        # Check function definitions
+        if isinstance(node, ast.FunctionDef):
+            function_count += 1
+            if node.name != "predict_yes_probability":
+                return False, f"Forbidden function definition: {node.name} (only predict_yes_probability allowed)"
+
+            # Check function signature
+            args = node.args
+            if len(args.args) != 4:
+                return (
+                    False,
+                    "predict_yes_probability must have 4 parameters (forecasts, weights, threshold, days_ahead)",
+                )
+            expected_params = ["forecasts", "weights", "threshold", "days_ahead"]
+            for i, arg in enumerate(args.args):
+                if arg.arg != expected_params[i]:
+                    return False, f"Parameter {i} must be '{expected_params[i]}', got '{arg.arg}'"
+
+        # Check for dangerous calls
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                if node.func.id in {
+                    "eval",
+                    "exec",
+                    "compile",
+                    "open",
+                    "__import__",
+                    "getattr",
+                    "setattr",
+                    "delattr",
+                    "globals",
+                    "locals",
+                    "vars",
+                    "dir",
+                    "breakpoint",
+                    "input",
+                }:
+                    return False, f"Forbidden function call: {node.func.id}"
+            elif isinstance(node.func, ast.Attribute):
+                # Check for dangerous attribute access
+                if isinstance(node.func.value, ast.Name):
+                    if node.func.value.id in {
+                        "os",
+                        "sys",
+                        "subprocess",
+                        "shutil",
+                        "socket",
+                        "urllib",
+                        "pickle",
+                        "marshal",
+                        "shelve",
+                        "dbm",
+                        "sqlite3",
+                        "ctypes",
+                        "pathlib",
+                    }:
+                        return False, f"Forbidden module access: {node.func.value.id}.{node.func.attr}"
+
+        # Check for attribute access on dangerous modules
+        if isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name):
+                if node.value.id in {
+                    "os",
+                    "sys",
+                    "subprocess",
+                    "shutil",
+                    "socket",
+                    "urllib",
+                    "pickle",
+                    "marshal",
+                    "shelve",
+                    "dbm",
+                    "sqlite3",
+                    "ctypes",
+                    "pathlib",
+                }:
+                    return False, f"Forbidden module attribute access: {node.value.id}.{node.attr}"
+
+    if function_count != 1:
+        return False, f"Expected exactly 1 function (predict_yes_probability), found {function_count}"
+
+    return True, "OK"
 
 
 def _load_harness_source() -> str:
@@ -317,6 +565,12 @@ class TargetAgent:
         # Sanity check: must contain the function definition
         if "def predict_yes_probability" not in raw:
             logger.warning("LLM patch missing function definition — rejecting")
+            return None
+
+        # Security: validate the patch before accepting
+        is_valid, error = _validate_harness_patch(raw)
+        if not is_valid:
+            logger.warning("LLM patch failed security validation: %s — rejecting", error)
             return None
 
         return raw.strip()

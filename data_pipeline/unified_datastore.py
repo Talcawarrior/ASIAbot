@@ -407,8 +407,42 @@ class UnifiedDatastore:
             logger.warning("Brier dataset requires both markets and actuals to be populated")
             return pd.DataFrame()
 
+        # Derive target_date from end_date (markets table uses end_date, not target_date)
+        # Handle both end_date and endDate column names
+        end_date_col = "end_date" if "end_date" in markets.columns else "endDate"
+        markets["target_date"] = markets[end_date_col].dt.date.astype(str)
+        actuals["join_date"] = actuals["date"].dt.date.astype(str)
+
+        # Use existing market_type and threshold columns if present,
+        # otherwise parse from question text (for legacy data)
+        if "market_type" not in markets.columns:
+            # Derive market_type from question text
+            def _parse_market_type(row):
+                question = str(row.get("question", "")).lower()
+                if "highest" in question or "max" in question:
+                    return "HIGH"
+                elif "lowest" in question or "min" in question:
+                    return "LOW"
+                else:
+                    return "HIGH"
+
+            markets["market_type"] = markets.apply(_parse_market_type, axis=1)
+
+        if "threshold" not in markets.columns:
+            # Derive threshold from question text
+            def _parse_threshold(row):
+                question = str(row.get("question", ""))
+                import re
+
+                match = re.search(r"(\d+(?:\.\d+)?)\s*[°c°F]", question)
+                if match:
+                    return float(match.group(1))
+                return None
+
+            markets["threshold"] = markets.apply(_parse_threshold, axis=1)
+
         # Join on (city, target_date)
-        markets["join_date"] = markets["target_date"].dt.date.astype(str)
+        markets["join_date"] = markets["target_date"].astype(str)
         actuals["join_date"] = actuals["date"].dt.date.astype(str)
 
         merged = markets.merge(

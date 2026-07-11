@@ -88,14 +88,9 @@ class ProbabilityCalibrator:
             If fewer than 10 training pairs are provided.
         """
         if len(predictions) < 10:
-            raise ValueError(
-                f"Need at least 10 training pairs, got {len(predictions)}"
-            )
+            raise ValueError(f"Need at least 10 training pairs, got {len(predictions)}")
         if len(predictions) != len(outcomes):
-            raise ValueError(
-                f"predictions ({len(predictions)}) / outcomes ({len(outcomes)}) "
-                "length mismatch"
-            )
+            raise ValueError(f"predictions ({len(predictions)}) / outcomes ({len(outcomes)}) length mismatch")
 
         # scipy is already a soft dependency (used by normal_cdf)
         from scipy.optimize import minimize  # type: ignore[import-untyped]
@@ -122,7 +117,10 @@ class ProbabilityCalibrator:
         self._save()
         logger.info(
             "Calibrator trained: a=%.4f, b=%.4f  (n=%d, nll=%.2f)",
-            self.a, self.b, self._n_fit, result.fun,
+            self.a,
+            self.b,
+            self._n_fit,
+            result.fun,
         )
 
     def fit_from_db(self, db_path: str | None = None) -> int:
@@ -144,9 +142,7 @@ class ProbabilityCalibrator:
             Number of training pairs used.
         """
         if db_path is None:
-            db_path = str(
-                Path(__file__).resolve().parent.parent / "data" / "bot.db"
-            )
+            db_path = str(Path(__file__).resolve().parent.parent / "data" / "bot.db")
 
         import sqlite3
 
@@ -195,12 +191,15 @@ class ProbabilityCalibrator:
     def _save(self) -> None:
         CALIB_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CALIB_PATH, "w", encoding="utf-8") as f:
-            json.dump({
-                "a": self.a,
-                "b": self.b,
-                "trained": self.is_trained,
-                "n_fit": self._n_fit,
-            }, f)
+            json.dump(
+                {
+                    "a": self.a,
+                    "b": self.b,
+                    "trained": self.is_trained,
+                    "n_fit": self._n_fit,
+                },
+                f,
+            )
 
     def _load(self) -> None:
         if not CALIB_PATH.exists():
@@ -215,7 +214,9 @@ class ProbabilityCalibrator:
             if self.is_trained:
                 logger.info(
                     "Loaded calibrator: a=%.4f, b=%.4f (n=%d)",
-                    self.a, self.b, self._n_fit,
+                    self.a,
+                    self.b,
+                    self._n_fit,
                 )
         except Exception as exc:
             logger.warning("Could not load calibrator: %s", exc)

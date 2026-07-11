@@ -134,6 +134,7 @@ class Analysis(Base):
     market_implied_prob = Column(Float)  # 0.35 (Polymarket'in fiyatı)
     edge = Column(Float)  # 0.37 (fark) — now net edge after slippage+fee
     raw_edge = Column(Float, nullable=True)  # pre-cost raw edge
+    adjusted_edge = Column(Float, nullable=True)  # time/type/side/RMSE/spread adjusted
     slippage_pct = Column(Float, nullable=True)  # estimated slippage at fill
 
     # Kaynak detayları
@@ -271,6 +272,8 @@ class HistoricalCalibration(Base):
     predicted_value = Column(Float, nullable=False)
     actual_value = Column(Float, nullable=False)
     bias = Column(Float, nullable=True)  # predicted - actual
+    analyzed_at = Column(DateTime, nullable=True)  # When this prediction was made
+    days_ahead = Column(Integer, nullable=True)  # (target_date - analyzed_at).days
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),

@@ -24,7 +24,7 @@ logger = logging.getLogger("UTIL_SLIPPAGE")
 FEE_PCT: float = 0.05  # Polymarket Weather category taker fee rate (5 %)
 # Correct formula: fee = C × feeRate × p × (1-p) = stake × feeRate × (1-p)
 # See utils/formulas.py → polymarket_fee() for the canonical implementation.
-GAS_COST_USD: float = 0.10  # Polygon gas per round-trip
+GAS_COST_USD: float = 0.01  # Polygon gas per round-trip (gasless tx ~$0.01)
 
 
 @dataclass(frozen=True)
@@ -55,9 +55,7 @@ def _tiered_slippage(entry_price: float) -> float:
     return 0.005
 
 
-def _vwap_from_asks(
-    asks: list[dict], stake_usd: float, fallback_price: float
-) -> tuple[float, float]:
+def _vwap_from_asks(asks: list[dict], stake_usd: float, fallback_price: float) -> tuple[float, float]:
     """Walk orderbook ask levels, compute VWAP fill and total depth.
 
     Returns (fill_vwap, depth_usd).
@@ -67,7 +65,11 @@ def _vwap_from_asks(
     filled_shares = 0.0
     for level in asks:
         price = float(level.get("price", 0))
-        size = float(level.get("size", 0))
+        size_raw = level.get("size", 0)
+        try:
+            size = float(size_raw) if size_raw is not None else 0.0
+        except (TypeError, ValueError):
+            size = 0.0
         cost = price * size
         if cumulative + cost >= stake_usd:
             needed = stake_usd - cumulative
@@ -112,9 +114,7 @@ def _orderbook_slippage(
 
         ob = LiveOrderbookClient().get_live_orderbook(condition_id)
         if not ob or ("asks" not in ob and "bids" not in ob):
-            logger.warning(
-                "Orderbook empty for %s, falling back to tiered", condition_id
-            )
+            logger.warning("Orderbook empty for %s, falling back to tiered", condition_id)
             return _tiered_fallback(entry_price, "orderbook: empty_book")
 
         asks = ob.get("asks", [])
@@ -135,9 +135,7 @@ def _orderbook_slippage(
             model_used="orderbook",
         )
     except Exception as exc:
-        logger.warning(
-            "Orderbook slippage fetch failed, falling back to tiered: %s", exc
-        )
+        logger.warning("Orderbook slippage fetch failed, falling back to tiered: %s", exc)
         return _tiered_fallback(entry_price, f"orderbook_error: {exc}")
 
 
@@ -330,7 +328,11 @@ def check_orderbook_depth(
     depth_usd = 0.0
     for lvl in levels:
         price = float(lvl.get("price", 0))
-        size = float(lvl.get("size", 0))
+        size_raw = lvl.get("size", 0)
+        try:
+            size = float(size_raw) if size_raw is not None else 0.0
+        except (TypeError, ValueError):
+            size = 0.0
         if abs(price - fill_price) <= 0.02:
             depth_usd += price * size  # price * shares = USD value
 

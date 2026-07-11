@@ -19,6 +19,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "REDACTED_TELEGRAM_TOKEN")
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
 
+
 async def api_get(path: str) -> dict | str:
     """GET from ASIAbot API, return parsed JSON or error string."""
     try:
@@ -33,6 +34,7 @@ async def api_get(path: str) -> dict | str:
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
+
 
 async def start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -152,7 +154,7 @@ async def cmd_markets(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
         lines.append(f"• {q} — ${p} ({loc})")
 
     if len(markets) > 8:
-        lines.append(f"...ve {len(markets)-8} daha")
+        lines.append(f"...ve {len(markets) - 8} daha")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -176,7 +178,7 @@ async def cmd_signals(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
         lines.append(f"• {city}: {side} edge={edge:.1%} prob={prob:.1%}")
 
     if len(signals) > 6:
-        lines.append(f"...ve {len(signals)-6} daha")
+        lines.append(f"...ve {len(signals) - 6} daha")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -189,7 +191,7 @@ async def cmd_weights(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
     w = data if isinstance(data, dict) else {}
     lines = ["⚖️ *SIA Model Agirliklari*"]
     for model, pct in sorted(w.items(), key=lambda x: -x[1]):
-        lines.append(f"• {model}: {pct*100:.2f}%")
+        lines.append(f"• {model}: {pct * 100:.2f}%")
     await update.message.reply_text("\n".join(lines))
 
 
@@ -198,6 +200,7 @@ async def cmd_help(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main():
     app = Application.builder().token(TOKEN).build()

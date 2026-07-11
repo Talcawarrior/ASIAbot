@@ -90,7 +90,9 @@ class SettlementEngine:
                         e,
                         exc_info=True,
                     )
-                    pending_count += 1
+                    # Re-raise to prevent silent failures - if one market fails
+                    # systematically (e.g., API format change), we want to know
+                    raise
 
             session.commit()
 
@@ -232,6 +234,8 @@ class SettlementEngine:
                     e,
                     exc_info=True,
                 )
+                # Re-raise to prevent silent failures
+                raise
 
         if any_settled:
             market.status = "settled_win" if outcome == "YES" else "settled_loss"

@@ -24,6 +24,7 @@ logger = logging.getLogger("SCRAPER_METEO")
 # "London 2026-06-08" all need the same Open-Meteo forecast).
 _FETCH_CACHE: dict[tuple[float, float, str, str], tuple] = {}
 _FETCH_CACHE_LOCK = threading.Lock()
+_FETCH_CACHE_ASYNC_LOCK = asyncio.Lock()
 
 # Successes live for 30 minutes; failures for 5 minutes. The original
 # cache remembered failures for the lifetime of the process, which
@@ -47,8 +48,28 @@ def _cache_get(key):
         return value
 
 
+async def _cache_get_async(key):
+    """Async version of _cache_get using asyncio.Lock."""
+    async with _FETCH_CACHE_ASYNC_LOCK:
+        entry = _FETCH_CACHE.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if time.monotonic() > expires_at:
+            _FETCH_CACHE.pop(key, None)
+            return None
+        return value
+
+
 def _cache_set(key, value):
     with _FETCH_CACHE_LOCK:
+        ttl = _SUCCESS_TTL_S if value is not None else _FAILURE_TTL_S
+        _FETCH_CACHE[key] = (value, time.monotonic() + ttl)
+
+
+async def _cache_set_async(key, value):
+    """Async version of _cache_set using asyncio.Lock."""
+    async with _FETCH_CACHE_ASYNC_LOCK:
         ttl = _SUCCESS_TTL_S if value is not None else _FAILURE_TTL_S
         _FETCH_CACHE[key] = (value, time.monotonic() + ttl)
 
@@ -57,6 +78,12 @@ def _cache_clear() -> None:
     """Reset the fetch cache. Useful for tests and for the scheduler
     when it wants to force a refresh after a configurable TTL."""
     with _FETCH_CACHE_LOCK:
+        _FETCH_CACHE.clear()
+
+
+async def _cache_clear_async() -> None:
+    """Async version of _cache_clear using asyncio.Lock."""
+    async with _FETCH_CACHE_ASYNC_LOCK:
         _FETCH_CACHE.clear()
 
 
@@ -69,6 +96,7 @@ def _cache_clear() -> None:
 _MIN_INTERVAL_S = float(os.environ.get("OPEN_METEO_MIN_INTERVAL_S", "6.0"))
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
+_THROTTLE_ASYNC_LOCK = asyncio.Lock()
 
 
 def _throttle(host: str) -> None:
@@ -89,6 +117,19 @@ def _throttle(host: str) -> None:
                 _LAST_CALL_AT[host] = now
                 return
         time.sleep(wait)
+
+
+async def _throttle_async(host: str) -> None:
+    """Async version of _throttle using asyncio.Lock and asyncio.sleep."""
+    while True:
+        async with _THROTTLE_ASYNC_LOCK:
+            now = time.monotonic()
+            last = _LAST_CALL_AT.get(host, 0.0)
+            wait = _MIN_INTERVAL_S - (now - last)
+            if wait <= 0:
+                _LAST_CALL_AT[host] = now
+                return
+        await asyncio.sleep(wait)
 
 
 class MeteoFetcher:
@@ -301,8 +342,11 @@ class MeteoFetcher:
 
             total = 0
             we = WeatherEngine(db_session_factory=get_session)
+            # BUG-4 FIX: Do NOT call asyncio.set_event_loop() — it corrupts
+            # the thread's event loop when called from a worker thread that
+            # already has one (e.g. via asyncio.to_thread). Just create and
+            # use the loop directly.
             loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
 
             import aiohttp as _aiohttp
 
@@ -325,6 +369,44 @@ class MeteoFetcher:
             _semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
             _throttle_lock = asyncio.Lock()
             _last_api_call = [0.0]  # mutable container for async closure
+
+            def _persist_ensemble(
+                result: dict,
+                market_ids: list[str],
+                city: str,
+                lat: float,
+                lon: float,
+                target_date,
+                metric: str,
+            ) -> None:
+                """Persist ensemble forecasts to DB with a fresh session."""
+                from database.models import WeatherForecast
+
+                model_temps = result.get("model_temps", {})
+                if not model_temps:
+                    return
+                try:
+                    with get_session() as _sess:
+                        for mid in market_ids:
+                            for mn, tmp in model_temps.items():
+                                _sess.add(
+                                    WeatherForecast(
+                                        market_id=mid,
+                                        city=city,
+                                        lat=lat,
+                                        lon=lon,
+                                        target_date=target_date,
+                                        metric=metric,
+                                        source=mn,
+                                        predicted_value=float(tmp),
+                                        model_weight=we.model_weights.get(mn, 0.0),
+                                        fetched_at=datetime.now(UTC).replace(tzinfo=None),
+                                        raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
+                                    )
+                                )
+                        _sess.commit()
+                except Exception as e:
+                    logger.debug("Ensemble persist failed for %s: %s", city, e)
 
             async def _fetch_one_group(
                 key: tuple,
@@ -354,6 +436,14 @@ class MeteoFetcher:
                         _last_api_call[0] = time.monotonic()
 
                     # 1. Try Ensemble (8-model)
+                    # BUG-1 FIX: Do NOT pass db_session=session — the shared
+                    # session from the outer get_session() context manager is
+                    # used by ALL concurrent _fetch_one_group tasks via
+                    # asyncio.gather. Multiple tasks calling session.commit()
+                    # on the same session causes race conditions, lost writes,
+                    # and IntegrityErrors. Instead, get_multi_model_forecast
+                    # returns data in-memory; DB persistence happens separately
+                    # with fresh sessions below.
                     try:
                         result = await we.get_multi_model_forecast(
                             city_code=city_code or city,
@@ -361,86 +451,93 @@ class MeteoFetcher:
                             longitude=lon,
                             target_date=target_date,
                             market_ids=all_mids,
-                            db_session=session,
+                            db_session=None,  # BUG-1 FIX: no shared session
                             metric=primary_metric,
                             aiohttp_session=shared_session,
                         )
                         if result and result.get("model_count", 0) >= 3:
+                            # Persist ensemble forecasts with fresh session
+                            _persist_ensemble(
+                                result, all_mids, city_code or city, lat, lon, target_date, primary_metric
+                            )
                             return result["model_count"] * len(all_mids)
                     except Exception as e:
                         logger.debug("Ensemble failed for %s %s: %s", key, primary_metric, e)
 
-                    # 2. DB cache fallback
+                    # 2. DB cache fallback — use fresh session per task
                     for metric, mids in mids_by_metric.items():
                         from database.models import WeatherForecast
 
-                        existing = (
-                            session.query(WeatherForecast)
-                            .filter(
-                                WeatherForecast.city == (city_code or city),
-                                WeatherForecast.target_date == target_date,
-                                WeatherForecast.metric == metric,
-                            )
-                            .first()
-                        )
-                        if existing is not None:
-                            all_existing = (
-                                session.query(WeatherForecast)
+                        with get_session() as _sess:
+                            existing = (
+                                _sess.query(WeatherForecast)
                                 .filter(
                                     WeatherForecast.city == (city_code or city),
                                     WeatherForecast.target_date == target_date,
                                     WeatherForecast.metric == metric,
                                 )
-                                .all()
+                                .first()
                             )
-                            source_map: dict[str, WeatherForecast] = {}
-                            for fe in all_existing:
-                                if fe.source not in source_map:
-                                    source_map[fe.source] = fe
-                            newly_created = 0
-                            for mid in mids:
-                                for source_name, fe in source_map.items():
-                                    already_exists = (
-                                        session.query(WeatherForecast.id)
-                                        .filter(
-                                            WeatherForecast.market_id == mid,
-                                            WeatherForecast.source == source_name,
-                                        )
-                                        .first()
+                            if existing is not None:
+                                all_existing = (
+                                    _sess.query(WeatherForecast)
+                                    .filter(
+                                        WeatherForecast.city == (city_code or city),
+                                        WeatherForecast.target_date == target_date,
+                                        WeatherForecast.metric == metric,
                                     )
-                                    if already_exists is None:
-                                        session.add(
-                                            WeatherForecast(
-                                                market_id=mid,
-                                                city=fe.city,
-                                                lat=fe.lat,
-                                                lon=fe.lon,
-                                                target_date=fe.target_date,
-                                                metric=fe.metric,
-                                                source=source_name,
-                                                predicted_value=fe.predicted_value,
-                                                model_weight=fe.model_weight,
-                                                fetched_at=datetime.now(UTC),
-                                                raw_data=fe.raw_data,
-                                            )
-                                        )
-                                        newly_created += 1
-                            if newly_created > 0:
-                                session.commit()
-                                count += newly_created
-                                date_str = target_date.strftime("%Y-%m-%d")
-                                logger.info(
-                                    "DB-cache replicated %d forecasts for %d markets at %s/%s/%s",
-                                    newly_created,
-                                    len(mids),
-                                    city_code or city,
-                                    date_str,
-                                    metric,
+                                    .all()
                                 )
-                                continue
+                                source_map: dict[str, WeatherForecast] = {}
+                                for fe in all_existing:
+                                    if fe.source not in source_map:
+                                        source_map[fe.source] = fe
+                                newly_created = 0
+                                for mid in mids:
+                                    for source_name, fe in source_map.items():
+                                        already_exists = (
+                                            _sess.query(WeatherForecast.id)
+                                            .filter(
+                                                WeatherForecast.market_id == mid,
+                                                WeatherForecast.source == source_name,
+                                            )
+                                            .first()
+                                        )
+                                        if already_exists is None:
+                                            _sess.add(
+                                                WeatherForecast(
+                                                    market_id=mid,
+                                                    city=fe.city,
+                                                    lat=fe.lat,
+                                                    lon=fe.lon,
+                                                    target_date=fe.target_date,
+                                                    metric=fe.metric,
+                                                    source=source_name,
+                                                    predicted_value=fe.predicted_value,
+                                                    model_weight=fe.model_weight,
+                                                    fetched_at=datetime.now(UTC),
+                                                    raw_data=fe.raw_data,
+                                                )
+                                            )
+                                            newly_created += 1
+                                if newly_created > 0:
+                                    _sess.commit()
+                                    count += newly_created
+                                    date_str = target_date.strftime("%Y-%m-%d")
+                                    logger.info(
+                                        "DB-cache replicated %d forecasts for %d markets at %s/%s/%s",
+                                        newly_created,
+                                        len(mids),
+                                        city_code or city,
+                                        date_str,
+                                        metric,
+                                    )
+                                    continue
 
                         # 3. Fallback to Backup sources
-                        c = self.fetch_for_markets(mids, city, target_date, metric)
+                        # BUG-2 FIX: Wrap sync fetch_for_markets in to_thread
+                        # to avoid blocking the event loop for ~45 min.
+                        c = await asyncio.to_thread(self.fetch_for_markets, mids, city, target_date, metric)
                         count += c
 
                 return count

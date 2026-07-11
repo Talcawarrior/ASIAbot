@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 from datetime import datetime, timezone
 
 import aiohttp
@@ -25,6 +26,60 @@ from utils.slippage import (
 )
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
+
+# BUG-3 FIX: Global 429 cooldown. When ANY city gets a 429 from Open-Meteo,
+# all other cities wait this many seconds before retrying. This prevents
+# 65 cities × 120s exponential backoff = 227 min total blocking.
+# Instead, one 429 cools down the entire batch for 30s, then all resume.
+_GLOBAL_429_COOLDOWN_S = 30.0
+_global_429_until: float = 0.0
+
+
+def adjusted_edge(
+    raw_edge: float,
+    days_ahead: int,
+    market_type: str,
+    side: str | None,
+    ensemble_spread: float,
+    forecast_rmse: float | None = None,
+) -> float:
+    """
+    Adjusted edge formula incorporating time, market type, side, spread, and RMSE penalties.
+
+    score = raw_edge × time_coeff(days) × type_coeff(market) × side_coeff(side)
+            × (1 / forecast_rmse(days)²) × spread_penalty(spread)
+
+    All coefficients come from bot_config.strategy (derived from historical ROI analysis).
+    """
+    from config.settings import bot_config
+
+    s = bot_config.strategy
+
+    # Time coefficient (default: 0-1d: 0.25, 1-2d: 1.0, 2-3d: 1.1, 3+: 1.0)
+    time_coeff = s.time_coefficients.get(min(days_ahead, 3), 1.0)
+
+    # Market type coefficient (temp_max: 1.0, temp_min: 0.02)
+    type_coeff = s.market_type_coeff.get(market_type, 1.0)
+
+    # Side coefficient (NO: 1.0, YES: 0.5 — reduce but don't eliminate YES bets)
+    side_coeff = 1.0
+    if side is not None:
+        side_coeff = s.side_coeff.get(side.upper(), 1.0)
+
+    # Forecast RMSE penalty: 1 / rmse^2
+    if forecast_rmse is None:
+        rmse = s.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5)
+    else:
+        rmse = forecast_rmse
+    rmse_penalty = 1.0 / (rmse * rmse) if rmse > 0 else 1.0
+
+    # Spread penalty: high ensemble spread = low confidence
+    if ensemble_spread > s.spread_penalty_threshold:
+        spread_penalty = s.spread_penalty_factor
+    else:
+        spread_penalty = 1.0
+
+    return raw_edge * time_coeff * type_coeff * side_coeff * rmse_penalty * spread_penalty
 
 
 def _utcnow_naive() -> datetime:
@@ -91,7 +146,7 @@ class Calculator:
                 logger.warning(f"Market bulunamadı: {market_id}")
                 return None
 
-            if not all([market.city, market.threshold, market.target_date, market.metric]):
+            if not all([market.city, market.threshold is not None, market.target_date, market.metric]):
                 logger.warning(f"Market eksik bilgi: {market_id}")
                 return None
 
@@ -308,6 +363,23 @@ class Calculator:
             )
             slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
+            # ── Adjusted Edge (data-driven coefficients) ─────────────────────
+            # Apply time, market type, side, RMSE, and spread penalties
+            # Used as ADDITIONAL FILTER, not replacement for net_edge
+            from engine.calculator import adjusted_edge
+
+            ensemble_spread = std_val if std_val is not None else 0.0
+            forecast_rmse = bot_config.strategy.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5)
+
+            adj_edge = adjusted_edge(
+                raw_edge=raw_edge,
+                days_ahead=days_ahead,
+                market_type=market.metric,
+                side=recommended_side,
+                ensemble_spread=ensemble_spread,
+                forecast_rmse=forecast_rmse,
+            )
+
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
             # EV FIX: Dinamik cap kullan — yüksek edge → yüksek cap.
             _dyn_pct_final = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
@@ -345,13 +417,17 @@ class Calculator:
             # edge to be at least that large. For negative values, the gate
             # is effectively disabled (we already require min_edge > 0).
             if inefficiency_min > 0:
-                inefficiency_ok = abs(raw_edge) >= inefficiency_min
+                inefficiency_ok = abs(net_edge) >= inefficiency_min
             else:
                 inefficiency_ok = True
+
+            # Adjusted edge gate: additional filter (not replacement)
+            adjusted_edge_ok = adj_edge >= effective_min_edge * 0.5  # 50% threshold
 
             should_bet = (
                 net_edge >= effective_min_edge
                 and inefficiency_ok
+                and adjusted_edge_ok
                 and len(forecast_values) >= bot_config.strategy.min_sources
                 and bot_config.strategy.min_days_ahead <= days_ahead <= bot_config.strategy.max_days_ahead
                 and liquidity_ok
@@ -392,6 +468,7 @@ class Calculator:
                 market_implied_prob=market_implied,
                 edge=net_edge,
                 raw_edge=raw_edge,
+                adjusted_edge=adj_edge,
                 slippage_pct=slippage_est.slippage_pct,
                 avg_forecast_value=avg_val,
                 std_forecast_value=std_val,
@@ -653,20 +730,30 @@ class WeatherEngine:
                 "daily": "temperature_2m_max,temperature_2m_min",
                 "timezone": "auto",
                 "models": models_str,
-                # PER-4 FIX: 14 → 5. Bot sadece 0-2 gun ileri marketleri isliyor.
-                "forecast_days": 5,
+                # Open-Meteo supports up to 16 days forecast
+                "forecast_days": 16,
             }
 
             try:
-                # FIX (S1): Exponential backoff for 429 rate limits.
-                # Previously: 429 → sleep 30s → return None (give up). This
-                # caused entire fetch_all_markets() to fail after the first 429.
-                # Now: retry up to 3 times with 30s → 60s → 120s backoff,
-                # honoring Retry-After header if present.
-                max_retries = 3
-                backoff_s = 30.0
+                # BUG-3 FIX: Use global 429 cooldown instead of per-city
+                # exponential backoff (30s→60s→120s). One 429 cools down
+                # the entire batch for 30s, then all cities resume.
+                # Max 2 retries with 15s wait = worst case 30s per city.
+                global _global_429_until
+                max_retries = 2
                 data = None
                 for attempt in range(max_retries + 1):
+                    # Check global cooldown before making request
+                    now = time.monotonic()
+                    if now < _global_429_until:
+                        cooldown_left = _global_429_until - now
+                        logger.info(
+                            "Ensemble API: global 429 cooldown active, waiting %.0fs for %s",
+                            cooldown_left,
+                            city_cache_key,
+                        )
+                        await asyncio.sleep(cooldown_left)
+
                     try:
                         if aiohttp_session is not None:
                             async with aiohttp_session.get(
@@ -676,19 +763,23 @@ class WeatherEngine:
                             ) as resp:
                                 if resp.status == 429:
                                     if attempt < max_retries:
-                                        # Honor Retry-After header if present, else use exponential backoff
                                         retry_after = resp.headers.get("Retry-After")
-                                        wait = float(retry_after) if retry_after else backoff_s
+                                        wait = min(float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0)
                                         logger.warning(
-                                            "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
+                                            "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
                                             attempt + 1,
                                             max_retries + 1,
                                             wait,
+                                            city_cache_key,
                                         )
+                                        _global_429_until = time.monotonic() + wait
                                         await asyncio.sleep(wait)
-                                        backoff_s *= 2  # exponential backoff
                                         continue
-                                    logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
+                                    logger.error(
+                                        "Ensemble API 429 after %d retries — giving up for %s",
+                                        max_retries,
+                                        city_cache_key,
+                                    )
                                     return None
                                 if resp.status != 200:
                                     logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
@@ -704,17 +795,24 @@ class WeatherEngine:
                                     if resp.status == 429:
                                         if attempt < max_retries:
                                             retry_after = resp.headers.get("Retry-After")
-                                            wait = float(retry_after) if retry_after else backoff_s
+                                            wait = min(
+                                                float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0
+                                            )
                                             logger.warning(
-                                                "Ensemble API 429 (attempt %d/%d) — waiting %.0fs",
+                                                "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
                                                 attempt + 1,
                                                 max_retries + 1,
                                                 wait,
+                                                city_cache_key,
                                             )
+                                            _global_429_until = time.monotonic() + wait
                                             await asyncio.sleep(wait)
-                                            backoff_s *= 2
                                             continue
-                                        logger.error("Ensemble API 429 after %d retries — giving up", max_retries)
+                                        logger.error(
+                                            "Ensemble API 429 after %d retries — giving up for %s",
+                                            max_retries,
+                                            city_cache_key,
+                                        )
                                         return None
                                     if resp.status != 200:
                                         logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
@@ -726,15 +824,14 @@ class WeatherEngine:
                     except asyncio.TimeoutError:
                         if attempt < max_retries:
                             logger.warning(
-                                "Ensemble API timeout (attempt %d/%d) — retrying in %.0fs",
+                                "Ensemble API timeout (attempt %d/%d) — retrying in 15s for %s",
                                 attempt + 1,
                                 max_retries + 1,
-                                backoff_s,
+                                city_cache_key,
                             )
-                            await asyncio.sleep(backoff_s)
-                            backoff_s *= 2
+                            await asyncio.sleep(15)
                             continue
-                        logger.error("Ensemble API timeout after %d retries", max_retries)
+                        logger.error("Ensemble API timeout after %d retries for %s", max_retries, city_cache_key)
                         return None
 
                 if data is None:
