@@ -357,6 +357,18 @@ class MarketParser:
                 market.target_date = target_date
             market.metric = metric
 
+            # Save clob_token_ids from raw_data if available
+            if market.raw_data:
+                try:
+                    import json
+
+                    raw = json.loads(market.raw_data)
+                    tokens = raw.get("tokens", [])
+                    if tokens:
+                        market.clob_token_ids = json.dumps(tokens)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
             parsed = bool(city and threshold_result and target_date)
 
             if not parsed:

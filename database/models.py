@@ -73,6 +73,9 @@ class WeatherMarket(Base):
     volume = Column(Float)  # $50,000
     liquidity = Column(Float)  # Liquidity
 
+    # Polymarket CLOB token IDs (for orderbook depth & condition_id)
+    clob_token_ids = Column(Text)  # JSON: [{"token_id": "...", "outcome": "YES", "condition_id": "..."}, ...]
+
     # Durum
     status = Column(String, default=MarketStatus.OPEN.value)
 
