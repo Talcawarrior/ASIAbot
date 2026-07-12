@@ -2,13 +2,10 @@
 
 Verifies:
   1. Module imports cleanly.
-  2. Default harness file is created if missing and is valid Python.
-  3. predict_yes_probability returns a sane value for sample inputs.
-  4. MetaAgent.decide() returns at least one action.
-  5. TargetAgent.mutate_weights() returns a valid Hypothesis.
-  6. FeedbackAgent.evaluate_harness_patch() rejects a syntax-broken patch.
-  7. FeedbackAgent.evaluate_harness_patch() accepts a valid patch.
-  8. run_sia_hourly() runs end-to-end without raising.
+  2. MetaAgent.decide() returns at least one action (weight_mutation only).
+  3. TargetAgent.mutate_weights() returns a valid Hypothesis.
+  3. FeedbackAgent.evaluate_weight_mutation() works.
+  4. run_sia_hourly() runs end-to-end without raising.
 """
 
 from __future__ import annotations
@@ -23,53 +20,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from asi_engine.karpathy_weekly import (  # noqa: E402
-    DEFAULT_MODELS,
     Hypothesis,
     _uniform_weights,
 )
 from asi_engine.sia_hourly import (  # noqa: E402
-    HARNESS_PATH,
     FeedbackAgent,
     MetaAgent,
     SIAState,
     TargetAgent,
-    _ensure_harness,
-    _load_harness_source,
     run_sia_hourly,
 )
-
-
-@pytest.fixture(autouse=True)
-def restore_harness():
-    """Restore the default harness after each test (in case a test patches it)."""
-    _ensure_harness()
-    original_src = _load_harness_source()
-    yield
-    with open(HARNESS_PATH, "w", encoding="utf-8") as f:
-        f.write(original_src)
-
-
-def test_harness_file_exists_and_valid():
-    _ensure_harness()
-    src = _load_harness_source()
-    assert "def predict_yes_probability" in src
-    # Compile to check syntax
-    compile(src, HARNESS_PATH, "exec")
-
-
-def test_harness_predict_returns_sane_value():
-    import importlib
-
-    import asi_engine.sia_harness as mod
-
-    importlib.reload(mod)
-    p = mod.predict_yes_probability(
-        forecasts={m: 25.0 + i for i, m in enumerate(DEFAULT_MODELS)},
-        weights=_uniform_weights(),
-        threshold=30.0,
-        days_ahead=2,
-    )
-    assert 0.0 <= p <= 1.0
 
 
 def test_meta_agent_returns_at_least_one_action():
@@ -86,11 +46,12 @@ def test_meta_agent_returns_at_least_one_action():
     )
     actions = meta.decide(state)
     assert len(actions) >= 1
-    assert all(a in {"weight_mutation", "harness_patch"} for a in actions)
+    # Only weight_mutation should be returned (harness_patch removed)
+    assert all(a == "weight_mutation" for a in actions)
 
 
-def test_meta_agent_suggests_harness_patch_when_brier_bad():
-    meta = MetaAgent(use_llm=True)  # LLM enabled so harness_patch is allowed
+def test_meta_agent_suggests_weight_mutation_when_sharpe_low():
+    meta = MetaAgent(use_llm=False)
     state = SIAState(
         parent_hypothesis=Hypothesis(
             description="test",
@@ -99,10 +60,26 @@ def test_meta_agent_suggests_harness_patch_when_brier_bad():
             kelly_fraction=0.15,
             max_bet_pct=0.05,
         ),
-        parent_stats={"sharpe": 1.0, "brier_score": 0.35, "total_trades": 100},
+        parent_stats={"sharpe": 0.2, "brier_score": 0.20, "total_trades": 100},
     )
     actions = meta.decide(state)
-    assert "harness_patch" in actions
+    assert "weight_mutation" in actions
+
+
+def test_meta_agent_suggests_weight_mutation_when_few_trades():
+    meta = MetaAgent(use_llm=False)
+    state = SIAState(
+        parent_hypothesis=Hypothesis(
+            description="test",
+            model_weights=_uniform_weights(),
+            min_edge=0.05,
+            kelly_fraction=0.15,
+            max_bet_pct=0.05,
+        ),
+        parent_stats={"sharpe": 1.0, "brier_score": 0.20, "total_trades": 5},
+    )
+    actions = meta.decide(state)
+    assert "weight_mutation" in actions
 
 
 def test_target_agent_mutate_weights_returns_valid_hypothesis():
@@ -118,36 +95,29 @@ def test_target_agent_mutate_weights_returns_valid_hypothesis():
     assert isinstance(child, Hypothesis)
     assert abs(sum(child.model_weights.values()) - 1.0) < 1e-3
     assert child.source == "sia_weight_mutation"
+    # min_edge, kelly, blend should be nudged
+    assert 0.01 <= child.min_edge <= 0.15
+    assert 0.05 <= child.kelly_fraction <= 0.30
+    assert 0.35 <= child.blend_weight <= 0.50
 
 
-def test_feedback_agent_rejects_broken_syntax():
+def test_feedback_agent_evaluate_weight_mutation():
     fb = FeedbackAgent(pd.DataFrame(), [])
-    broken_src = "def predict_yes_probability(\n  # syntax error"
-    stats, err = fb.evaluate_harness_patch(broken_src)
-    assert stats is None
-    assert "SyntaxError" in err or "syntax" in err.lower()
-
-
-def test_feedback_agent_accepts_valid_patch():
-    fb = FeedbackAgent(pd.DataFrame(), [])
-    valid_src = """
-import math
-
-def predict_yes_probability(forecasts, weights, threshold, days_ahead=1):
-    if not forecasts:
-        return 0.5
-    wsum = sum(weights.get(m, 0.0) for m in forecasts)
-    if wsum <= 0:
-        return 0.5
-    mean = sum(weights.get(m, 0.0) * f for m, f in forecasts.items()) / wsum
-    z = (mean - threshold) / 2.0
-    p = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-    return min(max(p, 0.01), 0.99)
-"""
-    stats, err = fb.evaluate_harness_patch(valid_src)
-    # Even if Brier dataset is empty, the patch should at least be
-    # syntactically valid (err should be empty)
-    assert err == "" or "smoke" not in err.lower(), f"Unexpected error: {err}"
+    parent = Hypothesis(
+        description="parent",
+        model_weights=_uniform_weights(),
+        min_edge=0.05,
+        kelly_fraction=0.15,
+        max_bet_pct=0.05,
+    )
+    stats = fb.evaluate_weight_mutation(parent)
+    assert "sharpe" in stats
+    assert "roi_pct" in stats
+    assert "win_rate" in stats
+    assert "total_trades" in stats
+    assert "brier_score" in stats
+    assert "total_pnl" in stats
+    assert "total_staked" in stats
 
 
 def test_run_sia_hourly_smoke():

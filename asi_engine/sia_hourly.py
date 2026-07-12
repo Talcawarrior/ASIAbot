@@ -1,48 +1,28 @@
-"""Layer 3: SIA hourly weight + harness update loop.
+"""Layer 3: SIA hourly weight update loop.
 
 This is the "hourly" layer in the 3-layer LLM stack — the fastest,
-narrowest layer. Ported from the design of hexo-ai/sia: a 3-agent
-Meta/Target/Feedback loop with two update tracks:
+narrowest layer. Ported from the design of hexo-ai/sia:
 
   1. **Weight update**: nudges the model_weights dict (same surface as
      Layer 1's mutation ladder, but smaller, faster steps). This is the
      SIA "weight update" branch — it runs even without an LLM.
 
-  2. **Harness update**: asks the LLM to propose a *code patch* to the
-     harness (the function that turns per-model forecasts into a YES
-     probability). This is the SIA "harness update" branch — it only
-     runs when an LLM is available, and the patch must pass a syntax
-     check + smoke-eval before being accepted.
-
 Compared to Layer 2 (ASI-Evolve, daily, 50-200 candidates, UCB1):
   - Layer 3 runs hourly (or on-demand).
   - Layer 3 generates 1-3 candidates per run (vs 50-200).
-  - Layer 3 may modify the *harness code itself* (Layer 2 only mutates
-    weights/params).
+  - Layer 3 only mutates weights/params (Layer 2 also mutates weights/params).
   - Layer 3 always starts from the Layer 2 best, never from scratch.
 
-The harness being patched is `asi_engine/sia_harness.py` — a small
-file containing one function `predict_yes_probability(forecasts,
-weights, days_ahead) -> float`. The LLM is shown the current source,
-asked for a diff, the diff is applied, the patched file is imported
-in a subprocess (sandbox) and smoke-evaluated against a small OOS
-window. Only if the patched harness beats the incumbent does it get
-persisted.
-
-If no LLM is available, only the weight-update branch runs (no harness
-patches) — this keeps the layer useful in CI.
+If no LLM is available, the weight-update branch runs — this keeps the
+layer useful in CI.
 """
 
 from __future__ import annotations
 
-import ast
-import importlib
 import json
 import logging
 import os
 import random
-import sys
-import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -55,7 +35,6 @@ from asi_engine.karpathy_weekly import (
     _uniform_weights,
     evaluate_hypothesis_oos,
 )
-from asi_engine.llm_client import chat_json
 from data_pipeline.unified_datastore import UnifiedDatastore
 
 logger = logging.getLogger("SIA_HOURLY")
@@ -65,345 +44,12 @@ logger = logging.getLogger("SIA_HOURLY")
 # ---------------------------------------------------------------------------
 
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
-HARNESS_PATH = os.path.join(os.path.dirname(__file__), "sia_harness.py")
-HARNESS_BACKUP_PATH = os.path.join(os.path.dirname(__file__), "sia_harness.backup.py")
 BEST_PATH = os.path.join(DATA_DIR, "sia_hourly_best.json")
 RESULTS_TSV_PATH = os.path.join(DATA_DIR, "sia_hourly_results.tsv")
 
 
 # ---------------------------------------------------------------------------
-# Default harness (created on first run if missing)
-# ---------------------------------------------------------------------------
-
-DEFAULT_HARNESS_SRC = '''"""SIA harness — the function that turns per-model forecasts into a YES prob.
-
-This file is the target of Layer 3 harness updates. The LLM may propose
-patches to `predict_yes_probability`. Each patch must pass a syntax
-check + smoke-eval before being accepted.
-"""
-
-from __future__ import annotations
-
-import math
-
-
-def predict_yes_probability(
-    forecasts: dict[str, float],
-    weights: dict[str, float],
-    threshold: float,
-    days_ahead: int = 1,
-) -> float:
-    """Compute P(YES) from per-model temperature forecasts.
-
-    Default implementation: weighted mean of forecasts -> z-score vs
-    threshold -> Normal CDF.
-
-    Args:
-        forecasts: dict of {model_name: forecasted_temperature}
-        weights: dict of {model_name: weight} (must sum to 1.0)
-        threshold: market threshold temperature
-        days_ahead: forecast horizon (1-7)
-
-    Returns:
-        P(YES) in [0.01, 0.99]
-    """
-    if not forecasts:
-        return 0.5
-
-    wsum = sum(weights.get(m, 0.0) for m in forecasts)
-    if wsum <= 0:
-        return 0.5
-
-    weighted_mean = sum(weights.get(m, 0.0) * f for m, f in forecasts.items()) / wsum
-    variance = sum(
-        weights.get(m, 0.0) * (f - weighted_mean) ** 2
-        for m, f in forecasts.items()
-    ) / wsum
-    std = math.sqrt(variance) if variance > 0 else 1.0
-    effective_std = std * math.sqrt(max(days_ahead, 1))
-
-    z = (weighted_mean - threshold) / (effective_std + 1e-5)
-    p = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-    return min(max(p, 0.01), 0.99)
-'''
-
-
-def _ensure_harness() -> None:
-    """Ensure the harness file exists (create default if missing)."""
-    if not os.path.exists(HARNESS_PATH):
-        with open(HARNESS_PATH, "w", encoding="utf-8") as f:
-            f.write(DEFAULT_HARNESS_SRC)
-        logger.info("Wrote default SIA harness to %s", HARNESS_PATH)
-
-
-# ---------------------------------------------------------------------------
-# Harness patch validation (security)
-# ---------------------------------------------------------------------------
-
-# Allowed imports for the harness patch (whitelist)
-ALLOWED_IMPORTS = {
-    "math",
-    "statistics",
-    "typing",
-    "dataclasses",
-    "functools",
-    "itertools",
-    "collections",
-    "decimal",
-    "fractions",
-    "numbers",
-    "statistics",
-    "random",
-    "hashlib",
-    "json",
-    "re",
-    "string",
-    "textwrap",
-    "datetime",
-    "time",
-    "calendar",
-    "zoneinfo",
-}
-
-# Allowed builtins/functions for the harness
-ALLOWED_BUILTINS = {
-    "abs",
-    "min",
-    "max",
-    "sum",
-    "len",
-    "round",
-    "pow",
-    "divmod",
-    "float",
-    "int",
-    "str",
-    "list",
-    "dict",
-    "tuple",
-    "set",
-    "frozenset",
-    "range",
-    "enumerate",
-    "zip",
-    "map",
-    "filter",
-    "sorted",
-    "reversed",
-    "all",
-    "any",
-    "isinstance",
-    "hasattr",
-    "getattr",
-    "setattr",
-    "type",
-    "object",
-    "Exception",
-    "ValueError",
-    "TypeError",
-}
-
-# Dangerous patterns that should never appear in harness
-FORBIDDEN_PATTERNS = [
-    "import os",
-    "import sys",
-    "import subprocess",
-    "import shutil",
-    "import socket",
-    "import urllib",
-    "import requests",
-    "import http",
-    "import pickle",
-    "import marshal",
-    "import shelve",
-    "import dbm",
-    "import sqlite3",
-    "import ctypes",
-    "import ctypes.util",
-    "from os import",
-    "from sys import",
-    "from subprocess import",
-    "from shutil import",
-    "from socket import",
-    "from urllib import",
-    "from pickle import",
-    "from marshal import",
-    "from shelve import",
-    "from dbm import",
-    "from sqlite3 import",
-    "from ctypes import",
-    "__import__",
-    "eval(",
-    "exec(",
-    "compile(",
-    "open(",
-    "getattr(",
-    "setattr(",
-    "delattr(",
-    "globals(",
-    "locals(",
-    "vars(",
-    "dir(",
-    "breakpoint(",
-    "input(",
-    "os.",
-    "sys.",
-    "subprocess.",
-    "shutil.",
-    "socket.",
-    "urllib.",
-    "requests.",
-    "http.",
-    "pickle.",
-    "marshal.",
-    "shelve.",
-    "dbm.",
-    "sqlite3.",
-    "ctypes.",
-    "pathlib.",
-    "pathlib.Path",
-    "open(",
-    "file(",
-    "execfile(",
-]
-
-
-def _validate_harness_patch(source: str) -> tuple[bool, str]:
-    """
-    Validate that a harness patch is safe to execute.
-
-    Checks:
-    1. Only contains a single function definition: predict_yes_probability
-    2. No forbidden imports or patterns
-    3. No dangerous builtins or function calls
-    4. AST only contains allowed node types
-
-    Returns (is_valid, error_message)
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as e:
-        return False, f"SyntaxError: {e}"
-
-    # Check for forbidden patterns in source text (quick check)
-    for pattern in FORBIDDEN_PATTERNS:
-        if pattern in source:
-            return False, f"Forbidden pattern detected: {pattern}"
-
-    # Walk AST and validate
-    function_count = 0
-    for node in ast.walk(tree):
-        # Check imports
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                if alias.name not in ALLOWED_IMPORTS:
-                    return False, f"Forbidden import: {alias.name}"
-
-        # Check function definitions
-        if isinstance(node, ast.FunctionDef):
-            function_count += 1
-            if node.name != "predict_yes_probability":
-                return False, f"Forbidden function definition: {node.name} (only predict_yes_probability allowed)"
-
-            # Check function signature
-            args = node.args
-            if len(args.args) != 4:
-                return (
-                    False,
-                    "predict_yes_probability must have 4 parameters (forecasts, weights, threshold, days_ahead)",
-                )
-            expected_params = ["forecasts", "weights", "threshold", "days_ahead"]
-            for i, arg in enumerate(args.args):
-                if arg.arg != expected_params[i]:
-                    return False, f"Parameter {i} must be '{expected_params[i]}', got '{arg.arg}'"
-
-        # Check for dangerous calls
-        if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name):
-                if node.func.id in {
-                    "eval",
-                    "exec",
-                    "compile",
-                    "open",
-                    "__import__",
-                    "getattr",
-                    "setattr",
-                    "delattr",
-                    "globals",
-                    "locals",
-                    "vars",
-                    "dir",
-                    "breakpoint",
-                    "input",
-                }:
-                    return False, f"Forbidden function call: {node.func.id}"
-            elif isinstance(node.func, ast.Attribute):
-                # Check for dangerous attribute access
-                if isinstance(node.func.value, ast.Name):
-                    if node.func.value.id in {
-                        "os",
-                        "sys",
-                        "subprocess",
-                        "shutil",
-                        "socket",
-                        "urllib",
-                        "pickle",
-                        "marshal",
-                        "shelve",
-                        "dbm",
-                        "sqlite3",
-                        "ctypes",
-                        "pathlib",
-                    }:
-                        return False, f"Forbidden module access: {node.func.value.id}.{node.func.attr}"
-
-        # Check for attribute access on dangerous modules
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name):
-                if node.value.id in {
-                    "os",
-                    "sys",
-                    "subprocess",
-                    "shutil",
-                    "socket",
-                    "urllib",
-                    "pickle",
-                    "marshal",
-                    "shelve",
-                    "dbm",
-                    "sqlite3",
-                    "ctypes",
-                    "pathlib",
-                }:
-                    return False, f"Forbidden module attribute access: {node.value.id}.{node.attr}"
-
-    if function_count != 1:
-        return False, f"Expected exactly 1 function (predict_yes_probability), found {function_count}"
-
-    return True, "OK"
-
-
-def _load_harness_source() -> str:
-    _ensure_harness()
-    with open(HARNESS_PATH, encoding="utf-8") as f:
-        return f.read()
-
-
-def _import_harness():
-    """Import the harness module fresh (forces reload after patch)."""
-    _ensure_harness()
-    # Add asi_engine to sys.path if not present
-    ae_dir = os.path.dirname(__file__)
-    if ae_dir not in sys.path:
-        sys.path.insert(0, os.path.dirname(ae_dir))
-    import asi_engine.sia_harness as mod  # type: ignore
-
-    importlib.reload(mod)
-    return mod
-
-
-# ---------------------------------------------------------------------------
-# 3 Agents: Meta, Target, Feedback
+# 3 Agents: Meta, Target, Feedback (weight mutation only)
 # ---------------------------------------------------------------------------
 
 
@@ -415,25 +61,15 @@ class SIAState:
     parent_stats: dict[str, float]
     candidate_hypothesis: Hypothesis | None = None
     candidate_stats: dict[str, float] | None = None
-    harness_patched: bool = False
-    harness_diff: str = ""
     accepted: bool = False
     rejection_reason: str = ""
 
 
 class MetaAgent:
-    """Orchestrates the cycle: picks what to mutate (weights vs harness).
+    """Orchestrates the cycle: decides what to mutate (weights only)."""
 
-    The Meta agent looks at the parent's recent stats:
-      - If Brier is high (>0.25), the harness is the bottleneck → suggest
-        harness patch (if LLM available).
-      - If Brier is OK but Sharpe is low, weights are the bottleneck →
-        suggest weight mutation.
-      - If both are bad, try both.
-    """
-
-    def __init__(self, use_llm: bool):
-        self.use_llm = use_llm
+    def __init__(self, use_llm: bool = False):
+        self.use_llm = use_llm  # kept for API compatibility
 
     def decide(self, state: SIAState) -> list[str]:
         actions: list[str] = []
@@ -447,12 +83,12 @@ class MetaAgent:
         if trades < 10:
             actions.append("weight_mutation")
 
-        # If Brier is bad, harness is the bottleneck
-        if brier > 0.25 and self.use_llm:
-            actions.append("harness_patch")
-
         # If Sharpe is bad, weights need tuning
         if sharpe < 0.5:
+            actions.append("weight_mutation")
+
+        # If Brier is bad, also try weight mutation (harness patching removed)
+        if brier > 0.25:
             actions.append("weight_mutation")
 
         # Always try at least one action
@@ -463,14 +99,10 @@ class MetaAgent:
 
 
 class TargetAgent:
-    """Generates the candidate (weight mutation or harness patch).
+    """Generates the candidate hypothesis (weight mutation only)."""
 
-    For weight mutations: small +/- 1-3% shifts on random models.
-    For harness patches: asks the LLM for a diff to predict_yes_probability.
-    """
-
-    def __init__(self, use_llm: bool, seed: int = 42):
-        self.use_llm = use_llm
+    def __init__(self, use_llm: bool = False, seed: int = 42):
+        self.use_llm = use_llm  # kept for API compatibility
         self.rng = random.Random(seed)
 
     def mutate_weights(self, parent: Hypothesis) -> Hypothesis:
@@ -522,68 +154,9 @@ class TargetAgent:
             source="sia_weight_mutation",
         )
 
-    def propose_harness_patch(self, parent: Hypothesis, stats: dict[str, float]) -> str | None:
-        """Ask the LLM for a patched harness source.
-
-        Returns the new full source code, or None on failure / no LLM.
-        Uses the shared ``asi_engine.llm_client`` helper (ZAI / GLM only).
-        """
-        if not self.use_llm:
-            return None
-
-        current_src = _load_harness_source()
-
-        prompt = (
-            "You are the Target agent in a SIA (Self-Improving Algorithm) loop.\n"
-            "Your job: propose a patched version of `predict_yes_probability`.\n\n"
-            f"Current source:\n```python\n{current_src}\n```\n\n"
-            f"Current parent stats: {json.dumps(stats, indent=2)}\n\n"
-            f"Parent weights: {json.dumps(parent.model_weights, indent=2)}\n\n"
-            "Requirements:\n"
-            "1. Keep the same function signature.\n"
-            "2. Return only the FULL patched Python source code, no prose.\n"
-            "3. The patched function must still return a float in [0.01, 0.99].\n"
-            "4. Try ONE focused improvement (e.g. temperature bias correction, "
-            "non-linear ensemble combination, volatility-scaled z-score).\n"
-        )
-
-        raw = chat_json(
-            prompt,
-            layer="SIA",
-            temperature=0.5,
-            max_tokens=4000,
-        )
-        if not raw:
-            return None
-
-        # Strip markdown fences if present
-        if "```python" in raw:
-            raw = raw.split("```python", 1)[1].split("```", 1)[0]
-        elif "```" in raw:
-            raw = raw.split("```", 1)[1].split("```", 1)[0]
-
-        # Sanity check: must contain the function definition
-        if "def predict_yes_probability" not in raw:
-            logger.warning("LLM patch missing function definition — rejecting")
-            return None
-
-        # Security: validate the patch before accepting
-        is_valid, error = _validate_harness_patch(raw)
-        if not is_valid:
-            logger.warning("LLM patch failed security validation: %s — rejecting", error)
-            return None
-
-        return raw.strip()
-
 
 class FeedbackAgent:
-    """Evaluates the candidate and decides accept/reject.
-
-    For weight mutations: uses the standard Layer 1 OOS evaluator.
-    For harness patches: writes the patched source to a temp file,
-    imports it in a subprocess (sandbox), runs smoke eval, accepts only
-    if it beats the incumbent on Sharpe.
-    """
+    """Evaluates the candidate and decides accept/reject."""
 
     def __init__(self, brier_df: pd.DataFrame, splits: list[dict[str, Any]]):
         self.brier_df = brier_df
@@ -592,88 +165,6 @@ class FeedbackAgent:
     def evaluate_weight_mutation(self, hyp: Hypothesis) -> dict[str, float]:
         per_split = [evaluate_hypothesis_oos(self.brier_df, s["test_indices"], hyp) for s in self.splits]
         return _mean_stats(per_split)
-
-    def evaluate_harness_patch(self, patched_src: str) -> tuple[dict[str, float] | None, str]:
-        """Evaluate a harness patch in a subprocess sandbox.
-
-        LLM-generated code is NEVER executed in the main process.
-        Returns (stats, error_message). If stats is None, the patch was
-        rejected (syntax error, runtime error, or import failure).
-        """
-        import subprocess
-
-        # Write LLM source to a temp file
-        src_fd, src_path = tempfile.mkstemp(suffix=".py", prefix="sia_patch_")
-        try:
-            with os.fdopen(src_fd, "w", encoding="utf-8") as f:
-                f.write(patched_src)
-
-            # Syntax check in main process (cheap, safe — compile() doesn't exec)
-            try:
-                with open(src_path, encoding="utf-8") as f:
-                    compile(f.read(), src_path, "exec")
-            except SyntaxError as e:
-                return None, f"SyntaxError: {e}"
-
-            # Prepare input data for subprocess (brier rows for OOS eval)
-            brier_rows: list[dict] = []
-            if not self.brier_df.empty:
-                prob_cols = [c for c in self.brier_df.columns if c.startswith("prob_")]
-                if prob_cols:
-                    for _, row in self.brier_df.iterrows():
-                        realized = row.get("realized_yes")
-                        if realized is None or pd.isna(realized):
-                            continue
-                        r: dict[str, Any] = {"realized_yes": float(realized)}
-                        for c in prob_cols:
-                            v = row.get(c)
-                            if v is not None and not pd.isna(v):
-                                r[c] = float(v)
-                        brier_rows.append(r)
-
-            inp_fd, inp_path = tempfile.mkstemp(suffix=".json", prefix="sia_input_")
-            try:
-                with os.fdopen(inp_fd, "w", encoding="utf-8") as f:
-                    json.dump({"brier_rows": brier_rows}, f)
-
-                # Run smoke test + OOS eval in isolated subprocess
-                runner = os.path.join(os.path.dirname(__file__), "_sandbox_runner.py")
-                result = subprocess.run(
-                    [sys.executable, runner, src_path, inp_path],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-
-                if result.returncode != 0:
-                    err = result.stdout.strip() or result.stderr.strip()
-                    # Try to parse structured error from JSON output
-                    try:
-                        err_obj = json.loads(err)
-                        return None, err_obj.get("error", err)
-                    except (json.JSONDecodeError, AttributeError):
-                        return None, f"Subprocess error: {err}"
-
-                stats = json.loads(result.stdout.strip())
-                if not stats:
-                    return None, "Empty subprocess output"
-                return stats, ""
-
-            finally:
-                try:
-                    os.unlink(inp_path)
-                except OSError:
-                    pass
-
-        except subprocess.TimeoutExpired:
-            return None, "Sandbox timeout (>30s)"
-        except Exception as e:
-            return None, f"Unexpected error: {e}"
-        finally:
-            try:
-                os.unlink(src_path)
-            except OSError:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -746,8 +237,7 @@ def _append_results_tsv(
             f"{cycle}\t{datetime.now(UTC).isoformat()}\t{action}\t"
             f"{hyp.description!r}\t{hyp.source}\t"
             f"{stats.get('sharpe', 0.0)}\t{stats.get('roi_pct', 0.0)}\t"
-            f"{stats.get('brier_score', 0.25)}\t{stats.get('total_trades', 0)}\t"
-            f"{status}\t{note}\n"
+            f"{stats.get('brier_score', 0.25)}\t{stats.get('total_trades', 0)}\t{status}\t{note}\n"
         )
 
 
@@ -760,12 +250,11 @@ def run_sia_hourly(
     use_llm: bool = False,
     seed: int = 42,
 ) -> dict[str, Any]:
-    """Run one SIA hourly cycle.
+    """Run one SIA hourly cycle (weight mutation only).
 
     Returns a summary dict with the cycle's actions and outcomes.
     """
     random.seed(seed)
-    _ensure_harness()
 
     # 1. Pull unified Brier dataset + splits
     ds = UnifiedDatastore()
@@ -895,78 +384,6 @@ def run_sia_hourly(
                     }
                 )
 
-        elif action == "harness_patch":
-            patched_src = target.propose_harness_patch(parent_hyp, parent_stats)
-            if patched_src is None:
-                logger.info("  [harness_patch] skipped (no LLM or proposal failed)")
-                actions_taken.append(
-                    {
-                        "action": "harness_patch",
-                        "status": "skipped",
-                        "reason": "no_llm_or_proposal_failed",
-                    }
-                )
-                continue
-
-            cand_stats, err = feedback.evaluate_harness_patch(patched_src)
-            if cand_stats is None:
-                logger.info("  [harness_patch] ✗ rejected: %s", err)
-                _append_results_tsv(
-                    1,
-                    "harness_patch",
-                    parent_hyp,
-                    {"sharpe": 0, "roi_pct": 0, "brier_score": 1, "total_trades": 0},
-                    "reject",
-                    note=err,
-                )
-                actions_taken.append(
-                    {
-                        "action": "harness_patch",
-                        "status": "reject",
-                        "reason": err,
-                    }
-                )
-                continue
-
-            # Accept harness patch only if Brier improves meaningfully
-            improved = cand_stats["brier_score"] < best_stats.get("brier_score", 1.0) * 0.95
-            if improved:
-                logger.info(
-                    "  [harness_patch] ✓ brier %.4f < %.4f — persisting patched harness",
-                    cand_stats["brier_score"],
-                    best_stats.get("brier_score", 1.0),
-                )
-                # Persist the patched harness
-                with open(HARNESS_PATH, "w", encoding="utf-8") as f:
-                    f.write(patched_src)
-                # Reload
-                import asi_engine.sia_harness as harness_mod
-
-                importlib.reload(harness_mod)
-                _append_results_tsv(1, "harness_patch", parent_hyp, cand_stats, "keep")
-                actions_taken.append(
-                    {
-                        "action": "harness_patch",
-                        "status": "keep",
-                        "stats": cand_stats,
-                        "diff_preview": patched_src[:500],
-                    }
-                )
-            else:
-                logger.info(
-                    "  [harness_patch] ✗ brier %.4f ≥ %.4f",
-                    cand_stats["brier_score"],
-                    best_stats.get("brier_score", 1.0) * 0.95,
-                )
-                _append_results_tsv(1, "harness_patch", parent_hyp, cand_stats, "reject")
-                actions_taken.append(
-                    {
-                        "action": "harness_patch",
-                        "status": "reject",
-                        "stats": cand_stats,
-                    }
-                )
-
     logger.info(
         "SIA hourly done. Best: sharpe=%.3f brier=%.4f desc=%r",
         best_stats.get("sharpe", 0.0),
@@ -996,8 +413,8 @@ if __name__ == "__main__":
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
 
-    parser = argparse.ArgumentParser(description="SIA hourly weight + harness update loop")
-    parser.add_argument("--llm", action="store_true", help="Use LLM for harness patches")
+    parser = argparse.ArgumentParser(description="SIA hourly weight update loop")
+    parser.add_argument("--llm", action="store_true", help="Use LLM (kept for API compat)")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 

@@ -655,95 +655,67 @@ def _ingest_poly_markets(
     ds: "UnifiedDatastore",
     markets_limit: int | None,
 ) -> None:
-    """Step 1: Fetch Polymarket closed markets → unified_markets table.
+    """Step 1: Fetch weather markets from bot's own database → unified_markets table.
 
-    Fetches all closed markets, then:
-    1. Filters for weather-related markets (temperature questions)
-    2. Extracts city name from question text
-    3. Derives market_type (HIGH/LOW) and threshold from question
+    The bot's weather_markets table contains 130+ settled weather markets with
+    proper city, metric, threshold, market_type, and target_date.
+    We use these instead of Polymarket's closed markets API (which has no weather markets).
     """
-    logger.info("=== [1/4] Polymarket markets ===")
+    logger.info("=== [1/4] Bot weather markets (from bot.db) ===")
     try:
-        import re
+        import sqlite3
+        import pandas as pd
 
-        from data_pipeline.polymarket_ingest import PolymarketIngest
-
-        poly_ingest = PolymarketIngest()
-        markets_df = poly_ingest.fetch_closed_markets(limit=markets_limit)
-        if markets_df.empty:
+        db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot.db")
+        if not os.path.exists(db_path):
+            logger.warning("bot.db not found at %s", db_path)
             return
 
-        unified = markets_df.rename(
-            columns={
-                "id": "market_id",
-                "endDate": "end_date",
-                "closedTime": "closed_time",
-            }
-        )
-
-        # --- Weather market filter ---
-        weather_keywords = (
-            "temperature",
-            "temp ",
-            "°c",
-            "°f",
-            "celsius",
-            "fahrenheit",
-            "highest temperature",
-            "lowest temperature",
-            "high temperature",
-            "low temperature",
-            "warmest",
-            "coldest",
-        )
-        mask = unified["question"].fillna("").str.lower().str.contains("|".join(weather_keywords), regex=True, na=False)
-        unified = unified[mask].copy()
-        logger.info("Filtered %d weather markets from closed markets", len(unified))
+        conn = sqlite3.connect(db_path)
+        # Fetch settled markets (win + loss) with all needed fields
+        query = """
+            SELECT
+                id as market_id,
+                question,
+                city,
+                city_code,
+                metric,
+                threshold,
+                threshold_unit,
+                market_type,
+                target_date,
+                target_date as end_date,
+                target_date as closed_time,
+                yes_price,
+                no_price,
+                volume,
+                liquidity,
+                status,
+                '[]' as clob_token_ids
+            FROM weather_markets
+            WHERE status IN ('settled_win', 'settled_loss')
+        """
+        unified = pd.read_sql_query(query, conn)
+        conn.close()
 
         if unified.empty:
+            logger.warning("No settled weather markets found in bot.db")
             return
 
-        # --- City extraction from question ---
-        # Typical: "Will the highest temperature in Miami be 30°C on July 12?"
-        city_pattern = re.compile(r"(?:in|for)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", re.MULTILINE)
+        logger.info("Loaded %d settled weather markets from bot.db", len(unified))
 
-        def _extract_city(question: str) -> str | None:
-            m = city_pattern.search(str(question))
-            return m.group(1) if m else None
+        # Ensure datetime columns are proper
+        for col in ["target_date", "end_date", "closed_time"]:
+            if col in unified.columns:
+                unified[col] = pd.to_datetime(unified[col], utc=True, errors="coerce")
 
-        unified["city"] = unified["question"].apply(_extract_city)
-
-        # Drop rows without a parseable city
-        before = len(unified)
-        unified = unified.dropna(subset=["city"])
-        logger.info(
-            "City extraction: %d/%d markets have parseable city",
-            len(unified),
-            before,
-        )
-
-        # --- Market type derivation ---
-        def _parse_market_type(row):
-            question = str(row.get("question", "")).lower()
-            if "highest" in question or "max" in question:
-                return "HIGH"
-            elif "lowest" in question or "min" in question:
-                return "LOW"
-            return "HIGH"  # default
-
-        unified["market_type"] = unified.apply(_parse_market_type, axis=1)
-
-        # --- Threshold extraction ---
-        def _parse_threshold(row):
-            question = str(row.get("question", ""))
-            m = re.search(r"(\d+(?:\.\d+)?)\s*[°c°CfF]", question)
-            return float(m.group(1)) if m else None
-
-        unified["threshold"] = unified.apply(_parse_threshold, axis=1)
+        # Map status to resolved_outcome
+        unified["resolved_outcome"] = unified["status"].map({"settled_win": "Yes", "settled_loss": "No"})
 
         ds.write_markets(unified)
+        logger.info("Wrote %d markets to unified_markets.parquet", len(unified))
     except Exception as exc:
-        logger.error("Polymarket ingest failed: %s", exc)
+        logger.error("Bot weather markets ingest failed: %s", exc)
 
 
 def _ingest_weather_actuals(
