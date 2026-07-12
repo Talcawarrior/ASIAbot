@@ -64,9 +64,7 @@ class LLMConfig:
         return bool(self.api_key)
 
 
-def get_client(
-    cfg: LLMConfig | None = None, *, layer: str = ""
-) -> tuple["ZaiClient", LLMConfig] | None:
+def get_client(cfg: LLMConfig | None = None, *, layer: str = "") -> tuple["ZaiClient", LLMConfig] | None:
     """Build and return (ZaiClient, config), or None if not configured.
 
     Returns None when:
@@ -101,10 +99,12 @@ class ZaiClient:
         self.api_key = cfg.api_key
         # requests.Session gives us connection pooling + retry on transient errors.
         self._session = requests.Session()
-        self._session.headers.update({
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        })
+        self._session.headers.update(
+            {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
+        )
 
     def chat_completions_create(self, **kwargs: Any) -> dict:
         """POST to /chat/completions and return the parsed JSON response.
@@ -182,8 +182,7 @@ def chat_json(
         # budget was consumed by reasoning_content and content is empty.
         finish = choices[0].get("finish_reason", "?") if choices else "?"
         logger.warning(
-            "[%s] LLM returned empty content (finish_reason=%s) — "
-            "consider increasing max_tokens",
+            "[%s] LLM returned empty content (finish_reason=%s) — consider increasing max_tokens",
             layer or "LLM",
             finish,
         )

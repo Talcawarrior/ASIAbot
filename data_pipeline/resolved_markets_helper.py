@@ -23,9 +23,7 @@ class ResolvedMarketsClient:
             "Content-Type": "application/json",
         }
 
-    def fetch_historical_orderbook(
-        self, market_id: str, limit: int = 100
-    ) -> dict | None:
+    def fetch_historical_orderbook(self, market_id: str, limit: int = 100) -> dict | None:
         """Fetch historical orderbook snapshot at millisecond precision from resolvedmarkets.com.
 
         This helps the Kelly betting engine size order levels based on real
@@ -36,9 +34,7 @@ class ResolvedMarketsClient:
             market_id,
         )
         if not self.api_key:
-            logger.info(
-                "ResolvedMarkets: No API Key provided. Returning mock high-fidelity orderbook depth..."
-            )
+            logger.info("ResolvedMarkets: No API Key provided. Returning mock high-fidelity orderbook depth...")
             return self._generate_mock_orderbook(market_id)
 
         url = f"{RESOLVED_MARKETS_BASE}/v1/orderbooks/{market_id}"

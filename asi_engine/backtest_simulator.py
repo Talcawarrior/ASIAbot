@@ -115,9 +115,7 @@ class BacktestSimulator:
                     entry_price = no_price
 
                 # HATA-12 FIX: Dinamik EV hesabi (slippage + fee_drag + gas dahil).
-                ev = adjust_edge_for_costs(
-                    sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0
-                )
+                ev = adjust_edge_for_costs(sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0)
                 if sim_edge >= min_edge and ev > 0:
                     # Yes, would place a bet!
                     total_bets_opened += 1
@@ -335,9 +333,7 @@ class BacktestSimulator:
                 sim_edge = no_edge
                 entry_price = no_price
 
-            ev = adjust_edge_for_costs(
-                sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0
-            )
+            ev = adjust_edge_for_costs(sim_edge, entry_price, include_fee=True, bet_amount_usd=30.0)
             if sim_edge >= min_edge and ev > 0:
                 total_trades += 1
                 prob_win = prob if sim_side == "YES" else (1.0 - prob)

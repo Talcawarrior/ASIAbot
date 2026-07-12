@@ -131,14 +131,15 @@ def _weighted_mean_prob(row: pd.Series, weights: dict[str, float], models: list[
     """Return ensemble YES probability for one row.
 
     Expects `row` to contain columns named f"prob_{model}" for each model in
-    `models`. Returns None if any are missing.
+    `models`. Uses only models with non-null values and re-normalizes weights.
+    Returns None if fewer than 2 models have valid data.
     """
     s = 0.0
     wsum = 0.0
     for m in models:
         col = f"prob_{m}"
         if col not in row or pd.isna(row[col]):
-            return None
+            continue
         w = weights.get(m, 0.0)
         s += w * float(row[col])
         wsum += w
@@ -1057,15 +1058,203 @@ def add_per_model_probabilities(
         brier_df, forecasts_df, cached_pairs, needed_pairs
     )
 
-    # 5. If real join failed — log and return without prob_ columns
+    # 5. If real join failed — try fallback: use historical_calibrations directly
     if not forecasts_joined:
-        logger.warning(
-            "Real forecast join produced no overlapping (city, date) rows. "
-            "No prob_ columns added. Downstream code will skip these rows."
+        logger.info(
+            "Real forecast join produced no overlapping rows — "
+            "falling back to historical_calibrations table for per-model temps"
         )
+        # Remove empty model columns left by the failed forecast merge
+        # so calibrations fallback can add its own without suffix collision
+        fc_model_cols = [c for c in brier_df.columns if c in DEFAULT_MODELS]
+        brier_df = brier_df.drop(columns=fc_model_cols, errors="ignore")
+        brier_df = _join_from_calibrations(brier_df, ds)
+        prob_cols = [c for c in brier_df.columns if c.startswith("prob_")]
+        if prob_cols:
+            forecasts_joined = True
+            join_origin = "historical_calibrations"
 
     brier_df["forecast_join_origin"] = join_origin
     return brier_df
+
+
+def _join_from_calibrations(
+    brier_df: pd.DataFrame,
+    ds: UnifiedDatastore,
+) -> pd.DataFrame:
+    """Fallback: join per-model temperatures from historical_calibrations.
+
+    When the forecast API table has no overlapping dates, this reads
+    historical_calibrations directly and pivots per-model predicted_value
+    into prob_{model} columns on the brier_df.
+
+    Uses per-city sigma from data/city_sigma.json for probability conversion.
+    """
+    import sqlite3
+
+    db_path = os.path.join(ds.cfg.data_dir, "..", "bot.db")
+    if not os.path.exists(db_path):
+        logger.warning("bot.db not found at %s", db_path)
+        return brier_df
+
+    # Load per-city sigma
+    sigma_path = os.path.join(ds.cfg.data_dir, "..", "data", "city_sigma.json")
+    city_sigma = {}
+    default_sigma = 5.18  # global sigma from optimize_sigma.py
+    if os.path.exists(sigma_path):
+        try:
+            with open(sigma_path) as f:
+                sigma_data = json.load(f)
+            city_sigma = sigma_data.get("city_sigma", {})
+            default_sigma = sigma_data.get("global_sigma", default_sigma)
+            logger.info("Loaded per-city sigma for %d cities (global=%.2f)", len(city_sigma), default_sigma)
+        except Exception as exc:
+            logger.warning("Failed to load city_sigma.json: %s", exc)
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cal = pd.read_sql(
+            "SELECT city, date, model, predicted_value, days_ahead FROM historical_calibrations",
+            conn,
+        )
+        conn.close()
+    except Exception as exc:
+        logger.warning("Failed to read historical_calibrations: %s", exc)
+        return brier_df
+
+    if cal.empty:
+        return brier_df
+
+    # Map API model names to internal names
+    cal["model_internal"] = cal["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
+
+    # Pivot: (city, date) → per-model predicted_value
+    temp_pivot = cal.pivot_table(
+        index=["city", "date"],
+        columns="model_internal",
+        values="predicted_value",
+        aggfunc="mean",
+    ).reset_index()
+
+    # Normalize date format for join
+    temp_pivot["join_date"] = pd.to_datetime(temp_pivot["date"], format="mixed").dt.date.astype(str)
+    brier_df = brier_df.copy()
+    if "join_date" not in brier_df.columns:
+        brier_df["join_date"] = pd.to_datetime(brier_df["target_date"], errors="coerce").dt.date.astype(str)
+
+    merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_cal"))
+
+    # Convert temperatures → YES probabilities using per-city sigma
+    models_found = [m for m in DEFAULT_MODELS if m in merged.columns]
+    logger.info(
+        "Calibrations fallback: found %d models in pivot (%s)",
+        len(models_found),
+        models_found,
+    )
+
+    for model in models_found:
+        col = f"prob_{model}"
+
+        def _to_prob_cal(forecast, mt, thresh, question, city, sigma_dict=city_sigma, default_sig=default_sigma):
+            if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
+                return float("nan")
+            try:
+                forecast = float(forecast)
+                thresh = float(thresh)
+            except (TypeError, ValueError):
+                return float("nan")
+            # Use per-city sigma
+            sig = sigma_dict.get(str(city), default_sig)
+            q = str(question).lower() if question else ""
+            if "°f" in q or "fahrenheit" in q:
+                thresh = (thresh - 32.0) * 5.0 / 9.0
+            z = (forecast - thresh) / sig
+            p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+            if str(mt).upper() == "LOW":
+                return 1.0 - p_high
+            return p_high
+
+        merged[col] = [
+            _to_prob_cal(
+                row.get(model),
+                row.get("market_type"),
+                row.get("threshold"),
+                row.get("question"),
+                row.get("city"),
+            )
+            for _, row in merged.iterrows()
+        ]
+
+    return merged
+
+
+def _build_splits_from_brier(
+    brier_df: pd.DataFrame,
+    lookback_days: int = 5,
+    test_days: int = 2,
+) -> list[dict[str, Any]]:
+    """Build walk-forward splits directly from a brier DataFrame.
+
+    Uses the target_date column to create temporal train/test splits.
+    With 7 dates and defaults (lookback=5, test=2), this produces 1 split:
+      train: dates 1-5, test: dates 6-7.
+    """
+    dates = pd.to_datetime(brier_df["target_date"], errors="coerce").dropna().sort_values()
+    unique_dates = dates.unique()
+    if len(unique_dates) < lookback_days + test_days:
+        logger.warning(
+            "Only %d unique dates in brier_df, need %d for walk-forward — using last 2 dates as test",
+            len(unique_dates),
+            lookback_days + test_days,
+        )
+        # Fallback: train on all but last date, test on last date
+        if len(unique_dates) < 2:
+            return []
+        train_cutoff = unique_dates[-2]
+        test_start = unique_dates[-1]
+        train_mask = pd.to_datetime(brier_df["target_date"], errors="coerce") < train_cutoff
+        test_mask = pd.to_datetime(brier_df["target_date"], errors="coerce") >= test_start
+        return [
+            {
+                "split_n": 1,
+                "train_indices": brier_df.loc[train_mask].index.tolist(),
+                "test_indices": brier_df.loc[test_mask].index.tolist(),
+                "train_start": str(unique_dates[0]),
+                "train_end": str(train_cutoff),
+                "test_start": str(test_start),
+                "test_end": str(unique_dates[-1]),
+            }
+        ]
+
+    splits = []
+    n = 0
+    for i in range(lookback_days, len(unique_dates) - test_days + 1, test_days):
+        train_end = unique_dates[i]
+        test_start = unique_dates[i]
+        test_end = unique_dates[min(i + test_days - 1, len(unique_dates) - 1)]
+        train_start = unique_dates[max(0, i - lookback_days)]
+
+        train_mask = (pd.to_datetime(brier_df["target_date"], errors="coerce") >= train_start) & (
+            pd.to_datetime(brier_df["target_date"], errors="coerce") < train_end
+        )
+        test_mask = (pd.to_datetime(brier_df["target_date"], errors="coerce") >= test_start) & (
+            pd.to_datetime(brier_df["target_date"], errors="coerce") <= test_end
+        )
+
+        n += 1
+        splits.append(
+            {
+                "split_n": n,
+                "train_indices": brier_df.loc[train_mask].index.tolist(),
+                "test_indices": brier_df.loc[test_mask].index.tolist(),
+                "train_start": str(train_start),
+                "train_end": str(train_end),
+                "test_start": str(test_start),
+                "test_end": str(test_end),
+            }
+        )
+
+    return splits
 
 
 def run_karpathy_weekly(
@@ -1121,8 +1310,12 @@ def run_karpathy_weekly(
     # falls back to synthetic per-model probabilities).
     brier_df = add_per_model_probabilities(brier_df, ds=ds)
 
-    # 2. Walk-forward splits
+    # 2. Walk-forward splits — first try from unified markets table,
+    # then fall back to building from the brier_df itself.
     splits = ds.build_walk_forward_splits()
+    if not splits and "target_date" in brier_df and not brier_df.empty:
+        logger.info("Markets table empty — building walk-forward splits from brier_df")
+        splits = _build_splits_from_brier(brier_df)
     if not splits:
         logger.warning(
             "No walk-forward splits built — falling back to a single all-data "

@@ -146,8 +146,7 @@ class MarketParser:
         """
         # 1) Açık birim varsa (°F / °C / Fahrenheit / Celsius, sayıya bitişik)
         explicit = re.search(
-            r"(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|"
-            r"\d\s*°?\s*[Cc](?:elsius)?|°[Cc])",
+            r"(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|" r"\d\s*°?\s*[Cc](?:elsius)?|°[Cc])",
             question,
         )
         if explicit:

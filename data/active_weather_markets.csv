@@ -1,0 +1,10 @@
+market_id,question,city,threshold,market_type,yes_price,volume
+2867189,Will the highest temperature in Jeddah be 32°C on July 12?,Jeddah be,32.0,HIGH,0.0005,997.703666
+2876600,Will the highest temperature in Seattle be between 76-77°F on July 12?,Seattle be between,25.0,HIGH,0.044,996.666827
+2867142,Will the highest temperature in Istanbul be 32°C or higher on July 12?,Istanbul be,32.0,HIGH,0.0015,991.3655
+2878163,Will the lowest temperature in Shanghai be 29°C on July 13?,Shanghai be,29.0,LOW,0.0565,99.11619499999999
+2866941,Will the highest temperature in Ankara be 34°C on July 12?,Ankara be,34.0,HIGH,0.002,990.834181
+2876608,Will the highest temperature in New York City be between 82-83°F on July 12?,New York City be between,28.3,HIGH,0.3,987.3676730000002
+2865643,Will the highest temperature in Denver be 106°F or higher on July 11?,Denver be,41.1,HIGH,0.0005,985.932
+2867553,Will the highest temperature in Cape Town be 18°C on July 12?,Cape Town be,18.0,HIGH,0.065,985.2605829999998
+2867113,Will the highest temperature in Shenzhen be 31°C on July 12?,Shenzhen be,31.0,HIGH,0.0005,978.7322110000002
