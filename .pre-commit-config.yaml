@@ -1,4 +1,13 @@
 repos:
+  - repo: local
+    hooks:
+      - id: check-critical-files
+        name: Check critical files not deleted
+        entry: python .pre-commit-hooks/check_critical_files.py
+        language: system
+        always_run: true
+        stages: [pre-commit]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.0
     hooks:
