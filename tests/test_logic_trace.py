@@ -220,45 +220,45 @@ class TestStep5_BetPlacement:
 
     def test_bet_amount_calculation(self):
         """Kelly fraction × bankroll = bet amount."""
-        bankroll = 10000.0
+        bankroll = 1000.0
         kelly_f = 0.03
         amount = bankroll * kelly_f
-        assert amount == pytest.approx(300.0)
+        assert amount == pytest.approx(30.0)
 
     def test_bet_shares_calculation(self):
         """Shares = amount / price."""
-        amount = 300.0
+        amount = 30.0
         price = 0.50
         shares = amount / price
-        assert shares == pytest.approx(600.0)
+        assert shares == pytest.approx(60.0)
 
     def test_bet_fee_calculation(self):
         """Fee = shares × price × fee_rate (Polymarket model)."""
-        shares = 600.0
+        shares = 60.0
         price = 0.50
         fee_rate = 0.05
         fee = shares * price * fee_rate
-        assert fee == pytest.approx(15.0)
+        assert fee == pytest.approx(1.5)
 
     def test_bet_payout_on_win(self):
         """Kazanırsa: payout = shares × 1.0 (YES token = $1)."""
-        shares = 600.0
+        shares = 60.0
         payout = shares * 1.0
-        assert payout == pytest.approx(600.0)
+        assert payout == pytest.approx(60.0)
 
     def test_bet_pnl_on_win(self):
         """Kazanırsa: pnl = payout - fee - amount."""
-        payout = 600.0
-        fee = 15.0
-        amount = 300.0
+        payout = 60.0
+        fee = 1.5
+        amount = 30.0
         pnl = payout - fee - amount
-        assert pnl == pytest.approx(285.0)
+        assert pnl == pytest.approx(28.5)
 
     def test_bet_pnl_on_loss(self):
         """Kaybederse: pnl = -amount (tüm bahis gider)."""
-        amount = 300.0
+        amount = 30.0
         pnl = -amount
-        assert pnl == pytest.approx(-300.0)
+        assert pnl == pytest.approx(-30.0)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -359,7 +359,7 @@ class TestStep7_FullPipelineTrace:
         assert kelly_f > 0, "Kelly fraction should be positive"
 
         # Step 4: Bet amount
-        bankroll = 10000.0
+        bankroll = 1000.0
         amount = bankroll * min(kelly_f, 0.05)  # capped at max_bet_pct
         assert amount > 0
 
@@ -395,7 +395,7 @@ class TestStep7_FullPipelineTrace:
         fee_drag = 0.05
         edge = ensemble - market_price - fee_drag
         kelly_f = max(0, edge * 0.15)
-        bankroll = 10000.0
+        bankroll = 1000.0
         amount = bankroll * min(kelly_f, 0.05)
 
         # Settlement: YES loses
@@ -424,7 +424,7 @@ class TestStep8_DatabaseOperations:
         with get_session() as session:
             portfolio = session.query(Portfolio).first()
             if portfolio is None:
-                portfolio = Portfolio(id=1, initial_value=10000.0, current_value=10000.0)
+                portfolio = Portfolio(id=1, initial_value=1000.0, current_value=1000.0)
                 session.add(portfolio)
                 session.commit()
 
@@ -438,7 +438,7 @@ class TestStep8_DatabaseOperations:
         with get_session() as session:
             portfolio = session.query(Portfolio).first()
             if portfolio is None:
-                portfolio = Portfolio(id=1, initial_value=10000.0, current_value=10000.0)
+                portfolio = Portfolio(id=1, initial_value=1000.0, current_value=1000.0)
                 session.add(portfolio)
                 session.commit()
 
