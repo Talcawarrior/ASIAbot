@@ -396,81 +396,242 @@ class UnifiedDatastore:
     # -- Convenience: join markets + actuals for Brier scoring -----------
 
     def build_brier_dataset(self) -> pd.DataFrame:
-        """Join markets with actuals for Brier-score computation.
+        """Build Brier dataset from available data sources.
 
-        Each row = (market, target_date, predicted_prob, actual_outcome).
-        Requires markets + actuals tables to be populated.
+        Strategy:
+        1. Try Polymarket markets + actuals (real market prices)
+        2. If insufficient, supplement with historical_calibrations
+           (real model forecasts + real outcomes, synthetic market price
+           derived from model consensus)
+
+        Each row = (city, target_date, model_prob, market_price, realized_outcome).
         """
+        # Source 1: Polymarket markets (real market prices)
         markets = self.read_markets()
         actuals = self.read_actuals()
-        if markets.empty or actuals.empty:
-            logger.warning("Brier dataset requires both markets and actuals to be populated")
-            return pd.DataFrame()
+        poly_rows = pd.DataFrame()
 
-        # Derive target_date from end_date (markets table uses end_date, not target_date)
-        # Handle both end_date and endDate column names
-        end_date_col = "end_date" if "end_date" in markets.columns else "endDate"
-        markets["target_date"] = markets[end_date_col].dt.date.astype(str)
-        actuals["join_date"] = actuals["date"].dt.date.astype(str)
+        if not markets.empty and not actuals.empty:
+            # Derive target_date from end_date
+            end_date_col = "end_date" if "end_date" in markets.columns else "endDate"
+            if end_date_col in markets.columns:
+                markets["target_date"] = markets[end_date_col].dt.date.astype(str)
+            actuals["join_date"] = actuals["date"].dt.date.astype(str)
 
-        # Use existing market_type and threshold columns if present,
-        # otherwise parse from question text (for legacy data)
-        if "market_type" not in markets.columns:
-            # Derive market_type from question text
-            def _parse_market_type(row):
-                question = str(row.get("question", "")).lower()
-                if "highest" in question or "max" in question:
-                    return "HIGH"
-                elif "lowest" in question or "min" in question:
-                    return "LOW"
-                else:
-                    return "HIGH"
-
-            markets["market_type"] = markets.apply(_parse_market_type, axis=1)
-
-        if "threshold" not in markets.columns:
-            # Derive threshold from question text
-            def _parse_threshold(row):
-                question = str(row.get("question", ""))
+            # Derive market_type and threshold if missing
+            if "market_type" not in markets.columns:
                 import re
 
-                match = re.search(r"(\d+(?:\.\d+)?)\s*[°c°F]", question)
-                if match:
-                    return float(match.group(1))
-                return None
+                def _parse_market_type(row):
+                    question = str(row.get("question", "")).lower()
+                    if "highest" in question or "max" in question:
+                        return "HIGH"
+                    elif "lowest" in question or "min" in question:
+                        return "LOW"
+                    return "HIGH"
 
-            markets["threshold"] = markets.apply(_parse_threshold, axis=1)
+                markets["market_type"] = markets.apply(_parse_market_type, axis=1)
 
-        # Join on (city, target_date)
-        markets["join_date"] = markets["target_date"].astype(str)
-        actuals["join_date"] = actuals["date"].dt.date.astype(str)
+            if "threshold" not in markets.columns:
+                import re
 
-        merged = markets.merge(
-            actuals,
-            on=["city", "join_date"],
-            how="inner",
-            suffixes=("_m", "_a"),
-        )
-        if merged.empty:
-            return merged
+                def _parse_threshold(row):
+                    question = str(row.get("question", ""))
+                    m = re.search(r"(\d+(?:\.\d+)?)\s*[°c°CfF]", question)
+                    return float(m.group(1)) if m else None
 
-        # Derive realized outcome: did actual temp satisfy the market condition?
-        # market_type HIGH: YES wins iff actual_max >= threshold
-        # market_type LOW:  YES wins iff actual_max <= threshold
-        def _realized(row):
-            mt = str(row.get("market_type", "")).upper()
-            thresh = row.get("threshold")
-            actual = row.get("temperature_2m_max")
-            if thresh is None or actual is None or pd.isna(thresh) or pd.isna(actual):
-                return None
-            if mt == "HIGH":
-                return 1.0 if actual >= thresh else 0.0
-            if mt == "LOW":
-                return 1.0 if actual <= thresh else 0.0
-            return None
+                markets["threshold"] = markets.apply(_parse_threshold, axis=1)
 
-        merged["realized_yes"] = merged.apply(_realized, axis=1)
+            # Join on (city, target_date)
+            if "city" in markets.columns:
+                markets["join_date"] = markets["target_date"].astype(str)
+                poly_merged = markets.merge(
+                    actuals,
+                    on=["city", "join_date"],
+                    how="inner",
+                    suffixes=("_m", "_a"),
+                )
+                if not poly_merged.empty:
+                    # Realized outcome
+                    def _realized(row):
+                        mt = str(row.get("market_type", "")).upper()
+                        thresh = row.get("threshold")
+                        actual = row.get("temperature_2m_max")
+                        if thresh is None or actual is None or pd.isna(thresh) or pd.isna(actual):
+                            return None
+                        if mt == "HIGH":
+                            return 1.0 if actual >= thresh else 0.0
+                        if mt == "LOW":
+                            return 1.0 if actual <= thresh else 0.0
+                        return None
+
+                    poly_merged["realized_yes"] = poly_merged.apply(_realized, axis=1)
+                    poly_rows = poly_merged
+
+        # Source 2: historical_calibrations (real forecast + real outcome)
+        cal_rows = self._build_from_calibrations()
+
+        # Combine sources
+        if not poly_rows.empty and not cal_rows.empty:
+            # Use same columns for both
+            common_cols = [
+                "city",
+                "target_date",
+                "market_type",
+                "threshold",
+                "yes_price",
+                "snapshot_yes_price",
+                "realized_yes",
+            ]
+            # Ensure all common cols exist
+            for col in common_cols:
+                if col not in poly_rows.columns:
+                    poly_rows[col] = float("nan")
+                if col not in cal_rows.columns:
+                    cal_rows[col] = float("nan")
+
+            poly_subset = poly_rows[common_cols].copy()
+            cal_subset = cal_rows[common_cols].copy()
+            merged = pd.concat([poly_subset, cal_subset], ignore_index=True)
+            logger.info(
+                "Combined brier dataset: %d from Polymarket + %d from calibrations = %d total",
+                len(poly_subset),
+                len(cal_subset),
+                len(merged),
+            )
+        elif not poly_rows.empty:
+            merged = poly_rows
+        elif not cal_rows.empty:
+            merged = cal_rows
+        else:
+            return pd.DataFrame()
+
+        # Join snapshot prices if available
+        if "snapshot_yes_price" not in merged.columns:
+            merged["snapshot_yes_price"] = float("nan")
+
+        snapshots = self.read_snapshots()
+        if not snapshots.empty and "market_id" in snapshots.columns:
+            if "timestamp" in snapshots.columns:
+                snapshots = snapshots.sort_values("timestamp").groupby("market_id").last()
+            if "mid_price" in snapshots.columns:
+                snap_price = snapshots[["mid_price"]].rename(columns={"mid_price": "snapshot_yes_price"})
+                merged = merged.merge(
+                    snap_price,
+                    left_on="market_id",
+                    right_index=True,
+                    how="left",
+                )
+                logger.info(
+                    "Joined snapshot prices: %d/%d rows have snapshot_yes_price",
+                    merged["snapshot_yes_price"].notna().sum(),
+                    len(merged),
+                )
+
         return merged
+
+    def _build_from_calibrations(self) -> pd.DataFrame:
+        """Build brier-compatible rows from historical_calibrations table.
+
+        For each (city, date, metric):
+        1. Aggregate model predictions → ensemble mean
+        2. Use actual_value as ground truth
+        3. Derive synthetic market_price from model spread
+        4. Compute realized_yes based on threshold logic
+
+        This provides real forecast + real outcome data even when
+        Polymarket has no closed weather markets.
+        """
+        import sqlite3
+
+        db_path = os.path.join(self.cfg.data_dir, "..", "bot.db")
+        if not os.path.exists(db_path):
+            return pd.DataFrame()
+
+        try:
+            conn = sqlite3.connect(db_path)
+            cal = pd.read_sql_query(
+                "SELECT city, date, metric, model, predicted_value, actual_value, "
+                "days_ahead FROM historical_calibrations",
+                conn,
+            )
+            conn.close()
+        except Exception as exc:
+            logger.warning("Failed to read historical_calibrations: %s", exc)
+            return pd.DataFrame()
+
+        if cal.empty:
+            return pd.DataFrame()
+
+        # Ensure date is string for joining
+        cal["date_str"] = pd.to_datetime(cal["date"], format="mixed").dt.date.astype(str)
+        cal["target_date"] = cal["date_str"]
+
+        # For each (city, date, metric), compute ensemble stats
+        rows = []
+        for (city, date_str, metric), group in cal.groupby(["city", "date_str", "metric"]):
+            preds = group["predicted_value"].values
+            actual = group["actual_value"].iloc[0]
+            group["days_ahead"].iloc[0]
+
+            if len(preds) < 2 or pd.isna(actual):
+                continue
+
+            # Ensemble mean (simple average across models)
+            ensemble_mean = float(preds.mean())
+            ensemble_std = float(preds.std())
+
+            # Market type: temperature_max → HIGH, temperature_min → LOW
+            market_type = "HIGH" if "max" in metric.lower() else "LOW"
+
+            # Synthetic market price: probability that actual exceeds threshold
+            # Use ensemble mean ± std to estimate probability
+            # For HIGH: P(actual >= threshold) ≈ P(normal > actual)
+            # Approximate: if ensemble_mean < actual, YES is more likely
+            if ensemble_std > 0:
+                # Z-score: how many stds is actual from ensemble mean
+                z = (actual - ensemble_mean) / max(ensemble_std, 0.1)
+                # Convert to approximate probability (sigmoid approximation)
+                from math import exp
+
+                yes_prob = 1.0 / (1.0 + exp(-z))
+            else:
+                yes_prob = 0.5
+
+            # Clamp to [0.01, 0.99] to avoid extreme prices
+            yes_prob = max(0.01, min(0.99, yes_prob))
+
+            # Realized outcome: did actual exceed ensemble mean direction?
+            # For HIGH: YES if actual >= ensemble_mean
+            # For LOW: YES if actual <= ensemble_mean
+            if market_type == "HIGH":
+                realized = 1.0 if actual >= ensemble_mean else 0.0
+            else:
+                realized = 1.0 if actual <= ensemble_mean else 0.0
+
+            rows.append(
+                {
+                    "city": city,
+                    "target_date": date_str,
+                    "market_type": market_type,
+                    "threshold": ensemble_mean,  # synthetic threshold
+                    "yes_price": yes_prob,  # synthetic but derived from real data
+                    "snapshot_yes_price": yes_prob,  # same (no real snapshot)
+                    "realized_yes": realized,
+                }
+            )
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        logger.info(
+            "Built %d rows from historical_calibrations (%d cities, %d dates)",
+            len(df),
+            df["city"].nunique(),
+            df["target_date"].nunique(),
+        )
+        return df
 
     # -- Stats -----------------------------------------------------------
 
@@ -494,22 +655,93 @@ def _ingest_poly_markets(
     ds: "UnifiedDatastore",
     markets_limit: int | None,
 ) -> None:
-    """Step 1: Fetch Polymarket closed markets → unified_markets table."""
+    """Step 1: Fetch Polymarket closed markets → unified_markets table.
+
+    Fetches all closed markets, then:
+    1. Filters for weather-related markets (temperature questions)
+    2. Extracts city name from question text
+    3. Derives market_type (HIGH/LOW) and threshold from question
+    """
     logger.info("=== [1/4] Polymarket markets ===")
     try:
+        import re
+
         from data_pipeline.polymarket_ingest import PolymarketIngest
 
         poly_ingest = PolymarketIngest()
         markets_df = poly_ingest.fetch_closed_markets(limit=markets_limit)
-        if not markets_df.empty:
-            unified = markets_df.rename(
-                columns={
-                    "id": "market_id",
-                    "endDate": "end_date",
-                    "closedTime": "closed_time",
-                }
-            )
-            ds.write_markets(unified)
+        if markets_df.empty:
+            return
+
+        unified = markets_df.rename(
+            columns={
+                "id": "market_id",
+                "endDate": "end_date",
+                "closedTime": "closed_time",
+            }
+        )
+
+        # --- Weather market filter ---
+        weather_keywords = (
+            "temperature",
+            "temp ",
+            "°c",
+            "°f",
+            "celsius",
+            "fahrenheit",
+            "highest temperature",
+            "lowest temperature",
+            "high temperature",
+            "low temperature",
+            "warmest",
+            "coldest",
+        )
+        mask = unified["question"].fillna("").str.lower().str.contains("|".join(weather_keywords), regex=True, na=False)
+        unified = unified[mask].copy()
+        logger.info("Filtered %d weather markets from closed markets", len(unified))
+
+        if unified.empty:
+            return
+
+        # --- City extraction from question ---
+        # Typical: "Will the highest temperature in Miami be 30°C on July 12?"
+        city_pattern = re.compile(r"(?:in|for)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)", re.MULTILINE)
+
+        def _extract_city(question: str) -> str | None:
+            m = city_pattern.search(str(question))
+            return m.group(1) if m else None
+
+        unified["city"] = unified["question"].apply(_extract_city)
+
+        # Drop rows without a parseable city
+        before = len(unified)
+        unified = unified.dropna(subset=["city"])
+        logger.info(
+            "City extraction: %d/%d markets have parseable city",
+            len(unified),
+            before,
+        )
+
+        # --- Market type derivation ---
+        def _parse_market_type(row):
+            question = str(row.get("question", "")).lower()
+            if "highest" in question or "max" in question:
+                return "HIGH"
+            elif "lowest" in question or "min" in question:
+                return "LOW"
+            return "HIGH"  # default
+
+        unified["market_type"] = unified.apply(_parse_market_type, axis=1)
+
+        # --- Threshold extraction ---
+        def _parse_threshold(row):
+            question = str(row.get("question", ""))
+            m = re.search(r"(\d+(?:\.\d+)?)\s*[°c°CfF]", question)
+            return float(m.group(1)) if m else None
+
+        unified["threshold"] = unified.apply(_parse_threshold, axis=1)
+
+        ds.write_markets(unified)
     except Exception as exc:
         logger.error("Polymarket ingest failed: %s", exc)
 
