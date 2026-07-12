@@ -1,22 +1,22 @@
 """Unified datastore: joins all 4 data sources into a backtest-ready schema.
 
-The previous eval_harness.py used a YES=True oracle for backtesting — this
+The previous eval_harness.py used a YES=True oracle for backtesting -- this
 caused the inflated 74.34% ROI claim that GLM-5.2's audit exposed as
 synthetic. This module fixes the root cause by joining real ground-truth
 data from four sources into a single walk-forward-out-of-sample dataset:
 
-  1. polymarket_ingest      → market metadata + final resolved outcomes
-  2. weather_ensemble       → 8-model forecast + archive actuals (ground truth)
-  3. poly_data_ingest       → on-chain OrderFilled trades (order flow)
-  4. resolvedmarkets_ingest → tick-level orderbook snapshots (depth)
+  1. polymarket_ingest      ??? market metadata + final resolved outcomes
+  2. weather_ensemble       ??? 8-model forecast + archive actuals (ground truth)
+  3. poly_data_ingest       ??? on-chain OrderFilled trades (order flow)
+  4. resolvedmarkets_ingest ??? tick-level orderbook snapshots (depth)
 
 The unified schema is:
 
-  unified_markets    (one row per market — polymarket metadata + outcome)
-  unified_forecasts  (one row per (market, model, target_date) — ensemble)
-  unified_actuals    (one row per (city, date) — ground truth temperature)
-  unified_trades     (one row per OrderFilled event — on-chain)
-  unified_snapshots  (one row per (market, timestamp) — orderbook depth)
+  unified_markets    (one row per market -- polymarket metadata + outcome)
+  unified_forecasts  (one row per (market, model, target_date) -- ensemble)
+  unified_actuals    (one row per (city, date) -- ground truth temperature)
+  unified_trades     (one row per OrderFilled event -- on-chain)
+  unified_snapshots  (one row per (market, timestamp) -- orderbook depth)
 
 Walk-forward OOS split: the dataset is split by DATE, not by random shuffle.
 For each backtest step N, train on data before date[N], test on date[N..N+K].
@@ -329,7 +329,7 @@ class UnifiedDatastore:
             test_start = cur_t
             test_end = cur_t + pd.Timedelta(days=test)
             train_start = cur_t - pd.Timedelta(days=lookback)
-            train_end = cur_t  # exclusive — train does NOT include test window
+            train_end = cur_t  # exclusive -- train does NOT include test window
 
             train_df = df[(df[date_column] >= train_start) & (df[date_column] < train_end)]
             test_df = df[(df[date_column] >= test_start) & (df[date_column] < test_end)]
@@ -363,7 +363,7 @@ class UnifiedDatastore:
 
             splits.append(split_meta)
             logger.info(
-                "Split %d: train %s..%s (%d rows) → test %s..%s (%d rows)",
+                "Split %d: train %s..%s (%d rows) ??? test %s..%s (%d rows)",
                 n,
                 train_start.date(),
                 train_end.date(),
@@ -437,7 +437,7 @@ class UnifiedDatastore:
 
                 def _parse_threshold(row):
                     question = str(row.get("question", ""))
-                    m = re.search(r"(\d+(?:\.\d+)?)\s*[°c°CfF]", question)
+                    m = re.search(r"(\d+(?:\.\d+)?)\s*[??c??CfF]", question)
                     return float(m.group(1)) if m else None
 
                 markets["threshold"] = markets.apply(_parse_threshold, axis=1)
@@ -471,8 +471,44 @@ class UnifiedDatastore:
         # Source 2: historical_calibrations (real forecast + real outcome)
         cal_rows = self._build_from_calibrations()
 
+        # Source 3: Counterfactual analyses (ALL bot decisions with realized outcomes)
+        # This uses the bot's own analyses table (500K+ rows) joined with actuals
+        # to create "what-if" rows: model_prob, market_price, realized_yes
+        cf_rows = self.build_counterfactual_dataset()
+
         # Combine sources
-        if not poly_rows.empty and not cal_rows.empty:
+        if not poly_rows.empty and not cal_rows.empty and not cf_rows.empty:
+            # Use same columns for all three
+            common_cols = [
+                "city",
+                "target_date",
+                "market_type",
+                "threshold",
+                "yes_price",
+                "snapshot_yes_price",
+                "realized_yes",
+            ]
+            # Ensure all common cols exist
+            for col in common_cols:
+                if col not in poly_rows.columns:
+                    poly_rows[col] = float("nan")
+                if col not in cal_rows.columns:
+                    cal_rows[col] = float("nan")
+                if col not in cf_rows.columns:
+                    cf_rows[col] = float("nan")
+
+            poly_subset = poly_rows[common_cols].copy()
+            cal_subset = cal_rows[common_cols].copy()
+            cf_subset = cf_rows[common_cols].copy()
+            merged = pd.concat([poly_subset, cal_subset, cf_subset], ignore_index=True)
+            logger.info(
+                "Combined brier dataset: %d from Polymarket + %d from calibrations + %d from counterfactual = %d total",
+                len(poly_subset),
+                len(cal_subset),
+                len(cf_subset),
+                len(merged),
+            )
+        elif not poly_rows.empty and not cal_rows.empty:
             # Use same columns for both
             common_cols = [
                 "city",
@@ -503,6 +539,8 @@ class UnifiedDatastore:
             merged = poly_rows
         elif not cal_rows.empty:
             merged = cal_rows
+        elif not cf_rows.empty:
+            merged = cf_rows
         else:
             return pd.DataFrame()
 
@@ -534,7 +572,7 @@ class UnifiedDatastore:
         """Build brier-compatible rows from historical_calibrations table.
 
         For each (city, date, metric):
-        1. Aggregate model predictions → ensemble mean
+        1. Aggregate model predictions ??? ensemble mean
         2. Use actual_value as ground truth
         3. Derive synthetic market_price from model spread
         4. Compute realized_yes based on threshold logic
@@ -581,12 +619,12 @@ class UnifiedDatastore:
             ensemble_mean = float(preds.mean())
             ensemble_std = float(preds.std())
 
-            # Market type: temperature_max → HIGH, temperature_min → LOW
+            # Market type: temperature_max ??? HIGH, temperature_min ??? LOW
             market_type = "HIGH" if "max" in metric.lower() else "LOW"
 
             # Synthetic market price: probability that actual exceeds threshold
-            # Use ensemble mean ± std to estimate probability
-            # For HIGH: P(actual >= threshold) ≈ P(normal > actual)
+            # Use ensemble mean ?? std to estimate probability
+            # For HIGH: P(actual >= threshold) ??? P(normal > actual)
             # Approximate: if ensemble_mean < actual, YES is more likely
             if ensemble_std > 0:
                 # Z-score: how many stds is actual from ensemble mean
@@ -633,6 +671,184 @@ class UnifiedDatastore:
         )
         return df
 
+    def build_counterfactual_dataset(self) -> pd.DataFrame:
+        """Build counterfactual Brier dataset from ALL analyses (504K rows).
+
+        This uses the bot's own analyses table which contains:
+        - estimated_probability (model probability)
+        - market_implied_prob (market price)
+        - recommended_side (YES/NO)
+        - should_bet, reason (why bet was/wasn't placed)
+        - model_predictions (JSON with 8 model forecasts)
+
+        Joined with:
+        - weather_markets ??? city, target_date, threshold, market_type
+        - actuals (from unified parquet) ??? actual temperature for realized_yes
+
+        Returns rows with: city, target_date, model_prob, market_price, realized_yes,
+        should_bet, reason, recommended_side, threshold, market_type, num_sources, etc.
+
+        This is the MISSING DATA SOURCE that Karpathy/ASI-Evolve/SIA should use
+        to learn from ALL decisions, not just the 130 settled markets.
+        """
+        import sqlite3
+        import json
+
+        db_path = os.path.join(self.cfg.data_dir, "..", "bot.db")
+        if not os.path.exists(db_path):
+            logger.warning("bot.db not found at %s", db_path)
+            return pd.DataFrame()
+
+        try:
+            conn = sqlite3.connect(db_path)
+
+            # 1. Read analyses with all fields
+            analyses = pd.read_sql_query(
+                """
+                SELECT
+                    id, market_id, estimated_probability, market_implied_prob,
+                    edge, raw_edge, adjusted_edge, slippage_pct,
+                    avg_forecast_value, std_forecast_value, num_sources,
+                    recommended_side, recommended_amount, confidence_score,
+                    should_bet, reason, model_predictions, analyzed_at
+                FROM analyses
+                WHERE estimated_probability IS NOT NULL
+                AND market_implied_prob IS NOT NULL
+                AND recommended_side IS NOT NULL
+            """,
+                conn,
+            )
+
+            # 2. Read weather_markets for city, target_date, threshold, market_type
+            markets = pd.read_sql_query(
+                """
+                SELECT
+                    id as market_id,
+                    city, city_code, metric, threshold, threshold_unit,
+                    market_type, target_date, yes_price, no_price, status
+                FROM weather_markets
+            """,
+                conn,
+            )
+
+            conn.close()
+
+        except Exception as exc:
+            logger.warning("Failed to read counterfactual data from bot.db: %s", exc)
+            return pd.DataFrame()
+
+        if analyses.empty or markets.empty:
+            logger.warning("Counterfactual data empty: analyses=%d, markets=%d", len(analyses), len(markets))
+            return pd.DataFrame()
+
+        logger.info("Building counterfactual dataset: %d analyses, %d markets", len(analyses), len(markets))
+
+        # Join analyses -> markets
+        merged = analyses.merge(markets, on="market_id", how="inner")
+        logger.info("After analyses+markets join: %d rows", len(merged))
+
+        if merged.empty:
+            return pd.DataFrame()
+
+        # Parse model_predictions JSON to extract per-model forecasts
+        def parse_model_preds(json_str):
+            try:
+                if not json_str:
+                    return {}
+                data = json.loads(json_str)
+                if isinstance(data, dict):
+                    return data
+                return {}
+            except Exception:
+                return {}
+
+        merged["model_preds"] = merged["model_predictions"].apply(parse_model_preds)
+
+        # Join with actuals from unified parquet
+        actuals = self.read_actuals()
+        if actuals.empty:
+            logger.warning("No actuals data available from unified parquet")
+            return pd.DataFrame()
+
+        # Normalize dates
+        merged["target_date"] = pd.to_datetime(merged["target_date"], utc=True, errors="coerce").dt.date
+        actuals["date"] = pd.to_datetime(actuals["date"], utc=True, errors="coerce").dt.date
+
+        merged = merged.merge(actuals, left_on=["city", "target_date"], right_on=["city", "date"], how="left")
+        logger.info("After actuals join: %d rows with actuals", merged["temperature_2m_max"].notna().sum())
+
+        # Compute realized_yes based on market_type and threshold
+        def compute_realized(row):
+            actual_max = row.get("temperature_2m_max")
+            actual_min = row.get("temperature_2m_min")
+            threshold = row.get("threshold")
+            market_type = row.get("market_type")
+
+            if pd.isna(actual_max) or pd.isna(actual_min) or pd.isna(threshold):
+                return None
+
+            if market_type == "HIGH":
+                return 1.0 if actual_max >= threshold else 0.0
+            elif market_type == "LOW":
+                return 1.0 if actual_min <= threshold else 0.0
+            elif market_type == "RANGE":
+                # For RANGE, need threshold_low and threshold_high
+                thresh_low = row.get("threshold_low")
+                thresh_high = row.get("threshold_high")
+                if pd.isna(thresh_low) or pd.isna(thresh_high):
+                    return None
+                return 1.0 if (thresh_low <= actual_max <= thresh_high) else 0.0
+            return None
+
+        merged["realized_yes"] = merged.apply(compute_realized, axis=1)
+
+        # Model probability: use estimated_probability (already blended)
+        # Market price: use market_implied_prob
+        # For NO side, flip probabilities
+        def flip_probs(row):
+            side = row.get("recommended_side")
+            est = row.get("estimated_probability")
+            mkt = row.get("market_implied_prob")
+            if side == "NO":
+                return 1.0 - est if pd.notna(est) else None, 1.0 - mkt if pd.notna(mkt) else None
+            return est, mkt
+
+        merged[["model_prob", "market_price"]] = merged.apply(lambda r: pd.Series(flip_probs(r)), axis=1)
+
+        # Select and rename columns for Brier dataset compatibility
+        out_cols = {
+            "city": "city",
+            "target_date": "target_date",
+            "model_prob": "model_prob",
+            "market_price": "market_price",
+            "realized_yes": "realized_yes",
+            "should_bet": "should_bet",
+            "reason": "reason",
+            "recommended_side": "recommended_side",
+            "threshold": "threshold",
+            "market_type": "market_type",
+            "num_sources": "num_sources",
+            "confidence_score": "confidence_score",
+            "edge": "edge",
+            "raw_edge": "raw_edge",
+            "adjusted_edge": "adjusted_edge",
+            "slippage_pct": "slippage_pct",
+            "analyzed_at": "analyzed_at",
+        }
+
+        result = merged[list(out_cols.keys())].rename(columns=out_cols)
+
+        # Filter: only rows with realized outcome (for Brier scoring)
+        result = result.dropna(subset=["realized_yes"])
+        result["realized_yes"] = result["realized_yes"].astype(float)
+
+        # Clamp probabilities
+        for col in ["model_prob", "market_price"]:
+            result[col] = result[col].clip(0.01, 0.99)
+
+        logger.info("Counterfactual dataset built: %d rows with realized outcomes", len(result))
+        return result
+
     # -- Stats -----------------------------------------------------------
 
     def summary(self) -> dict[str, int]:
@@ -655,7 +871,7 @@ def _ingest_poly_markets(
     ds: "UnifiedDatastore",
     markets_limit: int | None,
 ) -> None:
-    """Step 1: Fetch weather markets from bot's own database → unified_markets table.
+    """Step 1: Fetch weather markets from bot's own database ??? unified_markets table.
 
     The bot's weather_markets table contains 130+ settled weather markets with
     proper city, metric, threshold, market_type, and target_date.
@@ -723,7 +939,7 @@ def _ingest_weather_actuals(
     weather_locations: list[tuple[str, float, float]],
     backfill_days: int,
 ) -> None:
-    """Step 2: Fetch weather actuals from Open-Meteo Archive → unified_actuals."""
+    """Step 2: Fetch weather actuals from Open-Meteo Archive ??? unified_actuals."""
     logger.info("=== [2/4] Weather actuals (Open-Meteo Archive) ===")
     try:
         from data_pipeline.weather_ensemble import backfill_archive_many
@@ -751,7 +967,7 @@ def _ingest_forecasts(
     Sub-steps:
       (a) Historical backfill from Open-Meteo Historical Forecast API
       (b) Live ensemble for forward-looking markets
-      (c) NWS deterministic forecast (US cities only — 9th pseudo-model)
+      (c) NWS deterministic forecast (US cities only -- 9th pseudo-model)
     """
     logger.info("=== [3/4] Weather forecasts (historical backfill + live ensemble) ===")
     try:
@@ -816,7 +1032,7 @@ def _ingest_forecasts(
         except Exception as exc:
             logger.warning("Historical forecast backfill skipped: %s", exc)
 
-        # (b) Live ensemble — small sample for forward-looking markets
+        # (b) Live ensemble -- small sample for forward-looking markets
         for city, lat, lon in weather_locations[:5]:
             res = fetch_forecast_ensemble(lat, lon, city=city)
             if res:
