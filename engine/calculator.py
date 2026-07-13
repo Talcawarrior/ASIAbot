@@ -985,6 +985,14 @@ class WeatherEngine:
                 "weighted_std": weighted_std,
                 "model_count": len(model_temps),
                 "model_temps": model_temps,
+                # CRITICAL FIX (metric mismatch): return BOTH max and min side_metrics
+                # so the caller (_persist_ensemble in meteo.py) can persist forecasts
+                # for both metrics. Previously only the requested metric was returned,
+                # so temperature_min markets got temperature_max forecasts saved
+                # under their market_id — causing the analyzer to see 0 matching
+                # forecasts and reject every temperature_min bet.
+                "side_metrics": side_metrics,
+                "requested_metric": metric,
                 "timestamp": datetime.now(UTC).replace(tzinfo=None),
             }
         except Exception as e:

@@ -357,11 +357,33 @@ class MeteoFetcher:
 
             total = 0
             we = WeatherEngine(db_session_factory=get_session)
-            # BUG-4 FIX: Do NOT call asyncio.set_event_loop() — it corrupts
-            # the thread's event loop when called from a worker thread that
-            # already has one (e.g. via asyncio.to_thread). Just create and
-            # use the loop directly.
+            # CRITICAL FIX (event loop in worker thread): previously this code
+            # created a new event loop with `asyncio.new_event_loop()` but did
+            # NOT set it as the current thread's event loop. When `asyncio.gather()`
+            # internally calls `asyncio.ensure_future()` → `asyncio.get_event_loop()`,
+            # it raised `RuntimeError: There is no current event loop in thread
+            # 'asyncio_0'` because Python 3.12+ no longer auto-creates a loop.
+            #
+            # The previous comment said "Do NOT call asyncio.set_event_loop() —
+            # it corrupts the thread's event loop when called from a worker
+            # thread that already has one." That was a misunderstanding: when
+            # bot_loop calls `asyncio.to_thread(run_fetch_weather)`, the worker
+            # thread does NOT have a loop set. We create a fresh loop here and
+            # must set it as current so that `asyncio.get_event_loop()` inside
+            # nested library calls finds it.
+            #
+            # We save the previous loop (if any) and restore it on cleanup so
+            # we never corrupt the thread state for the caller.
             loop = asyncio.new_event_loop()
+            # Save the previous loop (if any) so we can restore it on cleanup.
+            # In a worker thread via asyncio.to_thread, there may be no loop
+            # set yet — get_event_loop() would raise RuntimeError. Use a
+            # try/except to handle both cases.
+            try:
+                _prev_loop = asyncio.get_event_loop_policy().get_event_loop()
+            except RuntimeError:
+                _prev_loop = None
+            asyncio.set_event_loop(loop)
 
             import aiohttp as _aiohttp
 
@@ -394,31 +416,51 @@ class MeteoFetcher:
                 target_date,
                 metric: str,
             ) -> None:
-                """Persist ensemble forecasts to DB with a fresh session."""
+                """Persist ensemble forecasts to DB with a fresh session.
+
+                CRITICAL FIX (metric mismatch): previously this function only
+                persisted `result["model_temps"]` which contains the REQUESTED
+                metric only. So if a (city, date) group contained both
+                temperature_max and temperature_min markets, only one metric
+                was saved — and the other metric's markets saw 0 forecasts,
+                causing them to be rejected with "Az kaynak: 0".
+
+                Now we persist ALL metrics from `result["side_metrics"]`
+                (which contains both temperature_max and temperature_min per
+                model) so every market gets forecasts for its actual metric.
+                """
                 from database.models import WeatherForecast
 
-                model_temps = result.get("model_temps", {})
-                if not model_temps:
-                    return
+                # Prefer side_metrics (both max+min) if available; fall back
+                # to model_temps (requested metric only) for backward compat.
+                side_metrics: dict[str, dict[str, float]] = result.get("side_metrics", {})
+                if not side_metrics:
+                    # Legacy path: only one metric available
+                    model_temps = result.get("model_temps", {})
+                    if not model_temps:
+                        return
+                    side_metrics = {metric: model_temps}
+
                 try:
                     with get_session() as _sess:
                         for mid in market_ids:
-                            for mn, tmp in model_temps.items():
-                                _sess.add(
-                                    WeatherForecast(
-                                        market_id=mid,
-                                        city=city,
-                                        lat=lat,
-                                        lon=lon,
-                                        target_date=target_date,
-                                        metric=metric,
-                                        source=mn,
-                                        predicted_value=float(tmp),
-                                        model_weight=we.model_weights.get(mn, 0.0),
-                                        fetched_at=datetime.now(UTC).replace(tzinfo=None),
-                                        raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
+                            for metric_label, per_model_temps in side_metrics.items():
+                                for mn, tmp in per_model_temps.items():
+                                    _sess.add(
+                                        WeatherForecast(
+                                            market_id=mid,
+                                            city=city,
+                                            lat=lat,
+                                            lon=lon,
+                                            target_date=target_date,
+                                            metric=metric_label,
+                                            source=mn,
+                                            predicted_value=float(tmp),
+                                            model_weight=we.model_weights.get(mn, 0.0),
+                                            fetched_at=datetime.now(UTC).replace(tzinfo=None),
+                                            raw_data=str({"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}),
+                                        )
                                     )
-                                )
                         _sess.commit()
                 except Exception as e:
                     logger.debug("Ensemble persist failed for %s: %s", city, e)
@@ -592,6 +634,13 @@ class MeteoFetcher:
                         loop.close()
                     except Exception as loop_close_err:  # noqa: BLE001
                         logger.debug("loop.close() error (non-fatal): %s", loop_close_err)
+                    finally:
+                        # Restore the previous event loop so the worker thread
+                        # is in a clean state for the next call.
+                        try:
+                            asyncio.set_event_loop(_prev_loop)
+                        except Exception as restore_err:  # noqa: BLE001
+                            logger.debug("set_event_loop restore error (non-fatal): %s", restore_err)
 
         return total
 

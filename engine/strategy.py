@@ -1084,6 +1084,31 @@ class SIALoop:
             # All models frozen — keep existing weights
             new_weights = dict(self.model_weights)
 
+        # CRITICAL FIX (weight sanity check): if any single model has > 50%
+        # weight (clearly unreasonable for an 8-model ensemble), reset ALL
+        # weights to the config defaults. This catches corrupted state from
+        # past SIA runs with different logic or manual editing of
+        # data/model_weights.json. Without this guard, a single model could
+        # dominate the ensemble and produce unreliable forecasts.
+        _MAX_SINGLE_MODEL_WEIGHT = 0.50
+        max_weight = max(new_weights.values()) if new_weights else 0
+        if max_weight > _MAX_SINGLE_MODEL_WEIGHT:
+            dominant_model = max(new_weights, key=new_weights.get)
+            logger.warning(
+                "SIA weight sanity check FAILED: model %s has %.1f%% weight (> %.0f%% threshold). "
+                "Resetting ALL weights to config defaults to prevent single-model dominance.",
+                dominant_model,
+                max_weight * 100,
+                _MAX_SINGLE_MODEL_WEIGHT * 100,
+            )
+            from config.settings import bot_config as _cfg
+
+            new_weights = dict(_cfg.strategy.model_weights) if hasattr(_cfg.strategy, "model_weights") else dict(_cfg.model_weights)
+            # Verify the defaults sum to ~1.0
+            total = sum(new_weights.values())
+            if total > 0:
+                new_weights = {m: round(w / total, 4) for m, w in new_weights.items()}
+
         # Carry frozen weights forward
         new_weights.update(frozen_models)
 
