@@ -511,13 +511,41 @@ class PolyDataIngest:
         # Polymarket CT tokens use the same 6-decimal convention).
         df["maker_usd"] = df["maker_fill_amount"] / 1e6
         df["taker_usd"] = df["taker_fill_amount"] / 1e6
-        # Implied price (rough): for a BUY (side=0), maker gives USDC for tokens,
-        # so price = usdc_paid / tokens_received = maker_usd / taker_usd.
-        # For a SELL (side=1), inverse.
-        df["implied_price"] = df.apply(
-            lambda r: (r["maker_usd"] / r["taker_usd"]) if r["taker_usd"] > 0 else 0.0,
-            axis=1,
-        ).clip(0.0, 1.0)
+        # Implied price per trade, accounting for side direction.
+        #
+        # Polymarket CTF OrderFilled event semantics:
+        #   side=0 (BUY):  maker gives USDC, receives tokens
+        #                  price = usdc_paid / tokens_received = maker_usd / taker_usd
+        #   side=1 (SELL): maker gives tokens, receives USDC
+        #                  price = usdc_received / tokens_sold = taker_usd / maker_usd
+        #
+        # CRITICAL FIX (SELL price inversion): previously the code computed
+        # `maker_usd / taker_usd` for BOTH sides, which for SELLs produces
+        # 1/p instead of p — e.g. a SELL at price 0.30 was recorded as 3.33
+        # (then clipped to 1.0, losing all information). The `side` field is
+        # already decoded from the event log (see _decode_order_filled_log),
+        # so we just branch on it.
+        #
+        # This table (unified_trades) is NOT currently used by
+        # build_brier_dataset(), so the bug does not affect live bet
+        # decisions — but it would silently corrupt any future analysis
+        # that joins on unified_trades. Fixed proactively.
+        def _implied_price(row: pd.Series) -> float:
+            maker_usd = float(row.get("maker_usd", 0.0) or 0.0)
+            taker_usd = float(row.get("taker_usd", 0.0) or 0.0)
+            side = int(row.get("side", 0))
+            if side == 1:  # SELL: tokens → USDC
+                if maker_usd <= 0:
+                    return 0.0
+                price = taker_usd / maker_usd
+            else:  # BUY (side=0): USDC → tokens
+                if taker_usd <= 0:
+                    return 0.0
+                price = maker_usd / taker_usd
+            # Clip to valid binary-market range [0, 1].
+            return max(0.0, min(1.0, price))
+
+        df["implied_price"] = df.apply(_implied_price, axis=1)
         return df
 
     # -- Join -------------------------------------------------------------

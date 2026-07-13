@@ -31,20 +31,38 @@ logger = __import__("logging").getLogger(__name__)
 
 
 async def karpathy_weekly_loop(state):
-    """Layer 1: Karpathy weekly optimization (Sunday 03:00 UTC)."""
+    """Layer 1: Karpathy weekly optimization (Sunday 03:00 UTC).
+
+    MEDIUM FIX (double-trigger guard): previously this loop had no
+    `last_run_week` tracking, so if the bot restarted during the 10-minute
+    Sunday 03:00 UTC window, Karpathy would run twice in the same week —
+    potentially overwriting good strategy params with a fresh (possibly
+    worse) optimization. Now tracks the ISO week number to prevent this,
+    mirroring the `last_run_date` pattern used by `asi_evolve_daily_loop`.
+    """
     from asi_engine.karpathy_weekly import run_karpathy_weekly
 
-    logger.info("KARPATHY WEEKLY: Starting weekly optimization")
+    logger.info("KARPATHY WEEKLY: Loop started (will run Sunday 03:00 UTC)")
+    last_run_week: int | None = None  # ISO week number, e.g. 28 for mid-July
     while state.is_running:
         try:
             now = datetime.now(UTC).replace(tzinfo=None)
-            if now.weekday() == 6 and now.hour == 3 and now.minute < 10:
+            # Sunday=6, 03:00–03:10 UTC window, and not already run this ISO week.
+            iso_year, iso_week, _ = now.isocalendar()
+            current_week_key = iso_year * 100 + iso_week
+            if (
+                now.weekday() == 6
+                and now.hour == 3
+                and now.minute < 10
+                and last_run_week != current_week_key
+            ):
                 logger.info("KARPATHY WEEKLY: Running weekly optimization")
                 result = await asyncio.wait_for(
                     asyncio.to_thread(run_karpathy_weekly, rounds=6, use_llm=False, seed=42),
                     timeout=3600,
                 )
                 logger.info(f"KARPATHY WEEKLY: Completed - {result}")
+                last_run_week = current_week_key
             await asyncio.sleep(600)
         except TimeoutError:
             logger.error("KARPATHY WEEKLY: Timeout")

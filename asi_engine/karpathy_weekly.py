@@ -226,15 +226,26 @@ def evaluate_hypothesis_oos(
         # 3. Market entry price — we need this to compute blend, Kelly + edge.
         # In production this comes from resolvedmarkets_ingest snapshots.
         # We ONLY use snapshot_yes_price (the pre-resolution orderbook price).
-        # The resolved yes_price (0.0/1.0) is NEVER used as entry proxy
-        # because it creates look-ahead bias: the model's bet would always
-        # appear profitable against the resolved outcome.
+        #
+        # CRITICAL FIX (look-ahead bias regression): the `elif yes_price` fallback
+        # was removed on 3 July (commit eb34c567) because `yes_price` in
+        # unified_datastore.py is the FINAL RESOLVED outcome (0.0 or 1.0), not
+        # a market price. Using it as entry price means the model "knows" the
+        # answer before betting — every bet on the winning side appears
+        # profitable, inflating backtest ROI from ~0% to +498%.
+        #
+        # The fallback silently came back on 12 July (commit 2f7ddde, unrelated
+        # commit message) and was used to "tune" min_edge=0.15 / blend_weight=0.35
+        # — those params were optimized against leaky data and are suspect.
+        #
+        # We now ONLY use snapshot_yes_price. If it is missing, the row is
+        # skipped for bet-decision purposes (Brier score is still computed
+        # because it doesn't need the market price).
         market_yes_price: float | None = None
         if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
             market_yes_price = float(row["snapshot_yes_price"])
-        elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
-            # Fallback to yes_price if snapshot not available (for backtesting)
-            market_yes_price = float(row["yes_price"])
+        # DO NOT fall back to `yes_price` — it is the resolved outcome (0/1),
+        # not a market price. Using it creates look-ahead bias.
 
         # 4. Market blend — shrink model forecast toward the market prior.
         # This is the same blend used in production (calculator.py/strategy.py).
