@@ -1,12 +1,13 @@
 """Quick Karpathy test with lower min_edge to generate more trades."""
 
 import logging
+
 from asi_engine.karpathy_weekly import (
+    Hypothesis,
     _build_splits_from_brier,
+    _uniform_weights,
     add_per_model_probabilities,
     evaluate_hypothesis_oos,
-    Hypothesis,
-    _uniform_weights,
 )
 from data_pipeline.unified_datastore import UnifiedDatastore
 

@@ -15,7 +15,7 @@ import glob
 import logging
 import os
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
@@ -47,7 +47,7 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     hot_cutoff = (now - timedelta(days=hot_days)).isoformat()
     cold_cutoff = (now - timedelta(days=cold_days)).isoformat()
 

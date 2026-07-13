@@ -263,7 +263,7 @@ class PolymarketScraper:
             market.get("question", "") + " " + market.get("description", "") + " " + market.get("title", "")
         ).lower()
         # 1) Must mention a known city (any key from CITY_ICAO_MAP)
-        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP.keys())
+        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP)
         if not city_match:
             return False
         # 2) Must contain a strong weather term (reject sports/politics that
@@ -282,7 +282,11 @@ class PolymarketScraper:
         )
         if not any(term in question for term in strong_terms):
             return False
-        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.)
+        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.).
+        # HIGH FIX: removed "wind" from reject list — the bot's market parser
+        # supports `wind_speed_kmh` as a metric and the data pipeline ingests
+        # `wind_speed_10m_max` forecasts. Previously valid wind-speed markets
+        # were silently dropped.
         reject_terms = (
             "rain",
             "snow",
@@ -291,13 +295,10 @@ class PolymarketScraper:
             "tornado",
             "precipitation",
             "humidity",
-            "wind",
             "snowfall",
             "rainfall",
         )
-        if any(term in question for term in reject_terms):
-            return False
-        return True
+        return not any(term in question for term in reject_terms)
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
@@ -373,7 +374,7 @@ class PolymarketScraper:
         question = raw.get("question", "") or raw.get("description", "") or raw.get("title", "")
         title_lower = (title or "").lower()
         question_lower = (question or "").lower()
-        for k in config.CITY_ICAO_MAP.keys():
+        for k in config.CITY_ICAO_MAP:
             if k in title_lower or k in question_lower:
                 city_name = k.title()
                 break
@@ -431,7 +432,9 @@ class PolymarketScraper:
         try:
             raw_markets = self._fetch_raw_markets()
         except Exception as e:
-            raise ScraperError(f"Polymarket API hatası: {e}")
+            # FIX (raise-missing-from): chain the exception so the original
+            # traceback is preserved. `raise ... from e` is the correct idiom.
+            raise ScraperError(f"Polymarket API hatası: {e}") from e
 
         weather_markets = [m for m in raw_markets if self._is_weather_market(m)]
         logger.info(f"{len(weather_markets)} hava durumu marketi bulundu")

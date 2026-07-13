@@ -1,9 +1,9 @@
 """Database models for ASIAbot based on state machine architecture."""
 
 import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, Index
+from sqlalchemy import Boolean, Column, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -80,11 +80,11 @@ class WeatherMarket(Base):
     status = Column(String, default=MarketStatus.OPEN.value)
 
     # Meta
-    first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    first_seen = Column(DateTime, default=lambda: datetime.now(UTC))
     last_updated = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     raw_data = Column(Text)
     fee_rate = Column(Float, default=0.05)  # Polymarket taker fee rate from feeSchedule
@@ -118,7 +118,7 @@ class WeatherForecast(Base):
     confidence = Column(Float)  # Varsa
 
     model_weight = Column(Float, default=0.0)
-    fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    fetched_at = Column(DateTime, default=lambda: datetime.now(UTC))
     raw_data = Column(Text)
 
 
@@ -158,7 +158,7 @@ class Analysis(Base):
     #        "model_probs": {"gfs_seamless": 0.72, ...}}
     model_predictions = Column(Text, nullable=True)
 
-    analyzed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    analyzed_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 class Bet(Base):
@@ -206,7 +206,7 @@ class Bet(Base):
     error_message = Column(String)  # Hata varsa
     entry_fee = Column(Float, default=0.0)  # Polymarket taker fee at entry (feeRate × stake × (1-p))
 
-    placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    placed_at = Column(DateTime, default=lambda: datetime.now(UTC))
     settled_at = Column(DateTime)
     close_reason = Column(String, nullable=True)
     closed_at = Column(DateTime, nullable=True)  # Early exit zamanı
@@ -228,8 +228,8 @@ class Portfolio(Base):
     daily_pnl = Column(Float, default=0.0)
     last_updated = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
 
@@ -250,10 +250,10 @@ class ModelPerformance(Base):
     weight = Column(Float, default=0.0)
     last_updated = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
-    recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    recorded_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
 
 class HistoricalCalibration(Base):
@@ -279,7 +279,7 @@ class HistoricalCalibration(Base):
     days_ahead = Column(Integer, nullable=True)  # (target_date - analyzed_at).days
     created_at = Column(
         DateTime,
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
     )
 
 

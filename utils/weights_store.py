@@ -107,11 +107,17 @@ def save_strategy_params(params: dict[str, float]):
 
             # Safety clamps — prevent SIA/Evolve/LLM from pushing values
             # into dangerous territory. These are HARD limits.
+            # HIGH FIX (inefficiency_min clamp disables gate): previously the
+            # ceiling was 0.0, so any positive inefficiency_min (e.g. +0.067,
+            # used to require a positive market inefficiency) was clamped to
+            # 0.0, making the `if inefficiency_min > 0` branch in
+            # engine/calculator.py unreachable. Ceiling is now +0.20 to allow
+            # positive thresholds while still bounding the value.
             _CLAMPS: dict[str, tuple[float, float]] = {
                 "min_edge": (0.05, 0.50),  # floor 5% (breakeven after fees), ceiling 50%
                 "kelly_fraction": (0.05, 0.25),  # ceiling 25% (quarter-Kelly)
                 "min_entry_price": (0.05, 0.95),  # floor 5%, ceiling 95%
-                "inefficiency_min": (-0.20, 0.0),  # floor -20%, ceiling 0
+                "inefficiency_min": (-0.20, 0.20),  # floor -20%, ceiling +20% (allow positive thresholds)
                 "blend_weight": (0.35, 0.50),  # MAX 0.50 — model over-trust'ı engelle
             }
             for key, (lo, hi) in _CLAMPS.items():

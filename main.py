@@ -14,9 +14,8 @@ import platform
 import signal
 import subprocess
 import time
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 
 from config.logging_config import setup_logging
 from config.settings import config
@@ -38,7 +37,7 @@ async def karpathy_weekly_loop(state):
     logger.info("KARPATHY WEEKLY: Starting weekly optimization")
     while state.is_running:
         try:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             if now.weekday() == 6 and now.hour == 3 and now.minute < 10:
                 logger.info("KARPATHY WEEKLY: Running weekly optimization")
                 result = await asyncio.wait_for(
@@ -47,7 +46,7 @@ async def karpathy_weekly_loop(state):
                 )
                 logger.info(f"KARPATHY WEEKLY: Completed - {result}")
             await asyncio.sleep(600)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("KARPATHY WEEKLY: Timeout")
         except Exception as e:
             logger.error(f"KARPATHY WEEKLY: Error - {e}")
@@ -62,7 +61,7 @@ async def asi_evolve_daily_loop(state):
     last_run_date = None
     while state.is_running:
         try:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             if now.hour == 2 and now.minute < 10 and last_run_date != now.date():
                 logger.info("ASI-EVOLVE DAILY: Running daily optimization")
                 result = await asyncio.wait_for(
@@ -72,7 +71,7 @@ async def asi_evolve_daily_loop(state):
                 logger.info(f"ASI-EVOLVE DAILY: Completed - {result}")
                 last_run_date = now.date()
             await asyncio.sleep(600)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("ASI-EVOLVE DAILY: Timeout")
         except Exception as e:
             logger.error(f"ASI-EVOLVE DAILY: Error - {e}")
@@ -118,10 +117,8 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
                 return False
             for pid in pids:
                 logger.warning("PORT CONFLICT: killing PID %d that owns port %d", pid, port)
-                try:
+                with suppress(OSError):
                     os.kill(pid, signal.SIGTERM)
-                except OSError:
-                    pass
             time.sleep(1)
             return True
     except (subprocess.CalledProcessError, FileNotFoundError):
@@ -267,20 +264,27 @@ Examples:
             )
             app.mount("/", StaticFiles(directory=_out, html=True), name="dashboard")
 
-        # Start background loops on FastAPI startup (lifespan handler)
+        # Start background loops on FastAPI startup (lifespan handler).
+        # CRITICAL FIX (lifespan silent override): previously this replaced
+        # api.py's `lifespan` via `app.router.lifespan_context = bot_lifespan`,
+        # which silently discarded any future changes made in api.py. We now
+        # explicitly replicate ALL startup steps from api.py.lifespan here
+        # (init_db, state.initialize_modules, ensure_initial_portfolio) AND
+        # add the bot-specific loops + warm-start. We also properly await
+        # task cancellation on shutdown (matching api.py's graceful pattern).
         @asynccontextmanager
         async def bot_lifespan(app):
-            logger.info("LIFESPAN STARTUP - Starting bot loops")
+            logger.info("LIFESPAN STARTUP - Starting bot loops (bot mode)")
+            # ── Mirror api.py lifespan startup ──────────────────────────────
             init_db()
             state.initialize_modules()
-
-            # Ensure initial portfolio row exists in DB
             try:
                 ensure_initial_portfolio()
             except Exception as e:
                 logger.warning("Portfolio init warning: %s", e)
 
-            # PER-5 FIX: Warm-start WeatherEngine in-process cache from DB
+            # ── Bot-mode-only: WeatherEngine warm-start ─────────────────────
+            # PER-5 FIX: Warm-start WeatherEngine in-process cache from DB.
             # Loads last 3 days of ensemble forecasts so first scan is fast.
             try:
                 from engine.calculator import WeatherEngine
@@ -292,6 +296,7 @@ Examples:
             except Exception as e:
                 logger.warning("WeatherEngine warm-start failed: %s", e)
 
+            # ── Bot-mode-only: Start background loops ───────────────────────
             state.is_running = True
             state.locked = False
             state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop(state))
@@ -300,11 +305,15 @@ Examples:
             state.tasks["asi_evolve_daily"] = asyncio.create_task(asi_evolve_daily_loop(state))
             logger.info("Bot loops started (scan_and_bet + settlement + karpathy_weekly + asi_evolve_daily)")
             yield
-            # Shutdown
+            # ── Shutdown: cancel + AWAIT (graceful, matches api.py) ────────
             logger.info("LIFESPAN SHUTDOWN - Stopping bot loops")
             for t in list(state.tasks.values()):
                 if not t.done():
                     t.cancel()
+            # Await cancelled tasks so pending work / final DB writes complete
+            # before the process exits. Without this, in-flight bets could be
+            # left half-written to the DB.
+            await asyncio.gather(*state.tasks.values(), return_exceptions=True)
             state.tasks.clear()
             state.is_running = False
 
@@ -335,7 +344,15 @@ Examples:
     elif args.command == "reset":
         db = get_db_session()
         try:
-            db.query(Bet).update({"status": "cancelled"})
+            # HIGH FIX: previously `db.query(Bet).update({"status": "cancelled"})`
+            # blanket-cancelled EVERY bet — including settled "won" / "lost"
+            # bets — destroying historical PnL data. Now only OPEN bets are
+            # cancelled, so historical settled bets (and their PnL) are
+            # preserved for backtesting / SIA optimization.
+            open_statuses = ("pending", "placed", "open")
+            cancelled_count = (
+                db.query(Bet).filter(Bet.status.in_(open_statuses)).update({"status": "cancelled"})
+            )
             db.query(Analysis).delete()
             pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
             if pf is None:
@@ -355,6 +372,11 @@ Examples:
                 pf.total_lost = 0
                 pf.daily_pnl = 0.0
             db.commit()
+            logger.info(
+                "Reset complete: %d open bets cancelled, analyses cleared. "
+                "Settled bets (won/lost) preserved for history.",
+                cancelled_count,
+            )
         finally:
             db.close()
     elif args.command in cmds:

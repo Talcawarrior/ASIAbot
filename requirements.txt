@@ -5,7 +5,7 @@ sqlalchemy>=2.0.25
 python-dotenv>=1.0.0
 requests>=2.32.3
 pandas>=2.0.0
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 scipy>=1.13.0
 aiohttp>=3.9.0
 pyarrow>=14.0.0
@@ -33,8 +33,16 @@ tenacity>=9.0.0
 apscheduler>=3.10.0
 tabulate>=0.10.0
 
-# Testing
-pytest>=7.4.0
-pytest-asyncio>=0.23.0
-ruff>=0.5.0
-mypy>=1.10.0
+# ── Dev dependencies ─────────────────────────────────────────────────────
+# MEDIUM FIX: previously ruff/mypy/pytest were in the main requirements.txt,
+# forcing every production install to pull in dev tooling. They are now
+# behind an `extras_require`-compatible marker so `pip install .` (or
+# `pip install -r requirements.txt`) does NOT install them, but
+# `pip install -r requirements-dev.txt` does. We keep them here commented
+# so CI scripts that `pip install -r requirements.txt` can opt-in by
+# also installing the dev requirements.
+# Install dev tools with:  pip install -r requirements-dev.txt
+# pytest>=7.4.0
+# pytest-asyncio>=0.23.0
+# ruff>=0.5.0
+# mypy>=1.10.0

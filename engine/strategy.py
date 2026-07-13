@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func
 
@@ -62,7 +62,7 @@ class MockBet:
         self.unrealized_pnl = 0.0
         self.realized_pnl = 0.0
         self.status = "active"
-        self.placed_at = datetime.now(timezone.utc)
+        self.placed_at = datetime.now(UTC)
 
 
 class RiskManager:
@@ -101,7 +101,7 @@ class RiskManager:
 
     def update_daily_pnl(self, pnl: float):
         """Update daily PnL and check circuit breaker."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if self._last_pnl_date is None or self._last_pnl_date.date() != now.date():
             if self._last_pnl_date is not None:
                 logger.info("Daily PnL reset for new day (was $%.2f)", self.daily_pnl)
@@ -185,7 +185,7 @@ class RiskManager:
         if not self.db:
             return self.portfolio_value
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             from sqlalchemy import or_
 
@@ -193,7 +193,7 @@ class RiskManager:
 
             initial = self.config.INITIAL_PORTFOLIO
             # Sadece BUGÜNDEN ÖNCE kapanan bahislerin PnL'i
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             realized = float(
                 self.db.query(func.coalesce(func.sum(Bet.pnl), 0.0))
@@ -344,8 +344,8 @@ class RiskManager:
                 return False, ""
             # Naive datetime'leri timezone-aware yap
             if resolution.tzinfo is None:
-                resolution = resolution.replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
+                resolution = resolution.replace(tzinfo=UTC)
+            now = datetime.now(UTC)
             hours_left = (resolution - now).total_seconds() / 3600
             if hours_left <= 0:
                 return False, ""  # Zaten geçmiş, settlement halleder
@@ -420,13 +420,13 @@ class RiskManager:
         """
         # Minimum hold: bet aynı scan döngüsünde açıldıysa kapatma.
         # Bu, resolve edilmiş market'lere anında bet açılıp kapanmasını engeller.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         placed = getattr(bet, "placed_at", None)
         if placed:
             if placed.tzinfo is None:
-                placed = placed.replace(tzinfo=timezone.utc)
+                placed = placed.replace(tzinfo=UTC)
             hold_seconds = (now - placed).total_seconds()
             if hold_seconds < 180:  # 3 dakika minimum hold
                 return False, "Hold (minimum hold period)"
@@ -844,7 +844,7 @@ class BettingEngine:
                 bet_type=getattr(signal, "outcome", "YES"),
                 side=getattr(signal, "side", "YES"),
                 status="active",
-                placed_at=datetime.now(timezone.utc),
+                placed_at=datetime.now(UTC),
                 ladder_data=(
                     json.dumps(getattr(signal, "ladder_orders", [])) if hasattr(signal, "ladder_orders") else None
                 ),
@@ -905,7 +905,7 @@ class SIALoop:
         if len(predictions) != len(outcomes) or len(predictions) == 0:
             return 1.0
 
-        squared_errors = [(pred - (1.0 if outcome else 0.0)) ** 2 for pred, outcome in zip(predictions, outcomes)]
+        squared_errors = [(pred - (1.0 if outcome else 0.0)) ** 2 for pred, outcome in zip(predictions, outcomes, strict=False)]
         brier_score = sum(squared_errors) / len(squared_errors)
         return round(brier_score, 4)
 
@@ -924,7 +924,7 @@ class SIALoop:
         performance = {}
 
         if not self.db_session_factory:
-            for model_name in self.model_weights.keys():
+            for model_name in self.model_weights:
                 performance[model_name] = {
                     "brier_score": 0.25,
                     "accuracy": 0.5,
@@ -935,7 +935,7 @@ class SIALoop:
 
         db = self.db_session_factory()
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff = datetime.now(UTC) - timedelta(days=days)
 
             # ── Load settled bets with their analysis + market resolution ──
             settled_bets = (
@@ -983,7 +983,7 @@ class SIALoop:
                     model_data[model_name].append((clamped, outcome_yes))
 
             # ── Compute per-model Brier ──────────────────────────────────
-            for model_name in self.model_weights.keys():
+            for model_name in self.model_weights:
                 records = model_data.get(model_name, [])
 
                 if not records:
@@ -1000,7 +1000,7 @@ class SIALoop:
                 outcomes_bool = [r[1] for r in records]
 
                 brier_score = self.calculate_brier_score(predictions, outcomes_bool)
-                correct = sum(1 for pred, out in zip(predictions, outcomes_bool) if (pred >= 0.5) == out)
+                correct = sum(1 for pred, out in zip(predictions, outcomes_bool, strict=False) if (pred >= 0.5) == out)
                 num_pred = len(predictions)
                 accuracy = correct / num_pred if num_pred else 0
                 frozen = num_pred < 10
@@ -1140,16 +1140,22 @@ class SIALoop:
                 strategy.min_edge,
             )
         elif win_rate > 0.60 and total_roi > 5:
-            # High win rate & profit: relax filter to find more trades
-            # FLOOR: never go below the user-configured min_edge in
-            # strategy_params.json (default 0.30). This prevents the SIA loop
-            # from overriding manual risk decisions.
+            # High win rate & profit: relax filter to find more trades.
+            # CRITICAL FIX (SIA min_edge ratchet): previously the code did
+            #   `strategy.min_edge = max(bot_config.strategy.min_edge, strategy.min_edge - 0.005)`
+            # but `strategy IS bot_config.strategy` (same reference), so the
+            # max() compared a value with itself and min_edge could never
+            # decrease — it was monotonically increasing until it blocked all
+            # bets. The floor must be a CONSTANT (StrategyConfig default), not
+            # the live value.
+            min_edge_floor = 0.05  # matches StrategyConfig.min_edge default + apply_persisted_strategy_params clamp
             old_edge = strategy.min_edge
-            strategy.min_edge = max(bot_config.strategy.min_edge, strategy.min_edge - 0.005)
+            strategy.min_edge = max(min_edge_floor, strategy.min_edge - 0.005)
             logger.info(
-                "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance)",
+                "  min_edge: %.2f -> %.2f (Selectivity RELAXED due to high performance, floor=%.2f)",
                 old_edge,
                 strategy.min_edge,
+                min_edge_floor,
             )
 
         # 2. Risk Appetite (kelly_fraction)
@@ -1224,7 +1230,7 @@ class SIALoop:
                 new_weights = self.optimize_weights(performance)
                 self.model_weights = new_weights
                 if hasattr(self.config, "MODEL_WEIGHTS"):
-                    setattr(self.config, "MODEL_WEIGHTS", new_weights)
+                    self.config.MODEL_WEIGHTS = new_weights
 
             # --- 2. Strategy Parameter Optimization (Financial SIA) ---
             # Aggregate overall stats for the feedback agent
@@ -1233,8 +1239,9 @@ class SIALoop:
             _closed_statuses = ("won", "lost", "settled", "closed_early")
 
             all_closed = db.query(Bet.pnl, Bet.amount).filter(Bet.status.in_(_closed_statuses)).all()
+            # HIGH FIX: use strict `< 0` for losses (break-even pnl==0 is neutral).
             win_count = sum(1 for b in all_closed if (b.pnl or 0) > 0)
-            loss_count = sum(1 for b in all_closed if (b.pnl or 0) <= 0)
+            loss_count = sum(1 for b in all_closed if (b.pnl or 0) < 0)
             total = win_count + loss_count
 
             # ROI = realized PnL / total stake (not portfolio.total_value)
@@ -1257,7 +1264,7 @@ class SIALoop:
                     accuracy=perf["accuracy"],
                     num_predictions=perf["num_predictions"],
                     weight=self.model_weights.get(model_name, 0),
-                    recorded_at=datetime.now(timezone.utc),
+                    recorded_at=datetime.now(UTC),
                 )
                 db.add(record)
 

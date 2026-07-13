@@ -365,7 +365,7 @@ def fetch_historical_forecast_ensemble(
             series = daily.get(key)
             if series is None:
                 continue
-            for dt, val in zip(times, series):
+            for dt, val in zip(times, series, strict=False):
                 if val is None:
                     continue
                 rows.append(
@@ -621,8 +621,8 @@ def _weighted_stats(df: pd.DataFrame, weights: dict[str, float]) -> tuple[dict[s
         total_w = sum(ws)
         if total_w <= 0 or not values:
             continue
-        mean = sum(v * w for v, w in zip(values, ws)) / total_w
-        var_w = sum(w * (v - mean) ** 2 for v, w in zip(values, ws)) / total_w
+        mean = sum(v * w for v, w in zip(values, ws, strict=False)) / total_w
+        var_w = sum(w * (v - mean) ** 2 for v, w in zip(values, ws, strict=False)) / total_w
         wmean[var] = float(mean)
         wstd[var] = float(var_w) ** 0.5
     return wmean, wstd

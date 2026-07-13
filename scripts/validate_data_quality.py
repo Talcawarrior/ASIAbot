@@ -1,8 +1,9 @@
 """Validate data quality: ensemble accuracy, brier scores, backtest feasibility."""
 
 import sqlite3
-import pandas as pd
+
 import numpy as np
+import pandas as pd
 
 
 def main():

@@ -95,8 +95,17 @@ async def _cache_clear_async() -> None:
 # Override via env var OPEN_METEO_MIN_INTERVAL_S for tuning.
 _MIN_INTERVAL_S = float(os.environ.get("OPEN_METEO_MIN_INTERVAL_S", "6.0"))
 _LAST_CALL_AT: dict[str, float] = {}
+# CRITICAL FIX (async/sync lock mismatch): previously there were two locks
+# protecting the SAME `_LAST_CALL_AT` dict: `_THROTTLE_LOCK` (threading.Lock,
+# used by sync `_throttle`) and `_THROTTLE_ASYNC_LOCK` (asyncio.Lock, used by
+# `_throttle_async`). They did NOT synchronize with each other, so a sync
+# thread and an async coroutine could both read/write `_LAST_CALL_AT`
+# simultaneously — classic TOCTOU race condition. The fix is to use a SINGLE
+# `threading.Lock` for the dict access in both functions. Briefly holding a
+# threading.Lock inside an async function is safe because the critical section
+# is just a dict get/set (microseconds); the long `asyncio.sleep(wait)` happens
+# AFTER the lock is released.
 _THROTTLE_LOCK = threading.Lock()
-_THROTTLE_ASYNC_LOCK = asyncio.Lock()
 
 
 def _throttle(host: str) -> None:
@@ -120,9 +129,15 @@ def _throttle(host: str) -> None:
 
 
 async def _throttle_async(host: str) -> None:
-    """Async version of _throttle using asyncio.Lock and asyncio.sleep."""
+    """Async version of _throttle.
+
+    Uses the SAME `_THROTTLE_LOCK` (threading.Lock) as the sync `_throttle`
+    so that the shared `_LAST_CALL_AT` dict is properly synchronized across
+    sync threads and async coroutines. The lock is held only for the brief
+    dict read/write; the long `asyncio.sleep(wait)` happens outside the lock.
+    """
     while True:
-        async with _THROTTLE_ASYNC_LOCK:
+        with _THROTTLE_LOCK:
             now = time.monotonic()
             last = _LAST_CALL_AT.get(host, 0.0)
             wait = _MIN_INTERVAL_S - (now - last)
@@ -552,8 +567,31 @@ class MeteoFetcher:
                     elif isinstance(r, Exception):
                         logger.error("Parallel fetch group error: %s", r)
             finally:
-                loop.run_until_complete(shared_session.close())
-                loop.close()
+                # HIGH FIX (aiohttp session close order): previously
+                # `loop.run_until_complete(shared_session.close())` was called
+                # unconditionally. If the gather above raised (e.g. loop
+                # already stopped), this would either re-raise or leave the
+                # session/loop dangling. Now we:
+                #   1. Try to close the session, but swallow cleanup errors.
+                #   2. Always close the loop afterwards.
+                #   3. Cancel any leftover pending tasks on the loop first.
+                try:
+                    # Cancel any tasks still pending on the loop (prevents
+                    # "Task was destroyed but it is pending!" warnings).
+                    pending = asyncio.all_tasks(loop)
+                    for t in pending:
+                        t.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    if not shared_session.closed:
+                        loop.run_until_complete(shared_session.close())
+                except Exception as cleanup_err:  # noqa: BLE001
+                    logger.debug("aiohttp session cleanup error (non-fatal): %s", cleanup_err)
+                finally:
+                    try:
+                        loop.close()
+                    except Exception as loop_close_err:  # noqa: BLE001
+                        logger.debug("loop.close() error (non-fatal): %s", loop_close_err)
 
         return total
 

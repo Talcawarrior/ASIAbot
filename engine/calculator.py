@@ -5,25 +5,25 @@ import json
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import aiohttp
 
+from asi_engine.calibration_engine import CalibrationEngine
 from config.settings import Config, bot_config, config
 from database.db import get_session_or
 from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
+from utils.formulas import max_bet_cap
+from utils.kelly import kelly_fraction as _kelly_fraction
 from utils.price_sanity import is_valid_binary_price
 from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
-from utils.formulas import max_bet_cap
-from utils.kelly import kelly_fraction as _kelly_fraction
-from utils.weights_store import load_weights
-from asi_engine.calibration_engine import CalibrationEngine
 from utils.slippage import (
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,
     estimate_slippage,
 )
+from utils.weights_store import load_weights
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
@@ -67,24 +67,18 @@ def adjusted_edge(
         side_coeff = s.side_coeff.get(side.upper(), 1.0)
 
     # Forecast RMSE penalty: 1 / rmse^2
-    if forecast_rmse is None:
-        rmse = s.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5)
-    else:
-        rmse = forecast_rmse
+    rmse = s.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5) if forecast_rmse is None else forecast_rmse
     rmse_penalty = 1.0 / (rmse * rmse) if rmse > 0 else 1.0
 
     # Spread penalty: high ensemble spread = low confidence
-    if ensemble_spread > s.spread_penalty_threshold:
-        spread_penalty = s.spread_penalty_factor
-    else:
-        spread_penalty = 1.0
+    spread_penalty = s.spread_penalty_factor if ensemble_spread > s.spread_penalty_threshold else 1.0
 
     return raw_edge * time_coeff * type_coeff * side_coeff * rmse_penalty * spread_penalty
 
 
 def _utcnow_naive() -> datetime:
     """Return naive UTC now. All DB datetimes are naive UTC."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class Calculator:
@@ -158,7 +152,7 @@ class Calculator:
                 return None
 
             # Skip already-resolved markets (lookahead bias guard)
-            if market.target_date <= datetime.now(timezone.utc).replace(tzinfo=None):
+            if market.target_date <= datetime.now(UTC).replace(tzinfo=None):
                 logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
                 return None
 
@@ -247,7 +241,7 @@ class Calculator:
             # SQLite microsecond truncation causing 23h59m → days_ahead=0.
             # Calendar arithmetic: target=2026-07-09, now=2026-07-08 → 1 day.
             target_date_obj = market.target_date.date() if hasattr(market.target_date, "date") else market.target_date
-            now_date = datetime.now(timezone.utc).date()
+            now_date = datetime.now(UTC).date()
             days_ahead = (target_date_obj - now_date).days
             days_ahead_for_check = max(days_ahead, 1)
 
@@ -416,10 +410,7 @@ class Calculator:
             # For a positive inefficiency_min (e.g. +0.067), we require the
             # edge to be at least that large. For negative values, the gate
             # is effectively disabled (we already require min_edge > 0).
-            if inefficiency_min > 0:
-                inefficiency_ok = abs(net_edge) >= inefficiency_min
-            else:
-                inefficiency_ok = True
+            inefficiency_ok = abs(net_edge) >= inefficiency_min if inefficiency_min > 0 else True
 
             # Adjusted edge gate: additional filter (not replacement)
             adjusted_edge_ok = adj_edge >= effective_min_edge * 0.5  # 50% threshold
@@ -479,7 +470,7 @@ class Calculator:
                 should_bet=should_bet,
                 reason=reason,
                 model_predictions=model_predictions_json,
-                analyzed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                analyzed_at=datetime.now(UTC).replace(tzinfo=None),
             )
             session.add(analysis)
             logger.info(
@@ -574,7 +565,7 @@ class WeatherEngine:
             with get_session() as session:
                 from datetime import timedelta
 
-                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
+                cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=3)
                 rows = (
                     session.query(WeatherForecast)
                     .filter(WeatherForecast.fetched_at >= cutoff)
@@ -607,7 +598,7 @@ class WeatherEngine:
                         "weighted_std": weighted_std,
                         "model_count": len(model_temps_db),
                         "model_temps": model_temps_db,
-                        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                        "timestamp": datetime.now(UTC).replace(tzinfo=None),
                     }
                     loaded += 1
             if loaded > 0:
@@ -642,10 +633,10 @@ class WeatherEngine:
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
-            target_date = datetime.now(timezone.utc).replace(tzinfo=None)
+            target_date = datetime.now(UTC).replace(tzinfo=None)
 
         api_model_names = []
-        for internal_name in self.model_weights.keys():
+        for internal_name in self.model_weights:
             api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
             if api_name not in api_model_names:
                 api_model_names.append(api_name)
@@ -786,42 +777,41 @@ class WeatherEngine:
                                     return None
                                 data = await resp.json()
                         else:
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(
-                                    url,
-                                    params=params,
-                                    timeout=aiohttp.ClientTimeout(total=30),
-                                ) as resp:
-                                    if resp.status == 429:
-                                        if attempt < max_retries:
-                                            retry_after = resp.headers.get("Retry-After")
-                                            wait = min(
-                                                float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0
-                                            )
-                                            logger.warning(
-                                                "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
-                                                attempt + 1,
-                                                max_retries + 1,
-                                                wait,
-                                                city_cache_key,
-                                            )
-                                            _global_429_until = time.monotonic() + wait
-                                            await asyncio.sleep(wait)
-                                            continue
-                                        logger.error(
-                                            "Ensemble API 429 after %d retries — giving up for %s",
-                                            max_retries,
+                            async with aiohttp.ClientSession() as session, session.get(
+                                url,
+                                params=params,
+                                timeout=aiohttp.ClientTimeout(total=30),
+                            ) as resp:
+                                if resp.status == 429:
+                                    if attempt < max_retries:
+                                        retry_after = resp.headers.get("Retry-After")
+                                        wait = min(
+                                            float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0
+                                        )
+                                        logger.warning(
+                                            "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
+                                            attempt + 1,
+                                            max_retries + 1,
+                                            wait,
                                             city_cache_key,
                                         )
-                                        return None
-                                    if resp.status != 200:
-                                        logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
-                                        return None
-                                    data = await resp.json()
+                                        _global_429_until = time.monotonic() + wait
+                                        await asyncio.sleep(wait)
+                                        continue
+                                    logger.error(
+                                        "Ensemble API 429 after %d retries — giving up for %s",
+                                        max_retries,
+                                        city_cache_key,
+                                    )
+                                    return None
+                                if resp.status != 200:
+                                    logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
+                                    return None
+                                data = await resp.json()
                         # Success — break out of retry loop
                         if data is not None:
                             break
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         if attempt < max_retries:
                             logger.warning(
                                 "Ensemble API timeout (attempt %d/%d) — retrying in 15s for %s",
@@ -911,7 +901,7 @@ class WeatherEngine:
             # {"temperature_max": {model: temp}, "temperature_min": {...}}
             side_metrics: dict[str, dict[str, float]] = {}
 
-            for internal_name in self.model_weights.keys():
+            for internal_name in self.model_weights:
                 api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
                 for api_metric, metric_label in [
                     ("temperature_2m_max", "temperature_max"),
@@ -973,7 +963,7 @@ class WeatherEngine:
                                     source=mn,
                                     predicted_value=float(tmp),
                                     model_weight=self.model_weights.get(mn, 0.0),
-                                    fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                    fetched_at=datetime.now(UTC).replace(tzinfo=None),
                                     raw_data=str({"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}),
                                 )
                             )
@@ -995,7 +985,7 @@ class WeatherEngine:
                 "weighted_std": weighted_std,
                 "model_count": len(model_temps),
                 "model_temps": model_temps,
-                "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+                "timestamp": datetime.now(UTC).replace(tzinfo=None),
             }
         except Exception as e:
             logger.error("get_multi_model_forecast error: %s", e)

@@ -3,7 +3,7 @@
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, or_
 
@@ -112,7 +112,7 @@ class BetPlacer:
 
     def _check_target_date_ok(self, d: BetDecision, market) -> bool:
         """Gate 6: Skip resolved markets."""
-        _now = datetime.now(timezone.utc).replace(tzinfo=None)
+        _now = datetime.now(UTC).replace(tzinfo=None)
         date_ok = not (market.target_date and market.target_date <= _now)
         d.check("target_date_ok", date_ok, target_date=str(market.target_date) if market.target_date else None)
         return d.should_bet
@@ -129,11 +129,11 @@ class BetPlacer:
 
     def _check_no_existing_bet(self, d: BetDecision, session, market, analysis) -> bool:
         """Gate 8: No existing bet for this market (with cooldown)."""
-        _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+        _today_start = datetime.now(UTC).replace(tzinfo=None)
         _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
         _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
-        _cooldown_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
+        _cooldown_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
 
         existing_open = (
             session.query(Bet)
@@ -393,7 +393,7 @@ class BetPlacer:
                 price_factors = [1.0, 0.98, 0.95]
                 ladder_mode = "conservative_averaging"
 
-            for (lvl, pct), pf in zip(splits, price_factors):
+            for (lvl, pct), pf in zip(splits, price_factors, strict=False):
                 lvl_amount = round(proposed_amount * pct, 2)
                 lvl_price = fill_price * pf
                 lvl_price = max(0.01, min(0.99, round(lvl_price, 4)))
@@ -424,23 +424,12 @@ class BetPlacer:
         )
         bet.order_id = order.get("orderID")
         bet.status = "placed"
-        bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        bet.placed_at = datetime.now(UTC).replace(tzinfo=None)
 
     def _execute_paper_order(self, bet):
         """Execute paper order (simulation)."""
         bet.status = "placed"
-        bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
-
-    def _get_token_id(self, market, side):
-        """Extract token_id from market.raw_data for the given side."""
-        try:
-            raw = json.loads(market.raw_data) if market.raw_data else {}
-            for tok in raw.get("tokens", []):
-                if tok.get("outcome", "").upper() == side.upper():
-                    return tok.get("condition_id") or tok.get("token_id")
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return None
+        bet.placed_at = datetime.now(UTC).replace(tzinfo=None)
 
     def place_bet(self, analysis_id: int, session=None) -> Bet | None:
         """Analiz sonucuna göre bet aç.
@@ -448,10 +437,18 @@ class BetPlacer:
         Optional session for batched cycles — when provided, reuses the
         caller's DB session so freshly-written Analysis records from the
         current cycle are visible.
+
+        MEDIUM FIX (shared session early commit): previously this method
+        called `session.commit()` directly even when the session was passed
+        in by the caller (place_all_pending). Those nested commits
+        prematurely ended the caller's transaction. Now we track session
+        ownership and only commit when we own the session.
         """
         d = BetDecision(market_id=f"analysis:{analysis_id}")
         from database.db import get_session_or
 
+        # Track whether we own the session so we can skip nested commits.
+        owns_session = session is None
         with get_session_or(session) as session:
             analysis = session.query(Analysis).filter_by(id=analysis_id).first()
             if not self._check_analysis_exists(d, analysis):
@@ -538,7 +535,7 @@ class BetPlacer:
                 if l1_amount and l1_amount > 0:
                     initial_stake = l1_amount
                     ladder_orders[0]["status"] = "filled"
-                    ladder_orders[0]["filled_at"] = datetime.now(timezone.utc).isoformat()
+                    ladder_orders[0]["filled_at"] = datetime.now(UTC).isoformat()
                     bet.ladder_data = json.dumps(ladder_orders)
 
             try:
@@ -550,7 +547,9 @@ class BetPlacer:
                 bet.status = "failed"
                 bet.error_message = str(e)
                 session.add(bet)
-                session.commit()
+                # MEDIUM FIX: only commit if we own the session.
+                if owns_session:
+                    session.commit()
                 return bet
 
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
@@ -561,10 +560,14 @@ class BetPlacer:
                     .scalar()
                 ) or 0.0
                 portfolio.current_value = portfolio_total_value(portfolio.cash_balance or 0.0, float(open_exposure))
-                portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
 
             session.add(bet)
-            session.commit()
+            # MEDIUM FIX: only commit if we own the session. When the caller
+            # (place_all_pending) owns the session, it will commit at the end
+            # of the batch.
+            if owns_session:
+                session.commit()
             d.final_amount = proposed_amount
             d.set_param("entry_fee", round(entry_fee, 4))
             d.set_param("fill_price", fill_price)
@@ -575,13 +578,28 @@ class BetPlacer:
             return bet
 
     def _get_token_id(self, market, side: str) -> str:
-        """Market'ten token ID al."""
+        """Market'ten token ID al.
+
+        CRITICAL FIX (duplicate _get_token_id): previously there were TWO
+        `_get_token_id` methods on this class. The first (now removed) tried
+        `condition_id` first and returned None on failure. The second (this
+        one) uses `token_id` (the correct Polymarket field) and raises
+        ValueError on failure. Python used to silently pick the second
+        definition, but having both was confusing and the first one was
+        dead code that referenced the wrong field (`condition_id`).
+
+        Per the Polymarket API, tokens use `token_id` (not `condition_id`),
+        so we use that field exclusively and raise on missing — failing
+        loudly is the correct behavior for live trading.
+        """
         raw = json.loads(market.raw_data) if market.raw_data else {}
         tokens = raw.get("tokens", [])
         for token in tokens:
             if token.get("outcome", "").upper() == side.upper():
-                return token.get("token_id")
-        raise ValueError(f"Token ID bulunamadı: {side}")
+                tid = token.get("token_id")
+                if tid:
+                    return tid
+        raise ValueError(f"Token ID bulunamadı: {side} (market_id={getattr(market, 'id', '?')})")
 
     def place_all_pending(self, session=None) -> int:
         """should_bet=True olan tum analizler icin bet ac.
@@ -626,7 +644,7 @@ class BetPlacer:
             # Prevents re-betting the same market across scan cycles on the same day.
             market_ids = {a.market_id for a in pending}
             if market_ids:
-                _today_start = datetime.now(timezone.utc).replace(tzinfo=None)
+                _today_start = datetime.now(UTC).replace(tzinfo=None)
                 _today_start = _today_start.replace(hour=0, minute=0, second=0, microsecond=0)
                 existing_rows = (
                     sess.query(Bet.market_id)
@@ -653,7 +671,7 @@ class BetPlacer:
             #     the bot doesn't re-enter a resolved question before new data
             #     arrives.
             _cooldown_hours = int(os.getenv("REOPEN_COOLDOWN_HOURS", "24"))
-            _cooldown_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
+            _cooldown_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=_cooldown_hours)
             if market_ids:
                 cooldown_rows = (
                     sess.query(Bet.market_id)
@@ -739,7 +757,7 @@ class BetPlacer:
             if pending:
                 mkt_ids = list({a.market_id for a in pending})
                 _markets = {m.id: m for m in sess.query(WeatherMarket).filter(WeatherMarket.id.in_(mkt_ids))}
-                _now_utc = datetime.now(timezone.utc)
+                _now_utc = datetime.now(UTC)
 
                 def _priority_key(a: Analysis) -> float:
                     m = _markets.get(a.market_id)
@@ -748,7 +766,7 @@ class BetPlacer:
                     td = m.target_date
                     if td:
                         if td.tzinfo is None:
-                            td = td.replace(tzinfo=timezone.utc)
+                            td = td.replace(tzinfo=UTC)
                         hours_left = (td - _now_utc).total_seconds() / 3600.0
                     else:
                         hours_left = -1.0
@@ -778,22 +796,26 @@ class BetPlacer:
             for a in pending:
                 aid_to_market[a.id] = a.market_id
 
-        for aid, mkt_id in aid_to_market.items():
-            if mkt_id in markets_with_bets:
-                logger.debug(
-                    "Market %s already has a bet, skipping analysis %d",
-                    mkt_id,
-                    aid,
-                )
-                continue
-            try:
-                bet = self.place_bet(aid, session=sess)
-                if bet is not None:
-                    placed += 1
-                    # Track this market to skip duplicate analyses in same batch
-                    markets_with_bets.add(mkt_id)
-            except Exception as e:
-                logger.error(f"Bet hatasi (analysis {aid}): {e}")
-                continue
+            # MEDIUM FIX (session closed before placement): previously the
+            # placement loop was OUTSIDE the `with get_session_or(...) as sess:`
+            # block, so when place_all_pending was called WITHOUT a session,
+            # `sess` was already closed by the time place_bet(aid, session=sess)
+            # ran. Now the loop is INSIDE the with block so sess is always open.
+            for aid, mkt_id in aid_to_market.items():
+                if mkt_id in markets_with_bets:
+                    logger.debug(
+                        "Market %s already has a bet, skipping analysis %d",
+                        mkt_id,
+                        aid,
+                    )
+                    continue
+                try:
+                    bet = self.place_bet(aid, session=sess)
+                    if bet is not None:
+                        placed += 1
+                        # Track this market to skip duplicate analyses in same batch
+                        markets_with_bets.add(mkt_id)
+                except Exception as e:
+                    logger.error(f"Bet hatasi (analysis {aid}): {e}")
 
         return placed

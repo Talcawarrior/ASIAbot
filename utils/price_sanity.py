@@ -23,9 +23,7 @@ def is_valid_binary_price(yes_price: float, no_price: float) -> bool:
     if not (0.01 <= n <= 0.99):
         return False
     s = y + n
-    if not (0.50 <= s <= 1.50):
-        return False
-    return True
+    return 0.5 <= s <= 1.5
 
 
 def clamp_price(price: float, min_price: float = 0.01, max_price: float = 0.99) -> float:

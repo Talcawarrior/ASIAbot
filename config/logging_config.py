@@ -1,5 +1,6 @@
 """Logging configuration for ASIAbot."""
 
+import contextlib
 import logging
 import os
 import sys
@@ -26,10 +27,8 @@ def setup_logging():
         stream = getattr(sys, stream_name, None)
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            try:
+            with contextlib.suppress(Exception):
                 reconfigure(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
 
     log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
     os.makedirs(log_dir, exist_ok=True)

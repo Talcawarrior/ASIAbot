@@ -186,7 +186,7 @@ class CognitionStore:
 
             d, idx_arr = self._faiss_index.search(np.array([q], dtype="float32"), min(k, len(self._ids)))
             results = []
-            for sim, idx in zip(d[0].tolist(), idx_arr[0].tolist()):
+            for sim, idx in zip(d[0].tolist(), idx_arr[0].tolist(), strict=False):
                 if idx < 0:
                     continue
                 results.append(
@@ -201,7 +201,7 @@ class CognitionStore:
         # Fallback: cosine similarity against all stored vectors
         sims = []
         for i, v in enumerate(self._embeddings):
-            s = sum(a * b for a, b in zip(q, v))
+            s = sum(a * b for a, b in zip(q, v, strict=False))
             sims.append((s, i))
         sims.sort(reverse=True)
         return [{"id": self._ids[i], "text": self._texts[i], "similarity": float(s)} for s, i in sims[:k]]
@@ -563,171 +563,176 @@ def run_asi_evolve_daily(
     """
     random.seed(seed)
     conn = _get_db()
-    cognition = CognitionStore()
-
-    # Pre-populate cognition store with all past experiments
-    cur = conn.cursor()
-    cur.execute("SELECT id, description FROM experiments ORDER BY id")
-    for exp_id, desc in cur.fetchall():
-        cognition.add(exp_id, desc)
-
-    # 1. Pull unified Brier dataset + splits
-    ds = UnifiedDatastore()
+    # CRITICAL FIX (unclosed SQLite connection): wrap the whole body in
+    # try/finally so the connection is always closed, even on early returns
+    # or exceptions. Previously the two `return` statements below leaked conn.
     try:
-        brier_df = ds.build_brier_dataset()
-    except Exception as e:
-        logger.warning(
-            "build_brier_dataset() raised %s — run polymarket_ingest with the "
-            "weather market parser first. Returning early.",
-            e,
-        )
-        return {
-            "error": "brier_dataset_unavailable",
-            "detail": str(e),
-            "candidates_run": 0,
-        }
+        cognition = CognitionStore()
 
-    if brier_df is None or brier_df.empty:
-        logger.error("Brier dataset is empty")
-        return {"error": "empty_brier_dataset", "candidates_run": 0}
+        # Pre-populate cognition store with all past experiments
+        cur = conn.cursor()
+        cur.execute("SELECT id, description FROM experiments ORDER BY id")
+        for exp_id, desc in cur.fetchall():
+            cognition.add(exp_id, desc)
 
-    # Add per-model prob columns (tries real forecast join, falls back to synthetic)
-    from asi_engine.karpathy_weekly import add_per_model_probabilities
-
-    brier_df = add_per_model_probabilities(brier_df, ds=ds)
-
-    splits = ds.build_walk_forward_splits()
-    if not splits:
-        splits = [
-            {
-                "split_n": 1,
-                "test_indices": brier_df.index.tolist(),
-                "train_indices": [],
-            }
-        ]
-
-    # 2. Init agents
-    researcher = ResearcherAgent(conn, cognition)
-    engineer = EngineerAgent(use_llm=use_llm)
-    analyzer = AnalyzerAgent(conn, cognition)
-
-    # 3. Load current best
-    best_hyp, best_stats = _load_best(conn)
-    if best_hyp is None:
-        # Seed with the Karpathy best (if any) or uniform prior
-        from asi_engine.karpathy_weekly import _load_best as load_karpathy_best
-
-        best_hyp = load_karpathy_best() or Hypothesis(
-            description="Uniform prior (seed)",
-            model_weights=_uniform_weights(),
-            min_edge=0.30,  # SAFETY CLAMP
-            kelly_fraction=0.06,
-            max_bet_pct=0.05,
-            blend_weight=0.45,
-        )
-        best_stats = {
-            "sharpe": -1e9,
-            "roi_pct": -1e9,
-            "brier_score": 1.0,
-            "win_rate": 0.0,
-            "total_trades": 0,
-            "total_pnl": 0.0,
-            "total_staked": 0.0,
-        }
-        # Seed the DB so future UCB1 has a parent to point to
-        seed_candidate = Candidate(
-            hypothesis=best_hyp,
-            parent_id=None,
-            source="seed",
-            round_num=0,
-            candidate_idx=0,
-        )
-        best_stats = analyzer.evaluate_and_store(seed_candidate, brier_df, splits)
-        # Mark as accepted
-        cur.execute(
-            "UPDATE experiments SET accepted = 1 WHERE id = ?",
-            (best_stats["exp_id"],),
-        )
-        conn.commit()
-        _save_best_metadata(best_hyp, best_stats)
-
-    # 4. Generate + evaluate candidates
-    round_num = 1 + (cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0])
-    accepted_count = 0
-
-    for c in range(n_candidates):
-        # Pick parent via UCB1
-        parent_hyp, parent_id = researcher.select_parent()
-
-        # Decide: crossover or mutation?
-        if random.random() < crossover_rate and len(cognition._ids) >= 2:
-            # Pick a second parent for crossover
-            second_id = random.choice([i for i in cognition._ids if i != parent_id])
-            second_hyp = get_parent_hypothesis(conn, second_id) or parent_hyp
-            new_hyp = crossover(parent_hyp, second_hyp)
-            source = "crossover"
-        else:
-            # Mutation
-            context = researcher.retrieve_context(parent_hyp.description)
-            new_hyp = engineer.propose(parent_hyp, round_num=round_num, candidate_idx=c, context=context)
-            source = new_hyp.source
-
-        candidate = Candidate(
-            hypothesis=new_hyp,
-            parent_id=parent_id,
-            source=source,
-            round_num=round_num,
-            candidate_idx=c,
-        )
-
+        # 1. Pull unified Brier dataset + splits
+        ds = UnifiedDatastore()
         try:
-            stats = analyzer.evaluate_and_store(candidate, brier_df, splits)
+            brier_df = ds.build_brier_dataset()
         except Exception as e:
-            logger.exception("Candidate %d evaluation failed: %s", c, e)
-            continue
-
-        improved = (
-            stats["sharpe"] > best_stats.get("sharpe", -1e9)
-            and stats["brier_score"] <= best_stats.get("brier_score", 1.0) * 1.10
-            and stats["total_trades"] >= 5
-        )
-
-        if improved:
-            logger.info(
-                "  [%d/%d] ✓ ACCEPTED (sharpe %.3f > %.3f): %s",
-                c + 1,
-                n_candidates,
-                stats["sharpe"],
-                best_stats.get("sharpe", 0.0),
-                new_hyp.description,
+            logger.warning(
+                "build_brier_dataset() raised %s — run polymarket_ingest with the "
+                "weather market parser first. Returning early.",
+                e,
             )
-            best_hyp = new_hyp
-            best_stats = stats
+            return {
+                "error": "brier_dataset_unavailable",
+                "detail": str(e),
+                "candidates_run": 0,
+            }
+
+        if brier_df is None or brier_df.empty:
+            logger.error("Brier dataset is empty")
+            return {"error": "empty_brier_dataset", "candidates_run": 0}
+
+        # Add per-model prob columns (tries real forecast join, falls back to synthetic)
+        from asi_engine.karpathy_weekly import add_per_model_probabilities
+
+        brier_df = add_per_model_probabilities(brier_df, ds=ds)
+
+        splits = ds.build_walk_forward_splits()
+        if not splits:
+            splits = [
+                {
+                    "split_n": 1,
+                    "test_indices": brier_df.index.tolist(),
+                    "train_indices": [],
+                }
+            ]
+
+        # 2. Init agents
+        researcher = ResearcherAgent(conn, cognition)
+        engineer = EngineerAgent(use_llm=use_llm)
+        analyzer = AnalyzerAgent(conn, cognition)
+
+        # 3. Load current best
+        best_hyp, best_stats = _load_best(conn)
+        if best_hyp is None:
+            # Seed with the Karpathy best (if any) or uniform prior
+            from asi_engine.karpathy_weekly import _load_best as load_karpathy_best
+
+            best_hyp = load_karpathy_best() or Hypothesis(
+                description="Uniform prior (seed)",
+                model_weights=_uniform_weights(),
+                min_edge=0.30,  # SAFETY CLAMP
+                kelly_fraction=0.06,
+                max_bet_pct=0.05,
+                blend_weight=0.45,
+            )
+            best_stats = {
+                "sharpe": -1e9,
+                "roi_pct": -1e9,
+                "brier_score": 1.0,
+                "win_rate": 0.0,
+                "total_trades": 0,
+                "total_pnl": 0.0,
+                "total_staked": 0.0,
+            }
+            # Seed the DB so future UCB1 has a parent to point to
+            seed_candidate = Candidate(
+                hypothesis=best_hyp,
+                parent_id=None,
+                source="seed",
+                round_num=0,
+                candidate_idx=0,
+            )
+            best_stats = analyzer.evaluate_and_store(seed_candidate, brier_df, splits)
+            # Mark as accepted
             cur.execute(
                 "UPDATE experiments SET accepted = 1 WHERE id = ?",
-                (stats["exp_id"],),
+                (best_stats["exp_id"],),
             )
             conn.commit()
-            _save_best_metadata(new_hyp, stats)
-            _append_results_tsv(round_num, c, new_hyp, stats, "keep")
-            accepted_count += 1
-        else:
-            logger.info(
-                "  [%d/%d] ✗ reject (sharpe %.3f ≤ %.3f)",
-                c + 1,
-                n_candidates,
-                stats["sharpe"],
-                best_stats.get("sharpe", 0.0),
+            _save_best_metadata(best_hyp, best_stats)
+
+        # 4. Generate + evaluate candidates
+        round_num = 1 + (cur.execute("SELECT COALESCE(MAX(round), 0) FROM experiments").fetchone()[0])
+        accepted_count = 0
+
+        for c in range(n_candidates):
+            # Pick parent via UCB1
+            parent_hyp, parent_id = researcher.select_parent()
+
+            # Decide: crossover or mutation?
+            if random.random() < crossover_rate and len(cognition._ids) >= 2:
+                # Pick a second parent for crossover
+                second_id = random.choice([i for i in cognition._ids if i != parent_id])
+                second_hyp = get_parent_hypothesis(conn, second_id) or parent_hyp
+                new_hyp = crossover(parent_hyp, second_hyp)
+                source = "crossover"
+            else:
+                # Mutation
+                context = researcher.retrieve_context(parent_hyp.description)
+                new_hyp = engineer.propose(parent_hyp, round_num=round_num, candidate_idx=c, context=context)
+                source = new_hyp.source
+
+            candidate = Candidate(
+                hypothesis=new_hyp,
+                parent_id=parent_id,
+                source=source,
+                round_num=round_num,
+                candidate_idx=c,
             )
-            _append_results_tsv(round_num, c, new_hyp, stats, "reject")
 
-        # LLM rate-limit friendliness
-        if use_llm and (c + 1) % 5 == 0:
-            time.sleep(1.0)
+            try:
+                stats = analyzer.evaluate_and_store(candidate, brier_df, splits)
+            except Exception as e:
+                logger.exception("Candidate %d evaluation failed: %s", c, e)
+                continue
 
-    cur.execute("SELECT COUNT(*) FROM experiments")
-    total_experiments = cur.fetchone()[0]
-    conn.close()
+            improved = (
+                stats["sharpe"] > best_stats.get("sharpe", -1e9)
+                and stats["brier_score"] <= best_stats.get("brier_score", 1.0) * 1.10
+                and stats["total_trades"] >= 5
+            )
+
+            if improved:
+                logger.info(
+                    "  [%d/%d] ✓ ACCEPTED (sharpe %.3f > %.3f): %s",
+                    c + 1,
+                    n_candidates,
+                    stats["sharpe"],
+                    best_stats.get("sharpe", 0.0),
+                    new_hyp.description,
+                )
+                best_hyp = new_hyp
+                best_stats = stats
+                cur.execute(
+                    "UPDATE experiments SET accepted = 1 WHERE id = ?",
+                    (stats["exp_id"],),
+                )
+                conn.commit()
+                _save_best_metadata(new_hyp, stats)
+                _append_results_tsv(round_num, c, new_hyp, stats, "keep")
+                accepted_count += 1
+            else:
+                logger.info(
+                    "  [%d/%d] ✗ reject (sharpe %.3f ≤ %.3f)",
+                    c + 1,
+                    n_candidates,
+                    stats["sharpe"],
+                    best_stats.get("sharpe", 0.0),
+                )
+                _append_results_tsv(round_num, c, new_hyp, stats, "reject")
+
+            # LLM rate-limit friendliness
+            if use_llm and (c + 1) % 5 == 0:
+                time.sleep(1.0)
+
+        cur.execute("SELECT COUNT(*) FROM experiments")
+        total_experiments = cur.fetchone()[0]
+    finally:
+        conn.close()
 
     logger.info(
         "ASI-Evolve round %d done. Candidates=%d, Accepted=%d, Total DB size=%d",

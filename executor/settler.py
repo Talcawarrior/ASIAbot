@@ -4,10 +4,9 @@
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import requests  # pylint: disable=import-error
-
 from sqlalchemy import func
 
 from database.db import get_session
@@ -44,8 +43,9 @@ class SettlementEngine:
         won_count = 0
         lost_count = 0
         pending_count = 0
+        error_count = 0  # HIGH FIX: track batch errors separately
         total_pnl = 0.0
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_naive = datetime.now(UTC).replace(tzinfo=None)
 
         with get_session() as session:
             # Create RiskManager for daily PnL tracking (circuit breaker)
@@ -84,15 +84,20 @@ class SettlementEngine:
                         lost_count += result.get("lost", 0)
                         total_pnl += result["pnl"]
                 except Exception as e:
+                    # HIGH FIX (batch settlement): previously a single market
+                    # failure re-raised and skipped settlement for ALL
+                    # remaining markets in the batch. Now we log + continue so
+                    # one bad market does not block the rest. The original
+                    # concern ("silent failure") is preserved via the logger.error
+                    # call which still surfaces in monitoring.
                     logger.error(
-                        "Settlement error for market %s: %s",
+                        "Settlement error for market %s (continuing batch): %s",
                         market.id,
                         e,
                         exc_info=True,
                     )
-                    # Re-raise to prevent silent failures - if one market fails
-                    # systematically (e.g., API format change), we want to know
-                    raise
+                    error_count += 1
+                    continue
 
             session.commit()
 
@@ -109,20 +114,22 @@ class SettlementEngine:
                     cash = float(portfolio.cash_balance or 0)
                     portfolio.total_value = portfolio_total_value(cash, float(open_exposure))
                     portfolio.current_value = portfolio.total_value
-                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                    portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
                     sync_session.commit()
 
         logger.info(
-            "Settlement complete: %s won, %s lost, %s pending, total_pnl=%.2f",
+            "Settlement complete: %s won, %s lost, %s pending, %s errors, total_pnl=%.2f",
             won_count,
             lost_count,
             pending_count,
+            error_count,
             total_pnl,
         )
         return {
             "win": won_count,
             "loss": lost_count,
             "pending": pending_count,
+            "errors": error_count,
             "total_pnl": total_pnl,
         }
 
@@ -147,7 +154,7 @@ class SettlementEngine:
             market.status = "expired"
             return None
 
-        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        now_naive = datetime.now(UTC).replace(tzinfo=None)
 
         # ── Fetch resolution from Gamma API ────────────────────────────────
         outcome = self._fetch_market_resolution(market)
@@ -184,13 +191,16 @@ class SettlementEngine:
 
         for bet in open_bets:
             try:
-                bet_won = bet.side == outcome
+                # HIGH FIX (case sensitivity): `bet.side == outcome` was
+                # case-sensitive, so "yes" (bet) vs "YES" (outcome from
+                # Polymarket) counted every bet as a loss. Compare upper.
+                bet_won = (bet.side or "").upper() == (outcome or "").upper()
                 if bet_won:
                     bet_won_count += 1
                 else:
                     bet_lost_count += 1
                 bet.status = "won" if bet_won else "lost"
-                bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                bet.settled_at = datetime.now(UTC).replace(tzinfo=None)
 
                 stake = float(bet.amount or 0)
                 entry_price = float(bet.entry_price or bet.price or 0.5)
@@ -295,7 +305,7 @@ class SettlementEngine:
                 "outcome": outcome,
                 "outcomePrices": prices,
                 "umaResolutionStatus": data.get("umaResolutionStatus"),
-                "settled_at": datetime.now(timezone.utc).isoformat(),
+                "settled_at": datetime.now(UTC).isoformat(),
             }
         )
         return outcome
@@ -326,7 +336,7 @@ class SettlementEngine:
                 "source": "fallback_price",
                 "outcome": outcome,
                 "outcomePrices": prices,
-                "settled_at": datetime.now(timezone.utc).isoformat(),
+                "settled_at": datetime.now(UTC).isoformat(),
             }
         )
         return outcome

@@ -23,6 +23,7 @@ OpenAPI spec: https://resolvedmarkets.com/openapi.json
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
@@ -143,10 +144,8 @@ class ResolvedMarketsClient:
                     backoff = min(60.0, 2.0 * (2**attempt))
                     retry_after = resp.headers.get("Retry-After")
                     if retry_after:
-                        try:
+                        with contextlib.suppress(ValueError):
                             backoff = float(retry_after)
-                        except ValueError:
-                            pass
                     logger.warning(
                         "ResolvedMarkets 429 on %s %s — backing off %.1fs (attempt %d/%d)",
                         method,
@@ -434,10 +433,7 @@ class ResolvedMarketsClient:
         if end:
             params["end"] = end
         data = self._request("GET", "/v1/exchange/snapshots", params=params)
-        if isinstance(data, dict):
-            records = data.get("snapshots", data.get("data", []))
-        else:
-            records = data
+        records = data.get("snapshots", data.get("data", [])) if isinstance(data, dict) else data
         return pd.DataFrame(records or [])
 
     # -- Backtest endpoint (server-side) ---------------------------------
@@ -457,10 +453,7 @@ class ResolvedMarketsClient:
     def list_backtest_history(self, *, limit: int = 20) -> pd.DataFrame:
         """GET /v1/backtest/history — recent backtest runs."""
         data = self._request("GET", "/v1/backtest/history", params={"limit": limit})
-        if isinstance(data, dict):
-            records = data.get("runs", data.get("data", []))
-        else:
-            records = data
+        records = data.get("runs", data.get("data", [])) if isinstance(data, dict) else data
         return pd.DataFrame(records or [])
 
 

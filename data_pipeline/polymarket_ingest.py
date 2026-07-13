@@ -385,7 +385,7 @@ def _extract_outcome_price(row: pd.Series, side: str) -> float | None:
     if len(prices) != len(outcomes):
         return None
     target = "yes" if side.lower() == "yes" else "no"
-    for label, price in zip(outcomes, prices):
+    for label, price in zip(outcomes, prices, strict=False):
         if str(label).strip().lower() == target:
             try:
                 return float(price)

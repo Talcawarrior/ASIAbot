@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func
 
@@ -11,6 +11,8 @@ from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, Weather
 from utils.formulas import (
     polymarket_fee,
     portfolio_total_value,
+)
+from utils.formulas import (
     unrealized_pnl as compute_unrealized_pnl,
 )
 
@@ -19,7 +21,7 @@ logger = logging.getLogger("JOBS_SCHEDULER")
 
 def _utcnow_naive() -> datetime:
     """Return naive UTC now. All DB datetimes are naive UTC."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def run_fetch_markets():
@@ -58,8 +60,8 @@ def run_analyze(session=None):
     (was ~29 min → target ~3 min for 339 markets).
     """
 
-    from engine.calculator import Calculator
     from database.models import WeatherForecast
+    from engine.calculator import Calculator
 
     calc = Calculator()
     analyzed = 0
@@ -69,7 +71,7 @@ def run_analyze(session=None):
             .filter(
                 WeatherMarket.status == "open",
                 WeatherMarket.city.isnot(None),
-                WeatherMarket.target_date > datetime.now(timezone.utc).replace(tzinfo=None),
+                WeatherMarket.target_date > datetime.now(UTC).replace(tzinfo=None),
             )
             .all()
         )
@@ -207,7 +209,7 @@ def run_update_prices(session=None):
                                     should_fill = current <= trigger_price
                                 if should_fill and rung_size > 0:
                                     rung["status"] = "filled"
-                                    rung["filled_at"] = datetime.now(timezone.utc).isoformat()
+                                    rung["filled_at"] = datetime.now(UTC).isoformat()
                                     filled_amount += rung_size
                         if filled_amount > 0:
                             bet.ladder_data = json.dumps(ladder)
@@ -237,7 +239,7 @@ def run_update_prices(session=None):
                 cash = (portfolio.initial_value or 1000.0) + float(realized_pnl_total)
             portfolio.total_value = portfolio_total_value(cash, float(open_exposure))
             portfolio.current_value = portfolio.total_value  # Sync current_value
-            portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+            portfolio.last_updated = datetime.now(UTC).replace(tzinfo=None)
             sess.add(portfolio)
 
         sess.commit()
@@ -318,7 +320,7 @@ def run_risk_management(session=None):
 
         bet.status = "closed_early"
         bet.close_reason = reason
-        bet.closed_at = datetime.now(timezone.utc)
+        bet.closed_at = datetime.now(UTC)
         bet.realized_pnl = realized
         bet.pnl = realized
         bet.current_price = current_price
@@ -334,7 +336,7 @@ def run_risk_management(session=None):
             portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
             portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
             portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)
-            portfolio.last_updated = datetime.now(timezone.utc)
+            portfolio.last_updated = datetime.now(UTC)
             sess.add(portfolio)
 
         sess.add(bet)

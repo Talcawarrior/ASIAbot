@@ -222,10 +222,7 @@ def adjust_edge_for_costs(
         #   fee_per_share = feeRate × p × (1-p)
         # Since edge is measured in price/probability units (same as p),
         # the fee drag in edge units = feeRate × p × (1-p).
-        if entry_price > 0:
-            fee_drag = FEE_PCT * entry_price * (1.0 - entry_price)
-        else:
-            fee_drag = 0.0
+        fee_drag = FEE_PCT * entry_price * (1.0 - entry_price) if entry_price > 0 else 0.0
         cost += fee_drag
     return raw_edge - cost
 
@@ -319,10 +316,7 @@ def check_orderbook_depth(
         return True, 0.0
 
     # Pick the relevant side: buying YES = consuming asks, buying NO = consuming bids
-    if side.upper() == "YES":
-        levels = ob.get("asks", [])
-    else:
-        levels = ob.get("bids", [])
+    levels = ob.get("asks", []) if side.upper() == "YES" else ob.get("bids", [])
 
     # Sum depth within ±2 ticks (0.02) of fill_price
     depth_usd = 0.0

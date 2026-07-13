@@ -9,15 +9,14 @@ import json
 import logging
 import sqlite3
 
+# Weather category fee rate — loaded from config (default 0.05)
+from config.settings import bot_config as _bot_cfg
 from database.db import DB_PATH, get_session
 from database.models import Analysis, Bet, WeatherMarket
 from utils.formulas import polymarket_fee
 from utils.kelly import kelly_bet_amount
 from utils.probability import estimate_probability
 from utils.slippage import adjust_edge_for_costs, estimate_slippage
-
-# Weather category fee rate — loaded from config (default 0.05)
-from config.settings import bot_config as _bot_cfg
 
 WEATHER_FEE_RATE = _bot_cfg.weather_fee_rate
 

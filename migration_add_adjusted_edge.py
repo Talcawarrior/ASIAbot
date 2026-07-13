@@ -1,7 +1,7 @@
 """Migration: Add adjusted_edge column to analyses table."""
 
-import sqlite3
 import os
+import sqlite3
 
 DB = os.path.join(os.path.dirname(__file__), "data", "bot.db")
 

@@ -5,7 +5,7 @@ Extracted from main.py to reduce file size and separate concerns.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from database.db import get_session
 from database.models import OPEN_BET_STATUSES, Bet, WeatherMarket
@@ -15,7 +15,12 @@ logger = logging.getLogger("BOT_LOOP")
 
 # HATA-15 FIX: broadcast_message lazy import (circular import önlemek için)
 async def _safe_broadcast(message: dict):
-    """Broadcast message to WebSocket clients (best-effort)."""
+    """Broadcast message to WebSocket clients (best-effort).
+
+    MEDIUM FIX: previously broadcast errors were logged at DEBUG level,
+    making them invisible in normal operation. Raised to WARNING so
+    operators can see when WebSocket fan-out is failing.
+    """
     try:
         from api import broadcast_message
 
@@ -23,7 +28,7 @@ async def _safe_broadcast(message: dict):
     except ImportError:
         pass
     except Exception as e:
-        logger.debug("Broadcast failed: %s", e)
+        logger.warning("Broadcast failed: %s", e)
 
 
 def _is_midnight_window(now: datetime) -> bool:
@@ -72,7 +77,7 @@ async def scan_and_bet_loop(state):
 
     while state.is_running:
         try:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             today = now.date()
 
             # Midnight detection: if day changed, run immediately
@@ -91,9 +96,31 @@ async def scan_and_bet_loop(state):
                 asyncio.wait_for(asyncio.to_thread(run_fetch_weather), timeout=_FETCH_TIMEOUT),
                 return_exceptions=True,
             )
-            for result in parse_and_weather:
+            # HIGH FIX (loop continues on failed data fetch): previously the
+            # bot logged the error but still called run_cycle() below, which
+            # could place bets on stale/empty data. Now we skip the cycle if
+            # either parse_markets or fetch_weather failed.
+            data_failed = False
+            for step_name, result in zip(("parse_markets", "fetch_weather"), parse_and_weather, strict=False):
                 if isinstance(result, Exception):
-                    logger.error("Parallel step error: %s", result)
+                    logger.error("Parallel step %s failed: %s — SKIPPING cycle", step_name, result)
+                    data_failed = True
+            if data_failed:
+                # Skip the bet-placing cycle to avoid trading on missing data.
+                # The next scan iteration will retry.
+                state.last_scan = datetime.now(UTC).replace(tzinfo=None)
+                await _safe_broadcast(
+                    {
+                        "type": "scan_complete",
+                        "last_scan": state.last_scan.isoformat(),
+                        "is_running": state.is_running,
+                        "skipped_cycle_reason": "data_fetch_failed",
+                    }
+                )
+                # Use the same dynamic interval as the normal path.
+                interval = _get_scan_interval(state.last_scan)
+                await asyncio.sleep(interval)
+                continue
             # Core DB operations — single shared session for consistency
             await asyncio.wait_for(asyncio.to_thread(run_cycle), timeout=_CYCLE_TIMEOUT)
 
@@ -102,7 +129,7 @@ async def scan_and_bet_loop(state):
             if stale_check_counter >= 10:
                 stale_check_counter = 0
                 await asyncio.wait_for(asyncio.to_thread(_cleanup_stale_bets), timeout=_CLEANUP_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Scan step timed out — fetch=%ds, cycle=%ds. Recovering.",
                 _FETCH_TIMEOUT,
@@ -110,7 +137,7 @@ async def scan_and_bet_loop(state):
             )
         except Exception as e:
             logger.error("Scan error: %s", e)
-        state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
+        state.last_scan = datetime.now(UTC).replace(tzinfo=None)
 
         # HATA-15 FIX: WebSocket broadcast. Onceki kod broadcast_message
         # fonksiyonu vardi ama hic cagrilmadi. Simdi her scan sonrasi
@@ -124,7 +151,7 @@ async def scan_and_bet_loop(state):
         )
 
         # Dynamic interval: fast during midnight window, normal otherwise
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
         interval = _get_scan_interval(now)
         if _is_midnight_window(now):
             logger.debug("Midnight window active — scanning every %ds", interval)
@@ -133,7 +160,7 @@ async def scan_and_bet_loop(state):
 
 def _cleanup_stale_bets():
     """Cancel open bets whose target_date has passed by >48h and market is unresolvable."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = datetime.now(UTC).replace(tzinfo=None)
     cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
     with get_session() as session:
         stale = (
@@ -186,7 +213,7 @@ async def settlement_loop(state):
             await asyncio.wait_for(asyncio.to_thread(run_settle), timeout=_SETTLE_TIMEOUT)
 
             # Daily DB cleanup: archive old forecasts, VACUUM
-            today = datetime.now(timezone.utc).date()
+            today = datetime.now(UTC).date()
             if last_cleanup_date != today:
                 from database.db_cleanup import auto_cleanup
 
@@ -194,14 +221,14 @@ async def settlement_loop(state):
                 last_cleanup_date = today
 
             # SIA optimization: hourly
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            now = datetime.now(UTC).replace(tzinfo=None)
             if state.sia_loop is not None and (
                 state.sia_last_run is None
                 or (now - state.sia_last_run).total_seconds() >= state.sia_interval_hours * 3600
             ):
                 await asyncio.wait_for(asyncio.to_thread(state.sia_loop.run_optimization_cycle), timeout=_SIA_TIMEOUT)
-                state.sia_last_run = datetime.now(timezone.utc).replace(tzinfo=None)
-        except asyncio.TimeoutError:
+                state.sia_last_run = datetime.now(UTC).replace(tzinfo=None)
+        except TimeoutError:
             logger.error("Settlement step timed out — recovering.")
         except Exception as e:
             logger.error("Settle error: %s", e)

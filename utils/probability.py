@@ -11,7 +11,7 @@ Usage::
 
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Calibrator placeholder — not active pending more settled bets.
 # The Platt-scaling approach needs ~500+ samples for a stable fit.
@@ -163,9 +163,9 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
         resolution = getattr(market, "resolution_date", None) or getattr(market, "target_date", None)
         if resolution is None:
             return base
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if getattr(resolution, "tzinfo", None) is None:
-            resolution = resolution.replace(tzinfo=timezone.utc)
+            resolution = resolution.replace(tzinfo=UTC)
         hours_left = (resolution - now).total_seconds() / 3600.0
     except Exception:
         return base

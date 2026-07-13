@@ -5,6 +5,7 @@ check if the bet would have won by looking at bet outcomes.
 """
 
 import sqlite3
+
 import pandas as pd
 
 

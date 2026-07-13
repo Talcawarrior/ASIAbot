@@ -691,8 +691,8 @@ class UnifiedDatastore:
         This is the MISSING DATA SOURCE that Karpathy/ASI-Evolve/SIA should use
         to learn from ALL decisions, not just the 130 settled markets.
         """
-        import sqlite3
         import json
+        import sqlite3
 
         db_path = os.path.join(self.cfg.data_dir, "..", "bot.db")
         if not os.path.exists(db_path):
@@ -868,7 +868,7 @@ class UnifiedDatastore:
 
 
 def _ingest_poly_markets(
-    ds: "UnifiedDatastore",
+    ds: UnifiedDatastore,
     markets_limit: int | None,
 ) -> None:
     """Step 1: Fetch weather markets from bot's own database ??? unified_markets table.
@@ -880,6 +880,7 @@ def _ingest_poly_markets(
     logger.info("=== [1/4] Bot weather markets (from bot.db) ===")
     try:
         import sqlite3
+
         import pandas as pd
 
         db_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "bot.db")
@@ -935,7 +936,7 @@ def _ingest_poly_markets(
 
 
 def _ingest_weather_actuals(
-    ds: "UnifiedDatastore",
+    ds: UnifiedDatastore,
     weather_locations: list[tuple[str, float, float]],
     backfill_days: int,
 ) -> None:
@@ -959,7 +960,7 @@ def _ingest_weather_actuals(
 
 
 def _ingest_forecasts(
-    ds: "UnifiedDatastore",
+    ds: UnifiedDatastore,
     weather_locations: list[tuple[str, float, float]],
 ) -> None:
     """Step 3: Fetch weather forecasts (historical backfill + live + NWS).
@@ -1086,7 +1087,7 @@ def _ingest_forecasts(
 
 
 def _ingest_resolved_snapshots(
-    ds: "UnifiedDatastore",
+    ds: UnifiedDatastore,
     market_ids: list[str] | None,
 ) -> None:
     """Step 4: Fetch Resolved Markets orderbook snapshots (optional)."""

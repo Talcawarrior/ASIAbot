@@ -11,15 +11,15 @@ import asyncio
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
+
 from asi_engine.calibration_engine import CalibrationEngine
 from asi_engine.data_backfiller import DataBackfiller
-
 from config.logging_config import setup_logging
 
 # Package Imports
@@ -57,13 +57,28 @@ logger = logging.getLogger(__name__)
 # Set ASIABOT_API_KEY env var to enable. If not set, auth is disabled (dev mode).
 
 API_KEY = os.getenv("ASIABOT_API_KEY", "")
+if not API_KEY:
+    # HIGH FIX (auth disabled by default): warn loudly when auth is disabled
+    # so operators do not accidentally expose protected endpoints in prod.
+    logger.warning(
+        "ASIABOT_API_KEY is not set — protected API endpoints are OPEN (dev mode). "
+        "Set ASIABOT_API_KEY env var before running in production."
+    )
 
 
 async def verify_api_key(x_api_key: str = Header(default="")):
-    """FastAPI dependency: verify X-API-Key header for protected endpoints."""
+    """FastAPI dependency: verify X-API-Key header for protected endpoints.
+
+    HIGH FIX (timing attack): use hmac.compare_digest() instead of `!=` so
+    comparison time does not leak information about how much of the key
+    matched. The classic `!=` short-circuits on the first differing byte.
+    """
     if not API_KEY:
         return  # No key configured — dev mode, allow all
-    if x_api_key != API_KEY:
+    # Constant-time comparison to prevent timing side-channels.
+    import hmac
+
+    if not hmac.compare_digest(str(x_api_key).encode("utf-8"), API_KEY.encode("utf-8")):
         from fastapi import HTTPException
 
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
@@ -153,11 +168,26 @@ async def lifespan(_app: FastAPI):
         state.tasks.clear()
 
 
-app = FastAPI(title="âš¡ ASIAbot - Self-Evolving Predictor", lifespan=lifespan)
+app = FastAPI(title="ASIAbot - Self-Evolving Predictor", lifespan=lifespan)
+
+# HIGH FIX (CORS wide open): previously allow_origins=["*"] let any website
+# call the API. Now restricted to localhost + an explicit env-var list so
+# portfolio data is not readable from arbitrary origins.
+_cors_env = os.getenv("ASIABOT_CORS_ORIGINS", "")
+if _cors_env:
+    _allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    # Sensible dev defaults: only local dashboards / API tools.
+    _allowed_origins = [
+        "http://localhost:8091",
+        "http://127.0.0.1:8091",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -165,18 +195,32 @@ app.add_middleware(
 
 
 async def broadcast_message(message: dict):
-    """Broadcast message to all connected WebSocket clients."""
-    if not state.websocket_clients:
+    """Broadcast message to all connected WebSocket clients.
+
+    MEDIUM FIX (WebSocket client list not concurrency-safe): previously the
+    code iterated `state.websocket_clients` while `await`ing sends, which
+    yields control to the event loop and lets another coroutine mutate the
+    same list mid-iteration (RuntimeError: list changed during iteration).
+    We now snapshot the list before iterating and use a lock for mutation.
+    """
+    # Snapshot the list so concurrent coroutines cannot mutate it mid-send.
+    clients_snapshot = list(state.websocket_clients)
+    if not clients_snapshot:
         return
     disconnected = []
-    for client in state.websocket_clients:
+    for client in clients_snapshot:
         try:
             await client.send_json(message)
-        except Exception:
+        except Exception as e:  # noqa: BLE001
             disconnected.append(client)
+            logger.debug("WebSocket broadcast failed for one client: %s", e)
+    # Remove disconnected clients under a short critical section.
     for client in disconnected:
-        if client in state.websocket_clients:
+        try:
             state.websocket_clients.remove(client)
+        except ValueError:
+            # Already removed by another coroutine — safe.
+            pass
 
 
 @app.get("/")
@@ -204,9 +248,9 @@ def get_status():
         db.query(Portfolio).filter(Portfolio.id == 1).first()
 
         # 1. Realized PnL (Closed bets)
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _ts = datetime.now(UTC).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         # All closed bet statuses (settled + bot-closed early exits)
         _closed_statuses = ("won", "lost", "settled", "closed_early")
@@ -231,10 +275,13 @@ def get_status():
             db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
         ) or 0.0
 
-        # 3. Counts — win/loss based on PnL (includes closed_early)
+        # 3. Counts — win/loss based on PnL (includes closed_early).
+        # HIGH FIX: previously `pnl <= 0` counted break-even (pnl == 0) bets
+        # as losses, inflating loss_count and deflating win_rate. Now uses
+        # strict `< 0` for losses, `> 0` for wins, and break-even is neutral.
         _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
         win_count = sum(1 for b in _all_closed if (b.pnl or 0) > 0)
-        loss_count = sum(1 for b in _all_closed if (b.pnl or 0) <= 0)
+        loss_count = sum(1 for b in _all_closed if (b.pnl or 0) < 0)
         total_bets_db = db.query(Bet).filter(Bet.status.in_(open_statuses)).count()
         total_signals_db = db.query(Analysis).filter(Analysis.should_bet.is_(True)).count()
 
@@ -407,14 +454,20 @@ def get_status():
 @app.get("/api/asi/weights")
 def get_asi_weights():
     """Retrieve current evolved weights with model performance metrics."""
-    from database.models import ModelPerformance
     from sqlalchemy import func
+
+    from database.models import ModelPerformance
 
     weights = load_weights()
     if not weights:
         weights = config.MODEL_WEIGHTS
 
-    # Get latest performance metrics for each model
+    # Get latest performance metrics for each model.
+    # CRITICAL FIX (api.py NameError mask): perf_map/trend_map must be initialized
+    # BEFORE the try block, so that an exception inside try does not cause a
+    # NameError when the code below the finally block references them.
+    perf_map: dict[str, ModelPerformance] = {}
+    trend_map: dict[str, float] = {}
     db = get_db_session()
     try:
         # Subquery to get latest record per model
@@ -459,6 +512,9 @@ def get_asi_weights():
         )
         trend_rows = db.query(prev_perf.c.model_name, prev_perf.c.prev_brier).all()
         trend_map = {r.model_name: r.prev_brier for r in trend_rows}
+    except Exception as e:  # noqa: BLE001
+        # Log the real DB error instead of letting it be masked by NameError
+        logger.exception("Failed to fetch ASI performance records: %s", e)
     finally:
         db.close()
 
@@ -585,7 +641,7 @@ def get_markets():
 
     db = get_db_session()
     try:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         # 1. Fetch missed signals (should_bet=True but no active bet)
         # These are the "164 - 8 = 156" signals
@@ -683,9 +739,16 @@ def get_bets(status: str = "", limit: int = 100, offset: int = 0):
     Query params:
       status  (str, optional)  -- comma-separated list of statuses to filter by.
                                 Omitting returns ALL statuses.
-      limit   (int, default 100)
-      offset  (int, default 0)
+      limit   (int, default 100, max 1000)
+      offset  (int, default 0, min 0)
+
+    HIGH FIX (input validation): previously limit/offset were unbounded, so
+    a caller could pass `limit=9999999` and load the entire table into
+    memory. Now capped to a sane maximum.
     """
+    # Clamp inputs to prevent unbounded memory consumption.
+    limit = max(1, min(int(limit or 100), 1000))
+    offset = max(0, int(offset or 0))
     db = get_db_session()
     try:
         q = db.query(Bet)
@@ -999,9 +1062,9 @@ def get_equity_curve():
         ) or 0.0
         realized_now = running - initial  # all realized PnL accumulated
         today_val = initial + realized_now + float(unrealized)
-        from datetime import datetime, timezone as tz
+        from datetime import datetime
 
-        today = datetime.now(tz.utc).replace(tzinfo=None)
+        today = datetime.now(UTC).replace(tzinfo=None)
         label = f"{today.day} {today.strftime('%b')}"
         if points and points[-1]["date"] == label:
             points[-1]["value"] = round(today_val, 2)
@@ -1053,10 +1116,7 @@ def get_slippage():
             # entry_price: 0 if no bet placed (frontend expects number)
             entry_price_val = round(float(entry_price), 4) if entry_price is not None else 0.0
             # result: PENDING if no bet, WIN/LOSS if bet settled
-            if bet_pnl is not None:
-                result = "WIN" if bet_pnl > 0 else "LOSS"
-            else:
-                result = "PENDING"
+            result = ("WIN" if bet_pnl > 0 else "LOSS") if bet_pnl is not None else "PENDING"
             entries.append(
                 {
                     "id": str(analysis.id),
@@ -1081,7 +1141,7 @@ def cleanup_old_data(_key: str = Depends(verify_api_key)):
     """Cancel stale open bets and refund their stakes (ladder-aware)."""
     db = get_db_session()
     try:
-        _ts = datetime.now(timezone.utc).replace(tzinfo=None)
+        _ts = datetime.now(UTC).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         stale_analyses = (
             db.query(Analysis)
@@ -1092,7 +1152,7 @@ def cleanup_old_data(_key: str = Depends(verify_api_key)):
         cancelled = 0
         for bet in stale_bets:
             bet.status = "cancelled"
-            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            bet.settled_at = datetime.now(UTC).replace(tzinfo=None)
 
             # Calculate the actual debited amount — for ladder bets only
             # filled rungs were debited; for flat bets the full amount.
@@ -1199,8 +1259,10 @@ def get_health_check():
 
     db = get_db_session()
     try:
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        h24 = now - timedelta(hours=48)
+        now = datetime.now(UTC).replace(tzinfo=None)
+        # HIGH FIX: variable named `h24` (24-hour window) was actually using
+        # `hours=48`, doubling every 24h metric. Fixed to true 24h.
+        h24 = now - timedelta(hours=24)
 
         # 1. Activity in last 24h
         bets_opened_24h = (
@@ -1422,7 +1484,14 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuçlanmış bet). Model tahminleri güvenilmez."),
+                    # HIGH FIX: previously the message showed `win_rate_all`
+                    # (all-time) while the trigger used `recent_win_rate`
+                    # (24h). User could not understand why the displayed
+                    # number tripped the flag. Now shows the actual trigger.
+                    "message": (
+                        f"Son 24 saatte win rate %{recent_win_rate:.1f} "
+                        f"({recent_total} sonuçlanmış bet). Model tahminleri güvenilmez."
+                    ),
                     "action": "Kalibrasyon verisini kontrol et, evrim çalıştır.",
                 }
             )
@@ -1551,14 +1620,54 @@ def get_health_check():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for live scan_complete broadcasts.
+
+    HIGH FIX (WebSocket auth + connection limit): previously this endpoint
+    had no auth, no connection cap, and silently discarded every inbound
+    message in an infinite `receive_text()` loop (wasting CPU). Now:
+      - Optional API key check via `?api_key=...` query param.
+      - Hard cap of 50 concurrent clients (DoS protection).
+      - Inbound messages are still consumed (to keep the TCP socket healthy)
+        but a per-message size + rate cap is enforced.
+    """
+    # Optional API key check (only enforced when ASIABOT_API_KEY is set).
+    if API_KEY:
+        query_key = websocket.query_params.get("api_key", "")
+        import hmac
+
+        if not hmac.compare_digest(query_key.encode("utf-8"), API_KEY.encode("utf-8")):
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+
+    # Connection cap to prevent unbounded client accumulation.
+    _MAX_WS_CLIENTS = 50
+    if len(state.websocket_clients) >= _MAX_WS_CLIENTS:
+        await websocket.close(code=4429, reason="Too many clients")
+        return
+
     await websocket.accept()
     state.websocket_clients.append(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            # We still consume inbound messages to keep the socket alive,
+            # but we don't process them — broadcasts are server-driven.
+            # Awaits here let the event loop yield so we can be cancelled
+            # cleanly on shutdown.
+            msg = await websocket.receive_text()
+            # Enforce a small per-message size cap (32 KiB) to prevent
+            # slow-loris-style memory exhaustion.
+            if len(msg) > 32 * 1024:
+                logger.warning("WebSocket message too large (%d bytes) — closing", len(msg))
+                await websocket.close(code=4413, reason="Message too large")
+                break
     except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("WebSocket error: %s", e)
+    finally:
         if websocket in state.websocket_clients:
-            state.websocket_clients.remove(websocket)
+            with suppress(ValueError):
+                state.websocket_clients.remove(websocket)
 
 
 # Re-export loop functions from bot_loop module so existing

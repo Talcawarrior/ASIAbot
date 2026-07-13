@@ -98,7 +98,7 @@ class ProbabilityCalibrator:
         def _nll(params: list[float]) -> float:
             a, b = params
             nll = 0.0
-            for p, y in zip(predictions, outcomes):
+            for p, y in zip(predictions, outcomes, strict=False):
                 lp = _logit(p)
                 pc = 1.0 / (1.0 + math.exp(-(a * lp + b)))
                 pc = max(1e-15, min(1 - 1e-15, pc))

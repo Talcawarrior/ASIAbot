@@ -44,11 +44,11 @@ from typing import Any
 import pandas as pd
 
 from asi_engine.llm_client import chat_json
-from data_pipeline.unified_datastore import UnifiedDatastore
-from utils.formulas import polymarket_fee
 
 # Weather category fee rate — loaded from config (default 0.05)
 from config.settings import bot_config as _bot_cfg
+from data_pipeline.unified_datastore import UnifiedDatastore
+from utils.formulas import polymarket_fee
 
 WEATHER_FEE_RATE = _bot_cfg.weather_fee_rate
 
@@ -286,7 +286,7 @@ def evaluate_hypothesis_oos(
         total_staked += stake
 
         # PnL resolution — with realistic cost model (slippage from utils/slippage.py)
-        from utils.slippage import estimate_slippage, GAS_COST_USD
+        from utils.slippage import GAS_COST_USD, estimate_slippage
 
         slip_est = estimate_slippage(entry, stake_usd=stake, model="tiered")
         slippage_cost = stake * slip_est.slippage_pct
@@ -792,7 +792,7 @@ def _load_cached_forecasts(
         cached_pairs = set(
             zip(
                 forecasts_df["city"].astype(str),
-                forecasts_df["join_date"].astype(str),
+                forecasts_df["join_date"].astype(str), strict=False,
             )
         )
     return forecasts_df, cached_pairs
@@ -1045,7 +1045,7 @@ def add_per_model_probabilities(
     needed_pairs = set(
         zip(
             brier_df["city"].astype(str),
-            brier_df["join_date"].astype(str),
+            brier_df["join_date"].astype(str), strict=False,
         )
     )
 

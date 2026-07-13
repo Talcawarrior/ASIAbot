@@ -213,10 +213,7 @@ class MarketParser:
             if match:
                 try:
                     value = float(match.group(1))
-                    if expected_unit == "fahrenheit":
-                        value_c = round((value - 32) * 5 / 9, 1)
-                    else:
-                        value_c = round(value, 1)
+                    value_c = round((value - 32) * 5 / 9, 1) if expected_unit == "fahrenheit" else round(value, 1)
                     return (value_c, "celsius", None, None)
                 except ValueError:
                     continue
@@ -237,10 +234,7 @@ class MarketParser:
             if match:
                 try:
                     value = float(match.group(1))
-                    if detected_unit == "fahrenheit":
-                        value_c = round((value - 32) * 5 / 9, 1)
-                    else:
-                        value_c = round(value, 1)
+                    value_c = round((value - 32) * 5 / 9, 1) if detected_unit == "fahrenheit" else round(value, 1)
                     return (value_c, "celsius", None, None)
                 except ValueError:
                     continue
@@ -380,7 +374,17 @@ class MarketParser:
             return parsed
         finally:
             if owns_session:
-                session_cm.__exit__(None, None, None)
+                # CRITICAL FIX (Session leak): previously this called
+                # `__exit__(None, None, None)` which always tells the context
+                # manager "no exception occurred", causing a commit even when
+                # the try block above raised. That could persist a dirty
+                # half-written session. We now forward the actual exception
+                # info via sys.exc_info() so the context manager can rollback
+                # properly when an exception is in-flight.
+                import sys
+
+                exc_info = sys.exc_info()
+                session_cm.__exit__(*exc_info)
 
     def parse_all_unparsed(self) -> int:
         """Parse edilmemiş tüm marketleri TEK session'da parse et.

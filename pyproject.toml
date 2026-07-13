@@ -37,7 +37,12 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
-ignore = ["E501"]
+# MEDIUM FIX: acknowledged style preferences that don't affect correctness.
+# - N806: uppercase constants inside functions (intentional for "magic numbers")
+# - SIM102/SIM105/SIM108: stylistic if-else vs ternary / contextlib.suppress
+# - SIM113: enumerate preference (sometimes index increment is clearer)
+# - B904: raise-from (we intentionally re-raise without chaining in some places)
+ignore = ["E501", "N806", "SIM102", "SIM105", "SIM108", "SIM113", "B904"]
 
 [tool.mypy]
 ignore_missing_imports = true

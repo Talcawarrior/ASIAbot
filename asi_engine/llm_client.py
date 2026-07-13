@@ -64,7 +64,7 @@ class LLMConfig:
         return bool(self.api_key)
 
 
-def get_client(cfg: LLMConfig | None = None, *, layer: str = "") -> tuple["ZaiClient", LLMConfig] | None:
+def get_client(cfg: LLMConfig | None = None, *, layer: str = "") -> tuple[ZaiClient, LLMConfig] | None:
     """Build and return (ZaiClient, config), or None if not configured.
 
     Returns None when:

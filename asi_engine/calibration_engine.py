@@ -20,9 +20,9 @@ import json
 import logging
 import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from database.db import get_session, DB_PATH
+from database.db import DB_PATH, get_session
 from database.models import HistoricalCalibration
 
 logger = logging.getLogger("ASI_CALIBRATION")
@@ -44,12 +44,12 @@ def _parse_dt(date_str):
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
         try:
             dt = datetime.strptime(date_str[:26], fmt)
-            return dt.replace(tzinfo=timezone.utc)
+            return dt.replace(tzinfo=UTC)
         except ValueError:
             continue
     try:
         dt = datetime.fromisoformat(date_str)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
         return None
 
@@ -75,7 +75,7 @@ class CalibrationEngine:
             RECENCY_HALF_LIFE_DAYS,
         )
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=ROLLING_WINDOW_DAYS)
+        cutoff = datetime.now(UTC) - timedelta(days=ROLLING_WINDOW_DAYS)
 
         # Pull raw rows (not pre-aggregated) so we can apply recency weights
         # and shrinkage in Python before collapsing to one row per group.
@@ -106,7 +106,7 @@ class CalibrationEngine:
             )
             return self.bias_map
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         groups: dict[tuple, list[tuple]] = {}
         for city_code, city, metric, model, bias, date_str in rows:
             if bias is None:
@@ -191,7 +191,7 @@ class CalibrationEngine:
         # Strip internal suffix if any
         clean_metric = (
             "temperature_max"
-            if "temperature_max" == metric.lower() or (metric.lower().startswith("temp") and "max" in metric.lower())
+            if metric.lower() == "temperature_max" or (metric.lower().startswith("temp") and "max" in metric.lower())
             else "temperature_min"
         )
 

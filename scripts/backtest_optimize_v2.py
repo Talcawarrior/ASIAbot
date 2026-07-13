@@ -20,8 +20,8 @@ from itertools import product
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
+from utils.formulas import bet_shares, polymarket_fee  # noqa: E402
 from utils.kelly import kelly_fraction as kf  # noqa: E402
-from utils.formulas import polymarket_fee, bet_shares  # noqa: E402
 
 DB_PATH = os.path.join(PROJECT_ROOT, "data", "bot.db")
 INITIAL_BANKROLL = 1000.0
