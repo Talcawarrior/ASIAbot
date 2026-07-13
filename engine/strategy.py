@@ -1093,7 +1093,12 @@ class SIALoop:
         _MAX_SINGLE_MODEL_WEIGHT = 0.50
         max_weight = max(new_weights.values()) if new_weights else 0
         if max_weight > _MAX_SINGLE_MODEL_WEIGHT:
-            dominant_model = max(new_weights, key=new_weights.get)
+            # Find the dominant model. We avoid `max(new_weights, key=new_weights.get)`
+            # because mypy complains about the overloaded dict.get signature.
+            dominant_model = next(
+                (m for m, w in new_weights.items() if w == max_weight),
+                "unknown",
+            )
             logger.warning(
                 "SIA weight sanity check FAILED: model %s has %.1f%% weight (> %.0f%% threshold). "
                 "Resetting ALL weights to config defaults to prevent single-model dominance.",

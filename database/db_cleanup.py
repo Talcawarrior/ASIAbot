@@ -60,7 +60,9 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
         try:
             date_col = _TABLE_DATE_COL[table]
             df = pd.read_sql_query(
-                f"SELECT * FROM [{table}] WHERE [{date_col}] < ?",
+                # nosec B608: table/date_col come from hardcoded constants
+                # (ALL_TABLES / _TABLE_DATE_COL), not user input.
+                f"SELECT * FROM [{table}] WHERE [{date_col}] < ?",  # nosec B608
                 conn,
                 params=[hot_cutoff],
             )
@@ -75,7 +77,7 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
             df.to_parquet(pq_path, index=False, compression="snappy")
 
             cur = conn.cursor()
-            cur.execute(f"DELETE FROM [{table}] WHERE [{date_col}] < ?", [hot_cutoff])
+            cur.execute(f"DELETE FROM [{table}] WHERE [{date_col}] < ?", [hot_cutoff])  # nosec B608
             deleted = cur.rowcount
             conn.commit()
 
@@ -159,12 +161,12 @@ def load_karpathy_dataset(since: str | None = None, table: str = FORECAST_TABLE)
     conn = sqlite3.connect(config.DB_PATH)
     if since:
         hot_df = pd.read_sql_query(
-            f"SELECT * FROM [{table}] WHERE [{date_col}] >= ?",
+            f"SELECT * FROM [{table}] WHERE [{date_col}] >= ?",  # nosec B608
             conn,
             params=[since],
         )
     else:
-        hot_df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+        hot_df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)  # nosec B608
     conn.close()
 
     # Combine & deduplicate
