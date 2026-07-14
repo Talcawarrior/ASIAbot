@@ -1148,8 +1148,9 @@ async def reset_bot(_key: str = Depends(verify_api_key)):
     await stop_bot()
     db = get_db_session()
     try:
-        # Clear all operational data
-        db.query(Bet).delete()
+        # Fix: Only cancel open bets, preserve settled history
+        OPEN_STATUSES = ["pending", "filled", "partially_filled"]
+        db.query(Bet).filter(Bet.status.in_(OPEN_STATUSES)).update({"status": "cancelled"})
         db.query(Analysis).delete()
 
         # Reset portfolio to exactly 1000

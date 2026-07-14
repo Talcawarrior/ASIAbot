@@ -19,7 +19,6 @@ from utils.formulas import conservative_portfolio_value, max_exposure_cap
 from utils.kelly import kelly_bet_amount
 from utils.weights_store import (
     load_strategy_params,
-    load_weights,
     save_strategy_params,
     save_weights,
 )
@@ -475,8 +474,9 @@ class RiskManager:
                     # Current edge = original edge - (price drift against us)
                     if side == "YES":
                         price_drift = current_price - entry_price
-                    else:  # NO side: price goes UP means NO got cheaper
-                        price_drift = entry_price - current_price
+                    else:  # NO side: current_price is YES price, need NO price
+                        no_current = 1.0 - current_price
+                        price_drift = no_current - entry_price
                     current_edge = raw_edge_at_entry - price_drift
                     min_edge_threshold = float(bot_config.strategy.min_edge)
                     # Close if edge dropped below half of min_edge (heavily degraded)
@@ -594,7 +594,8 @@ class RiskManager:
         kelly_size = min(kelly_size, remaining_cap)
 
         # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
-        if kelly_size <= 0:
+        # AND remaining cap allows at least MIN_BET_SIZE
+        if kelly_size <= 0 or remaining_cap < self.config.MIN_BET_SIZE:
             return 0.0
         return max(kelly_size, self.config.MIN_BET_SIZE)
 
@@ -688,14 +689,19 @@ class BettingEngine:
         if risk_manager and hasattr(risk_manager, "get_total_exposure"):
             current_exposure = risk_manager.get_total_exposure()
 
+        # Calculate remaining exposure cap
+        conservative_value = (
+            risk_manager._conservative_portfolio_value() if risk_manager else self.config.INITIAL_PORTFOLIO
+        )
+        max_exposure = conservative_value * self.config.TOTAL_EXPOSURE_PCT
+        remaining_cap = max(0, max_exposure - current_exposure)
+
         if not risk_manager.check_exposure_cap(current_exposure, kelly_size):
-            # Use conservative portfolio value (initial + realized only)
-            conservative_value = risk_manager._conservative_portfolio_value()
-            max_allowed = (conservative_value * self.config.TOTAL_EXPOSURE_PCT) - current_exposure
-            kelly_size = min(kelly_size, max_allowed)
+            kelly_size = min(kelly_size, remaining_cap)
 
         # Only enforce MIN_BET_SIZE if Kelly actually recommends betting
-        if kelly_size <= 0:
+        # AND remaining cap allows at least MIN_BET_SIZE
+        if kelly_size <= 0 or remaining_cap < self.config.MIN_BET_SIZE:
             return 0.0
         return max(kelly_size, self.config.MIN_BET_SIZE)
 
@@ -879,16 +885,14 @@ class SIALoop:
         self.config = cfg or config
         self.model_weights = self.config.MODEL_WEIGHTS.copy()
 
-        # Load persisted weights
-        persisted_weights = load_weights()
-        if persisted_weights:
-            for k, v in persisted_weights.items():
-                if k in self.model_weights:
-                    self.model_weights[k] = v
-            logger.info(
-                "SIA weights loaded from disk: %s",
-                {k: round(v, 4) for k, v in self.model_weights.items()},
-            )
+        # NOTE: Karpathy-tuned weights are now applied in
+        # config/settings.py apply_persisted_strategy_params() at import time
+        # (before SIALoop is instantiated). We skip loading from model_weights.json
+        # here to avoid overwriting Karpathy weights with flat SIA defaults.
+        logger.info(
+            "SIA using config weights: %s",
+            {k: round(v, 4) for k, v in self.model_weights.items()},
+        )
 
         # Persisted strategy parameters are loaded at import time by
         # config.settings.apply_persisted_strategy_params() which applies
@@ -1234,8 +1238,9 @@ class SIALoop:
 
             all_closed = db.query(Bet.pnl, Bet.amount).filter(Bet.status.in_(_closed_statuses)).all()
             win_count = sum(1 for b in all_closed if (b.pnl or 0) > 0)
-            loss_count = sum(1 for b in all_closed if (b.pnl or 0) <= 0)
-            total = win_count + loss_count
+            # Fix: Use actual count of all closed bets, not just wins + losses
+            # Break-even bets (pnl == 0) should be included in the denominator
+            total = len(all_closed)
 
             # ROI = realized PnL / total stake (not portfolio.total_value)
             total_realized = sum(b.pnl or 0.0 for b in all_closed)

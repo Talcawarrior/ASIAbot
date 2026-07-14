@@ -112,7 +112,8 @@ def main():
     print(f"  bets columns: {bet_cols}")
 
     # How many analyses had should_bet=True?
-    actionable = analyses[analyses["should_bet"] is True]
+    # Fix: Use boolean indexing for pandas Series
+    actionable = analyses[analyses["should_bet"]]
     print(f"  Actionable analyses (should_bet=True): {len(actionable)}")
     if len(actionable) > 0:
         print(f"  Unique actionable market_ids: {actionable['market_id'].nunique()}")

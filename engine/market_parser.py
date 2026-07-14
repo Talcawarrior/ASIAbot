@@ -133,8 +133,13 @@ class MarketParser:
         q = question.lower()
         all_cities = list(self.CITY_ALIASES.values()) + list(self.CITY_ALIASES.keys())
         for city in sorted(all_cities, key=len, reverse=True):
-            if city in q:
-                return self.CITY_ALIASES.get(city, city)
+            # Use word-boundary matching for short aliases (<=3 chars) to avoid false positives
+            if len(city) <= 3:
+                if re.search(rf"\b{re.escape(city)}\b", q):
+                    return self.CITY_ALIASES.get(city, city)
+            else:
+                if city in q:
+                    return self.CITY_ALIASES.get(city, city)
         return None
 
     @staticmethod

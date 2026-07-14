@@ -1,10 +1,16 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --strict-markers"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "regression: regression tests for known bugs",
+    "property: property-based tests using Hypothesis",
+    "golden: snapshot/golden tests for baseline comparison",
+    "integration: integration/end-to-end tests",
 ]
 asyncio_mode = "auto"
+# Hypothesis settings
+hypothesis_profiles = {ci = {max_examples = 10}}
 
 [tool.coverage.run]
 source = ["asi_engine", "engine", "executor", "scrapers", "data_pipeline", "utils", "config", "database"]
@@ -31,6 +37,9 @@ exclude_lines = [
     "except ImportError",
 ]
 
+[tool.coverage.html]
+directory = "htmlcov"
+
 [tool.ruff]
 line-length = 120
 target-version = "py312"
@@ -39,9 +48,14 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["config", "database", "engine", "executor", "utils", "asi_engine", "scrapers"]
+
 [tool.mypy]
 ignore_missing_imports = true
 python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
 
 [tool.bandit]
 exclude_dirs = ["tests", "scripts", "htmlcov", ".git", "node_modules", "__pycache__"]

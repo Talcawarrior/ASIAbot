@@ -727,6 +727,35 @@ def apply_persisted_strategy_params() -> dict:
         except (TypeError, ValueError):
             pass
 
+    # ── Karpathy model weights ──────────────────────────────────────
+    # The Karpathy weekly / LLM orchestrator may write model_weights into
+    # strategy_params.json. Apply them to the global config so the
+    # betting engine uses the learned weights instead of the flat SIA
+    # defaults from model_weights.json.
+    if "model_weights" in persisted:
+        try:
+            karpathy_weights = persisted["model_weights"]
+            if isinstance(karpathy_weights, dict) and karpathy_weights:
+                # Only apply weights for known ensemble models
+                known_models = set(bot_config.model_weights.keys())
+                applied_weights = {}
+                for k, v in karpathy_weights.items():
+                    if k in known_models:
+                        bot_config.model_weights[k] = float(v)
+                        applied_weights[k] = float(v)
+                if applied_weights:
+                    import logging
+
+                    logging.getLogger("CONFIG").info(
+                        "Applied Karpathy model weights from strategy_params.json: %s",
+                        {k: round(v, 4) for k, v in applied_weights.items()},
+                    )
+                    applied["model_weights"] = applied_weights
+        except (TypeError, ValueError) as e:
+            import logging
+
+            logging.getLogger("CONFIG").warning("Could not apply Karpathy model weights: %s", e)
+
     return applied
 
 

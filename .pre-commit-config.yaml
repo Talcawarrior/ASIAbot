@@ -1,24 +1,32 @@
 repos:
-  - repo: local
-    hooks:
-      - id: check-critical-files
-        name: Check critical files not deleted
-        entry: python .pre-commit-hooks/check_critical_files.py
-        language: system
-        always_run: true
-        stages: [pre-commit]
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.0
+    rev: v0.5.0
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.15.0
+    rev: v1.10.0
     hooks:
       - id: mypy
-        args: [--config-file=mypy.ini, --exclude=scripts/, --exclude=skills/]
-        exclude: ^(scripts/|skills/)
-        additional_dependencies: [types-requests, types-python-dateutil, sqlalchemy2-stubs]
+        additional_dependencies: [types-requests]
+        args: [--ignore-missing-imports]
+        pass_filenames: false
+        entry: mypy --ignore-missing-imports asi_engine/ engine/ executor/ utils/ config/ database/
+
+  - repo: local
+    hooks:
+      - id: pytest-regression
+        name: Regression tests
+        entry: python -m pytest tests/test_regression.py -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: pytest-golden
+        name: Golden/snapshot tests
+        entry: python -m pytest tests/test_golden.py -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true

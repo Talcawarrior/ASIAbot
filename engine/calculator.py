@@ -17,7 +17,6 @@ from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
 from utils.formulas import max_bet_cap
 from utils.kelly import kelly_fraction as _kelly_fraction
-from utils.weights_store import load_weights
 from asi_engine.calibration_engine import CalibrationEngine
 from utils.slippage import (
     adjust_edge_for_costs,
@@ -528,21 +527,14 @@ class WeatherEngine:
         # config state across every other WeatherEngine/consumer.
         self.model_weights = dict(self.config.get_normalized_weights())
 
-        # Overlay SIA-optimized weights persisted to data/model_weights.json.
-        # Without this, the live betting engine silently ignores every
-        # SIA weight update and stays frozen on the settings.py factory
-        # defaults forever, even though SIALoop keeps optimizing and
-        # writing to disk hourly. See SIALoop.__init__ for the same
-        # load-and-overlay pattern (engine/strategy.py).
-        persisted_weights = load_weights()
-        if persisted_weights:
-            for k, v in persisted_weights.items():
-                if k in self.model_weights:
-                    self.model_weights[k] = v
-            logger.info(
-                "WeatherEngine: SIA weights loaded from disk: %s",
-                {k: round(v, 4) for k, v in self.model_weights.items()},
-            )
+        # NOTE: Karpathy-tuned weights are now applied in
+        # config/settings.py apply_persisted_strategy_params() at import time.
+        # We skip the SIA overlay here to avoid overwriting Karpathy weights
+        # with the flat ~12.5% SIA defaults from model_weights.json.
+        logger.info(
+            "WeatherEngine: using config weights: %s",
+            {k: round(v, 4) for k, v in self.model_weights.items()},
+        )
 
         # Loaded once here (not per-forecast-call) since it reads
         # data/asi_calibration.json from disk; CalibrationEngine.__init__
@@ -1001,20 +993,17 @@ class WeatherEngine:
             logger.error("get_multi_model_forecast error: %s", e)
             return None
 
-    def _db_consensus(self, market_id: str) -> dict | None:
+    def _db_consensus(self, market_id: str, metric: str = None) -> dict | None:
         if not market_id or not self.db_session_factory:
             return None
         db = self.db_session_factory()
         try:
             from database.models import WeatherForecast
 
-            fcs = (
-                db.query(WeatherForecast)
-                .filter(WeatherForecast.market_id == market_id)
-                .order_by(WeatherForecast.fetched_at.desc())
-                .limit(30)
-                .all()
-            )
+            query = db.query(WeatherForecast).filter(WeatherForecast.market_id == market_id)
+            if metric:
+                query = query.filter(WeatherForecast.metric == metric)
+            fcs = query.order_by(WeatherForecast.fetched_at.desc()).limit(30).all()
             if not fcs:
                 return None
             lat = {}

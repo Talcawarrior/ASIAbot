@@ -47,9 +47,10 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
+    # Use naive datetime consistently - DB stores naive datetimes
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    hot_cutoff = (now - timedelta(days=hot_days)).isoformat()
-    cold_cutoff = (now - timedelta(days=cold_days)).isoformat()
+    hot_cutoff = (now - timedelta(days=hot_days)).strftime("%Y-%m-%d %H:%M:%S")
+    cold_cutoff = (now - timedelta(days=cold_days)).strftime("%Y-%m-%d %H:%M:%S")
 
     conn = sqlite3.connect(config.DB_PATH)
     archived = 0

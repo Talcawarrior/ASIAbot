@@ -286,16 +286,34 @@ class BetPlacer:
         return True
 
     def _resolve_condition_id(self, market, analysis) -> str | None:
-        """Extract condition_id from market.raw_data for slippage & depth check."""
+        """Extract condition_id from market.raw_data or market.clob_token_ids for slippage & depth check."""
         condition_id = None
-        try:
-            raw = json.loads(market.raw_data) if market.raw_data else {}
-            for tok in raw.get("tokens", []):
-                if tok.get("outcome", "").upper() == (analysis.recommended_side or "").upper():
-                    condition_id = tok.get("condition_id") or tok.get("token_id")
-                    break
-        except (json.JSONDecodeError, TypeError):
-            pass
+        # First try clob_token_ids column (new format with condition_id)
+        if getattr(market, "clob_token_ids", None):
+            try:
+                tokens = (
+                    json.loads(market.clob_token_ids)
+                    if isinstance(market.clob_token_ids, str)
+                    else market.clob_token_ids
+                )
+                for tok in tokens:
+                    if tok.get("outcome", "").upper() == (analysis.recommended_side or "").upper():
+                        condition_id = tok.get("condition_id")
+                        if condition_id:
+                            break
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Fallback to raw_data (old format)
+        if not condition_id:
+            try:
+                raw = json.loads(market.raw_data) if market.raw_data else {}
+                for tok in raw.get("tokens", []):
+                    if tok.get("outcome", "").upper() == (analysis.recommended_side or "").upper():
+                        condition_id = tok.get("condition_id") or tok.get("token_id")
+                        break
+            except (json.JSONDecodeError, TypeError):
+                pass
         return condition_id
 
     def _calculate_fill_price(self, market, analysis, slip_est) -> float:
@@ -431,17 +449,6 @@ class BetPlacer:
         bet.status = "placed"
         bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    def _get_token_id(self, market, side):
-        """Extract token_id from market.raw_data for the given side."""
-        try:
-            raw = json.loads(market.raw_data) if market.raw_data else {}
-            for tok in raw.get("tokens", []):
-                if tok.get("outcome", "").upper() == side.upper():
-                    return tok.get("condition_id") or tok.get("token_id")
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return None
-
     def place_bet(self, analysis_id: int, session=None) -> Bet | None:
         """Analiz sonucuna göre bet aç.
 
@@ -503,8 +510,10 @@ class BetPlacer:
 
             condition_id = self._resolve_condition_id(market, analysis)
 
+            # Fix: Apply None fallback uniformly for both YES and NO sides
+            price = market.yes_price if analysis.recommended_side == "YES" else market.no_price
             slip_est = estimate_slippage(
-                float(market.yes_price if analysis.recommended_side == "YES" else market.no_price or 0.0),
+                float(price or 0.0),
                 stake_usd=proposed_amount,
                 condition_id=condition_id,
             )

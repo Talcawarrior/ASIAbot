@@ -295,7 +295,22 @@ class AsyncHttpClient:
 
         # aiohttp path: run all pending in one event-loop iteration.
         ordered = [t for _, t in pending]
-        results = asyncio.run(self._afetch(ordered))
+        # Fix: Handle case when event loop is already running
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None:
+            # We're inside an async context - use nest_asyncio or thread
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, self._afetch(ordered))
+                results = future.result()
+        else:
+            results = asyncio.run(self._afetch(ordered))
+
         for (idx, (url, params, _host)), value in zip(pending, results):
             out[idx] = value
             _cache_set(_cache_key(url, params), value)

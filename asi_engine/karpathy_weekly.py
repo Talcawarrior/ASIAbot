@@ -225,16 +225,14 @@ def evaluate_hypothesis_oos(
 
         # 3. Market entry price — we need this to compute blend, Kelly + edge.
         # In production this comes from resolvedmarkets_ingest snapshots.
-        # We ONLY use snapshot_yes_price (the pre-resolution orderbook price).
-        # The resolved yes_price (0.0/1.0) is NEVER used as entry proxy
+        # We ONLY use yes_price (the pre-resolution orderbook price).
+        # The resolved snapshot_yes_price (0.0/1.0) is NEVER used as entry proxy
         # because it creates look-ahead bias: the model's bet would always
         # appear profitable against the resolved outcome.
         market_yes_price: float | None = None
-        if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
-            market_yes_price = float(row["snapshot_yes_price"])
-        elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
-            # Fallback to yes_price if snapshot not available (for backtesting)
+        if "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
             market_yes_price = float(row["yes_price"])
+        # NO FALLBACK to snapshot_yes_price — that IS the resolved outcome (0/1), using it creates look-ahead bias
 
         # 4. Market blend — shrink model forecast toward the market prior.
         # This is the same blend used in production (calculator.py/strategy.py).

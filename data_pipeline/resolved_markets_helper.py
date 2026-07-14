@@ -34,8 +34,9 @@ class ResolvedMarketsClient:
             market_id,
         )
         if not self.api_key:
-            logger.info("ResolvedMarkets: No API Key provided. Returning mock high-fidelity orderbook depth...")
-            return self._generate_mock_orderbook(market_id)
+            logger.warning("ResolvedMarkets: No API Key provided. Cannot fetch real orderbook data.")
+            # Fix: Raise exception instead of returning mock data for real trading
+            raise ValueError("ResolvedMarkets API key not configured - cannot fetch orderbook data")
 
         url = f"{RESOLVED_MARKETS_BASE}/v1/orderbooks/{market_id}"
         params = {"limit": limit}

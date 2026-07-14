@@ -318,7 +318,7 @@ def run_risk_management(session=None):
 
         bet.status = "closed_early"
         bet.close_reason = reason
-        bet.closed_at = datetime.now(timezone.utc)
+        bet.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         bet.realized_pnl = realized
         bet.pnl = realized
         bet.current_price = current_price
@@ -334,7 +334,7 @@ def run_risk_management(session=None):
             portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
             portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
             portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)
-            portfolio.last_updated = datetime.now(timezone.utc)
+            portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             sess.add(portfolio)
 
         sess.add(bet)

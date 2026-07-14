@@ -24,8 +24,6 @@ logger = logging.getLogger("SCRAPER_METEO")
 # "London 2026-06-08" all need the same Open-Meteo forecast).
 _FETCH_CACHE: dict[tuple[float, float, str, str], tuple] = {}
 _FETCH_CACHE_LOCK = threading.Lock()
-_FETCH_CACHE_ASYNC_LOCK = asyncio.Lock()
-
 # Successes live for 30 minutes; failures for 5 minutes. The original
 # cache remembered failures for the lifetime of the process, which
 # made the scraper silently stop working after the first 429 hit: the
@@ -48,28 +46,8 @@ def _cache_get(key):
         return value
 
 
-async def _cache_get_async(key):
-    """Async version of _cache_get using asyncio.Lock."""
-    async with _FETCH_CACHE_ASYNC_LOCK:
-        entry = _FETCH_CACHE.get(key)
-        if entry is None:
-            return None
-        value, expires_at = entry
-        if time.monotonic() > expires_at:
-            _FETCH_CACHE.pop(key, None)
-            return None
-        return value
-
-
 def _cache_set(key, value):
     with _FETCH_CACHE_LOCK:
-        ttl = _SUCCESS_TTL_S if value is not None else _FAILURE_TTL_S
-        _FETCH_CACHE[key] = (value, time.monotonic() + ttl)
-
-
-async def _cache_set_async(key, value):
-    """Async version of _cache_set using asyncio.Lock."""
-    async with _FETCH_CACHE_ASYNC_LOCK:
         ttl = _SUCCESS_TTL_S if value is not None else _FAILURE_TTL_S
         _FETCH_CACHE[key] = (value, time.monotonic() + ttl)
 
@@ -78,12 +56,6 @@ def _cache_clear() -> None:
     """Reset the fetch cache. Useful for tests and for the scheduler
     when it wants to force a refresh after a configurable TTL."""
     with _FETCH_CACHE_LOCK:
-        _FETCH_CACHE.clear()
-
-
-async def _cache_clear_async() -> None:
-    """Async version of _cache_clear using asyncio.Lock."""
-    async with _FETCH_CACHE_ASYNC_LOCK:
         _FETCH_CACHE.clear()
 
 
@@ -96,7 +68,6 @@ async def _cache_clear_async() -> None:
 _MIN_INTERVAL_S = float(os.environ.get("OPEN_METEO_MIN_INTERVAL_S", "6.0"))
 _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
-_THROTTLE_ASYNC_LOCK = asyncio.Lock()
 
 
 def _throttle(host: str) -> None:
@@ -117,19 +88,6 @@ def _throttle(host: str) -> None:
                 _LAST_CALL_AT[host] = now
                 return
         time.sleep(wait)
-
-
-async def _throttle_async(host: str) -> None:
-    """Async version of _throttle using asyncio.Lock and asyncio.sleep."""
-    while True:
-        async with _THROTTLE_ASYNC_LOCK:
-            now = time.monotonic()
-            last = _LAST_CALL_AT.get(host, 0.0)
-            wait = _MIN_INTERVAL_S - (now - last)
-            if wait <= 0:
-                _LAST_CALL_AT[host] = now
-                return
-        await asyncio.sleep(wait)
 
 
 class MeteoFetcher:
@@ -184,7 +142,7 @@ class MeteoFetcher:
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException:
-            _cache_set(cache_key, None)
+            # Don't cache failures - let retry decorator handle it
             raise
 
         daily = data.get("daily", {})
@@ -223,7 +181,7 @@ class MeteoFetcher:
                 timeout=15,
             )
         except requests.RequestException:
-            _cache_set(cache_key, None)
+            # Don't cache failures - let retry decorator handle it
             raise
         resp.raise_for_status()
         data = resp.json()
@@ -545,7 +503,12 @@ class MeteoFetcher:
             try:
                 # Fire all groups concurrently — semaphore limits parallelism
                 tasks = [_fetch_one_group(key, markets) for key, markets in groups.items()]
-                results = loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+
+                async def _gather_tasks():
+                    """Wrapper: gather must be called INSIDE the running loop."""
+                    return await asyncio.gather(*tasks, return_exceptions=True)
+
+                results = loop.run_until_complete(_gather_tasks())
                 for r in results:
                     if isinstance(r, int):
                         total += r
