@@ -119,6 +119,18 @@ def _orderbook_slippage(
 
         asks = ob.get("asks", [])
         bids = ob.get("bids", [])
+
+        # M4 fix: Empty orderbook should report high slippage, not 0%
+        if not asks and not bids:
+            logger.warning("Orderbook completely empty for %s, using high slippage estimate", condition_id)
+            return SlippageEstimate(
+                slippage_pct=0.05,  # 5% slippage for empty book
+                model_used="orderbook",
+                fill_vwap=entry_price * 1.05,
+                depth_usd=0.0,
+                raw_spread_pct=0.05,
+            )
+
         best_ask = float(asks[0]["price"]) if asks else entry_price * 1.01
         best_bid = float(bids[0]["price"]) if bids else entry_price * 0.99
         mid = (best_ask + best_bid) / 2

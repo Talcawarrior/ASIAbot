@@ -817,11 +817,13 @@ def get_history():
             db.query(
                 func.count(Bet.id),
                 func.sum(case((Bet.pnl > 0, 1), else_=0)),
-                func.sum(case((Bet.pnl <= 0, 1), else_=0)),
+                # M24 fix: Use pnl < 0 to exclude break-even from losses
+                func.sum(case((Bet.pnl < 0, 1), else_=0)),
                 func.coalesce(func.sum(Bet.amount), 0.0),
                 func.coalesce(func.sum(Bet.pnl), 0.0),
                 func.coalesce(func.sum(case((Bet.pnl > 0, Bet.pnl), else_=0.0)), 0.0),
-                func.coalesce(func.sum(case((Bet.pnl <= 0, func.abs(Bet.pnl)), else_=0.0)), 0.0),
+                # M24 fix: Use pnl < 0 for loss amount
+                func.coalesce(func.sum(case((Bet.pnl < 0, func.abs(Bet.pnl)), else_=0.0)), 0.0),
             )
             .filter(Bet.status.in_(real_settled_statuses))
             .one()
@@ -1316,7 +1318,8 @@ def get_health_check():
 
         total_settled = len(settled_all)
         wins_all = sum(1 for b in settled_all if b.pnl and b.pnl > 0)
-        losses_all = sum(1 for b in settled_all if b.pnl is not None and b.pnl <= 0)
+        # M24 fix: Use pnl < 0 to exclude break-even from losses
+        losses_all = sum(1 for b in settled_all if b.pnl is not None and b.pnl < 0)
         win_rate_all = (wins_all / total_settled * 100) if total_settled > 0 else 0
         total_pnl_all_health = sum(b.pnl or 0.0 for b in settled_all)
         total_stake_all_health = sum(b.amount or 0.0 for b in settled_all)
@@ -1351,11 +1354,12 @@ def get_health_check():
         red_flags = []
 
         # Son 48 saatteki kayıpları say
+        # M24 fix: Use pnl < 0 to exclude break-even from losses
         recent_losses = sum(
             1
             for b in settled_all
             if b.pnl is not None
-            and b.pnl <= 0
+            and b.pnl < 0
             and ((b.settled_at and b.settled_at >= h24) or (b.closed_at and b.closed_at >= h24))
         )
         recent_total = sum(
@@ -1478,7 +1482,8 @@ def get_health_check():
             )
             day_pnl = sum(b.pnl or 0.0 for b in day_bets)
             day_wins = sum(1 for b in day_bets if b.pnl and b.pnl > 0)
-            day_losses = sum(1 for b in day_bets if b.pnl is not None and b.pnl <= 0)
+            # M24 fix: Use pnl < 0 to exclude break-even from losses
+            day_losses = sum(1 for b in day_bets if b.pnl is not None and b.pnl < 0)
             daily_pnl.append(
                 {
                     "date": day_start.strftime("%m/%d"),
