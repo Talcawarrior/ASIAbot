@@ -49,9 +49,7 @@ class ASIAbotOrchestrator:
             results = self.simulator.run_backtest(proposed_params)
 
             # 3. ANALYZE & LEARN: Formulate causal insights and update memory
-            node = self.analyzer.analyze_results(
-                run_round, hypothesis, results, proposed_params
-            )
+            node = self.analyzer.analyze_results(run_round, hypothesis, results, proposed_params)
             self.cognition_base.add_node(node)
 
         # 4. DEPLOY: Find the best parameters in all history and write to active config files
@@ -82,9 +80,7 @@ class ASIAbotOrchestrator:
         bot_config.strategy.min_edge = best_min_edge
         bot_config.strategy.kelly_fraction = best_kelly
 
-        logger.info(
-            "ASIAbot: Live trading models and configurations updated successfully!"
-        )
+        logger.info("ASIAbot: Live trading models and configurations updated successfully!")
 
         # Return best stats
         best_node = max(self.cognition_base.nodes, key=lambda n: n.roi)

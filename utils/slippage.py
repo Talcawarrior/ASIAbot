@@ -122,6 +122,8 @@ def _orderbook_slippage(
 
         fill_vwap, depth_usd = _vwap_from_asks(asks, stake_usd, entry_price)
         slippage_pct = max(0.0, (fill_vwap / mid - 1)) if mid > 0 else 0.005
+        # Cap to prevent pathological orderbook data from blowing up edge calc
+        slippage_pct = min(slippage_pct, MAX_SLIPPAGE_PCT)
 
         return SlippageEstimate(
             slippage_pct=round(slippage_pct, 4),
@@ -133,6 +135,13 @@ def _orderbook_slippage(
     except Exception as exc:
         logger.warning("Orderbook slippage fetch failed, falling back to tiered: %s", exc)
         return _tiered_fallback(entry_price, f"orderbook_error: {exc}")
+
+
+# ─── Cap ───────────────────────────────────────────────────────────────────────
+# Protect against pathological orderbook responses that could yield absurd
+# slippage (e.g., > 5 %). A 5 % cap covers even very illiquid markets;
+# anything higher is likely a data/API issue, not real market structure.
+MAX_SLIPPAGE_PCT = 0.05
 
 
 def _tiered_fallback(entry_price: float, model_used: str) -> SlippageEstimate:

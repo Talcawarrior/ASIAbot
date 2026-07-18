@@ -1,4 +1,5 @@
 """Explore historical bet data for backtest optimization."""
+
 import sqlite3
 import os
 
@@ -14,7 +15,9 @@ for row in c.fetchall():
     print(f"  {status}: {cnt} trades, PnL={pnl:.2f}, Staked={staked:.2f}")
 
 # 2. Side distribution
-c.execute("SELECT COALESCE(side,'none'), COUNT(*), COALESCE(AVG(entry_price),0), COALESCE(AVG(stake),0) FROM bets GROUP BY side")
+c.execute(
+    "SELECT COALESCE(side,'none'), COUNT(*), COALESCE(AVG(entry_price),0), COALESCE(AVG(stake),0) FROM bets GROUP BY side"
+)
 print("\n=== BET SIDE ===")
 for row in c.fetchall():
     side, cnt, avg_entry, avg_stake = row
@@ -36,7 +39,9 @@ c.execute("""
 """)
 print("\n=== SAMPLE SETTLED BETS ===")
 for row in c.fetchall():
-    print(f"  id={row[0]}, side={row[1]}, stake={row[2]}, entry={row[3]}, shares={row[4]}, pnl={row[5]}, status={row[6]}, fair={row[7]}, ev={row[8]}, amt={row[9]}, city={row[10]}, outcome={row[11]}, fee={row[12]}")
+    print(
+        f"  id={row[0]}, side={row[1]}, stake={row[2]}, entry={row[3]}, shares={row[4]}, pnl={row[5]}, status={row[6]}, fair={row[7]}, ev={row[8]}, amt={row[9]}, city={row[10]}, outcome={row[11]}, fee={row[12]}"
+    )
 
 # 5. Analyses table
 c.execute("PRAGMA table_info(analyses)")
@@ -54,7 +59,9 @@ c.execute("""
 """)
 print("\n=== SAMPLE ANALYSES ===")
 for row in c.fetchall():
-    print(f"  id={row[0]}, market={row[1]}, est_prob={row[2]}, implied={row[3]}, edge={row[4]}, raw_edge={row[5]}, adj_edge={row[6]}, conf={row[7]}")
+    print(
+        f"  id={row[0]}, market={row[1]}, est_prob={row[2]}, implied={row[3]}, edge={row[4]}, raw_edge={row[5]}, adj_edge={row[6]}, conf={row[7]}"
+    )
     mp = row[8]
     if mp:
         print(f"    model_predictions={mp[:200]}")
@@ -92,7 +99,9 @@ c.execute("""
 """)
 print("\n=== BETS + MARKET DATA ===")
 for row in c.fetchall():
-    print(f"  bet={row[0]}, market={row[1]}, side={row[2]}, stake={row[3]}, entry={row[4]}, pnl={row[6]}, status={row[7]}, outcome={row[8]}, city={row[9]}, yes_p={row[10]}, no_p={row[11]}, target={row[12]}, city_code={row[13]}")
+    print(
+        f"  bet={row[0]}, market={row[1]}, side={row[2]}, stake={row[3]}, entry={row[4]}, pnl={row[6]}, status={row[7]}, outcome={row[8]}, city={row[9]}, yes_p={row[10]}, no_p={row[11]}, target={row[12]}, city_code={row[13]}"
+    )
 
 # 10. Total settled bets with non-null stake
 c.execute("""

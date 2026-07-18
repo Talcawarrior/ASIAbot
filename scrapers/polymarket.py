@@ -342,6 +342,24 @@ class PolymarketScraper:
                         yes_price = p
                     elif name_upper == "NO" and no_price is None:
                         no_price = p
+            # Fallback 1b: outcomePrices without outcomes but with clobTokenIds
+            # Assume first token is YES, second is NO (Polymarket convention)
+            if yes_price is None and outcome_prices and not outcomes:
+                clob_ids = raw.get("clobTokenIds") or raw.get("clob_token_ids") or []
+                if isinstance(clob_ids, list) and len(clob_ids) >= 2 and len(outcome_prices) >= 2:
+                    try:
+                        yes_price = float(outcome_prices[0])
+                        no_price = float(outcome_prices[1])
+                    except (TypeError, ValueError, IndexError):
+                        pass
+            # Fallback 1c: outcomePrices alone, assume first=YES, second=NO (Polymarket standard)
+            if yes_price is None and outcome_prices and not outcomes and not clob_ids:
+                if isinstance(outcome_prices, list) and len(outcome_prices) >= 2:
+                    try:
+                        yes_price = float(outcome_prices[0])
+                        no_price = float(outcome_prices[1])
+                    except (TypeError, ValueError, IndexError):
+                        pass
         # Fallback 2: public-search fields
         if yes_price is None:
             for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):

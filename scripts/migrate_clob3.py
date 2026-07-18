@@ -1,12 +1,13 @@
 import sqlite3
 import json
-conn = sqlite3.connect('data/bot.db')
+
+conn = sqlite3.connect("data/bot.db")
 c = conn.cursor()
 
 # Clear the bad data first
-c.execute('UPDATE weather_markets SET clob_token_ids = NULL')
+c.execute("UPDATE weather_markets SET clob_token_ids = NULL")
 conn.commit()
-print('Cleared bad data')
+print("Cleared bad data")
 
 # Now properly migrate from raw_data
 c.execute('SELECT id, raw_data FROM weather_markets WHERE raw_data IS NOT NULL AND raw_data != ""')
@@ -22,27 +23,25 @@ for row in rows:
             tokens = []
             for i, token_id in enumerate(clob_token_ids):
                 outcome = "YES" if i == 0 else "NO"
-                tokens.append({
-                    "token_id": token_id,
-                    "outcome": outcome,
-                    "condition_id": condition_id
-                })
-            c.execute('UPDATE weather_markets SET clob_token_ids = ? WHERE id = ?', (json.dumps(tokens), market_id))
+                tokens.append({"token_id": token_id, "outcome": outcome, "condition_id": condition_id})
+            c.execute("UPDATE weather_markets SET clob_token_ids = ? WHERE id = ?", (json.dumps(tokens), market_id))
             updated += 1
     except (json.JSONDecodeError, TypeError):
         pass
 
 conn.commit()
-print(f'Updated {updated} markets with clob_token_ids')
+print(f"Updated {updated} markets with clob_token_ids")
 
 # Verify
 c.execute('SELECT COUNT(*) FROM weather_markets WHERE clob_token_ids IS NOT NULL AND clob_token_ids != ""')
-print(f'Total with clob_token_ids: {c.fetchone()[0]}')
+print(f"Total with clob_token_ids: {c.fetchone()[0]}")
 
 # Show sample
-c.execute('SELECT id, city, clob_token_ids FROM weather_markets WHERE clob_token_ids IS NOT NULL AND clob_token_ids != "" LIMIT 3')
+c.execute(
+    'SELECT id, city, clob_token_ids FROM weather_markets WHERE clob_token_ids IS NOT NULL AND clob_token_ids != "" LIMIT 3'
+)
 for r in c.fetchall():
     parsed = json.loads(r[2])
-    print(f'id={r[0]}, city={r[1]}, tokens={parsed}')
+    print(f"id={r[0]}, city={r[1]}, tokens={parsed}")
 
 conn.close()

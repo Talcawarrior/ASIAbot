@@ -1,4 +1,5 @@
 """Focused analysis on ACTUALLY PLACED bets only."""
+
 import sqlite3
 import pandas as pd
 
@@ -22,7 +23,9 @@ def main():
     closed = placed[placed["status"] == "closed_early"]
     print(f"  Won: {len(won)}, avg_pnl: ${won['pnl'].mean():.2f}" if len(won) else "  Won: 0")
     print(f"  Lost: {len(lost)}, avg_pnl: ${lost['pnl'].mean():.2f}" if len(lost) else "  Lost: 0")
-    print(f"  Closed early: {len(closed)}, avg_pnl: ${closed['pnl'].mean():.2f}" if len(closed) else "  Closed early: 0")
+    print(
+        f"  Closed early: {len(closed)}, avg_pnl: ${closed['pnl'].mean():.2f}" if len(closed) else "  Closed early: 0"
+    )
     print(f"  Total PnL: ${placed['pnl'].sum():.2f}")
 
     if "stake" in placed.columns:
@@ -36,12 +39,16 @@ def main():
 
     # City analysis
     if "city" in placed.columns:
-        city_perf = placed.groupby("city").agg(
-            n=("id", "count"),
-            pnl=("pnl", "sum"),
-            win_rate=("pnl", lambda x: (x > 0).mean()),
-        ).sort_values("pnl", ascending=False)
-        print(f"\n  Per-city performance:")
+        city_perf = (
+            placed.groupby("city")
+            .agg(
+                n=("id", "count"),
+                pnl=("pnl", "sum"),
+                win_rate=("pnl", lambda x: (x > 0).mean()),
+            )
+            .sort_values("pnl", ascending=False)
+        )
+        print("\n  Per-city performance:")
         print(city_perf.to_string())
 
     # === Match with analyses for edge calibration ===
@@ -49,10 +56,13 @@ def main():
     print("EDGE vs OUTCOME (placed bets)")
     print("=" * 60)
 
-    analyses = pd.read_sql("""
+    analyses = pd.read_sql(
+        """
         SELECT market_id, estimated_probability, market_implied_prob, edge, adjusted_edge
         FROM analyses WHERE should_bet = 1
-    """, conn)
+    """,
+        conn,
+    )
 
     # Deduplicate analyses per market_id (keep first per market)
     analyses_dedup = analyses.drop_duplicates(subset="market_id", keep="first")
@@ -66,9 +76,13 @@ def main():
     print(f"Matched: {len(merged)}")
     if len(merged) > 0:
         merged["won"] = merged["pnl"] > 0
-        print(f"  Win rate: {merged['won'].mean()*100:.1f}%")
+        print(f"  Win rate: {merged['won'].mean() * 100:.1f}%")
         print(f"  Avg edge (won): {merged[merged['won']]['edge'].mean():.4f}")
-        print(f"  Avg edge (lost): {merged[~merged['won']]['edge'].mean():.4f}" if len(merged[~merged['won']]) else "  No losses")
+        print(
+            f"  Avg edge (lost): {merged[~merged['won']]['edge'].mean():.4f}"
+            if len(merged[~merged["won"]])
+            else "  No losses"
+        )
 
     conn.close()
     print("\nDone.")

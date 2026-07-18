@@ -32,9 +32,7 @@ class CalibrationEngine:
 
         Computes MAE and MBE, saves them to a local JSON config, and returns it.
         """
-        logger.info(
-            "ASI Calibration: Calculating systematic model biases from backfilled dataset..."
-        )
+        logger.info("ASI Calibration: Calculating systematic model biases from backfilled dataset...")
 
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -52,9 +50,7 @@ class CalibrationEngine:
             cursor.execute(query)
             rows = cursor.fetchall()
         except sqlite3.OperationalError:
-            logger.warning(
-                "ASI Calibration: historical_calibrations table is empty. Backfill is required first."
-            )
+            logger.warning("ASI Calibration: historical_calibrations table is empty. Backfill is required first.")
             conn.close()
             return {}
 
@@ -67,9 +63,7 @@ class CalibrationEngine:
                 new_bias_map[city_code]["metrics"][metric] = {}
 
             new_bias_map[city_code]["metrics"][metric][model] = {
-                "mbe": round(
-                    mbe, 3
-                ),  # Mean Bias Error (Positive = Overpredicting, Negative = Underpredicting)
+                "mbe": round(mbe, 3),  # Mean Bias Error (Positive = Overpredicting, Negative = Underpredicting)
                 "mae": round(mae, 3),  # Mean Absolute Error
                 "sample_count": count,
             }
@@ -102,13 +96,9 @@ class CalibrationEngine:
                     len(self.bias_map),
                 )
             except Exception as e:
-                logger.warning(
-                    "ASI Calibration: Could not load calibration JSON: %s", e
-                )
+                logger.warning("ASI Calibration: Could not load calibration JSON: %s", e)
 
-    def get_calibrated_temperature(
-        self, city_code: str, metric: str, model: str, raw_temp: float
-    ) -> float:
+    def get_calibrated_temperature(self, city_code: str, metric: str, model: str, raw_temp: float) -> float:
         """Apply dynamic temperature bias correction (fine-tuning).
 
         If a model has a systematic bias for this city (e.g. overpredicts by 1.5C),
@@ -117,8 +107,7 @@ class CalibrationEngine:
         # Strip internal suffix if any
         clean_metric = (
             "temperature_max"
-            if "temperature_max" == metric.lower()
-            or (metric.lower().startswith("temp") and "max" in metric.lower())
+            if "temperature_max" == metric.lower() or (metric.lower().startswith("temp") and "max" in metric.lower())
             else "temperature_min"
         )
 

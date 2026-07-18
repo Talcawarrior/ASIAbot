@@ -100,6 +100,7 @@ def kelly_bet_amount(
     # Tek kaynak: bot_config.strategy.max_bet_pct
     if max_bet_pct is None:
         from config.settings import bot_config
+
         max_bet_pct = bot_config.strategy.max_bet_pct
 
     f_star = kelly_fraction(prob, price)

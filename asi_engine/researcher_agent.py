@@ -131,12 +131,8 @@ class ResearcherAgent:
         best_kelly = best_params.get("kelly_fraction", 0.15)
 
         # Ramped change
-        new_min_edge = round(
-            max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3
-        )
-        new_kelly = round(
-            max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3
-        )
+        new_min_edge = round(max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3)
+        new_kelly = round(max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3)
 
         new_params = {
             "model_weights": adjusted_weights,

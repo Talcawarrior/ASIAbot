@@ -563,7 +563,7 @@ class BetPlacer:
                 if target_date:
                     # Strip tzinfo from target_date if present to avoid
                     # "can't subtract offset-naive and offset-aware datetimes"
-                    td = target_date.replace(tzinfo=None) if getattr(target_date, 'tzinfo', None) else target_date
+                    td = target_date.replace(tzinfo=None) if getattr(target_date, "tzinfo", None) else target_date
                     days_left = max(0.0, (td - now).total_seconds() / 86400.0)
                 else:
                     days_left = 0.0
@@ -595,12 +595,16 @@ class BetPlacer:
                     markets_with_bets.add(mkt_id)
                     logger.info(
                         "Bet placed (priority=%.4f edge×days): analysis=%d market=%s",
-                        score, aid, mkt_id,
+                        score,
+                        aid,
+                        mkt_id,
                     )
                 else:
                     logger.debug(
                         "Bet rejected (priority=%.4f): analysis=%d market=%s",
-                        score, aid, mkt_id,
+                        score,
+                        aid,
+                        mkt_id,
                     )
             except Exception as e:
                 logger.error("Bet hatasi (analysis %d, priority=%.4f): %s", aid, score, e)

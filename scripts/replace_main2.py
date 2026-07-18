@@ -1,10 +1,10 @@
-with open('main.py', 'rb') as f:
+with open("main.py", "rb") as f:
     content = f.read()
 
 # Find the exact position
 search = b'logger = __import__("logging").getLogger(__name__)\r\n\r\n\r\n# \xe2\x94\x80\xe2\x94\x80 Port conflict prevention \xe2\x94\x80\xe2\x94\x80\xe2'
 idx = content.find(search)
-print(f'Found at: {idx}')
+print(f"Found at: {idx}")
 
 if idx >= 0:
     # The replacement content
@@ -61,10 +61,10 @@ async def asi_evolve_daily_loop(state):
 
 # \xe2\x94\x80\xe2\x94\x80 Port conflict prevention \xe2\x94\x80\xe2\x94\x80\xe2'''
 
-    new_content = content[:idx] + replacement + content[idx + len(search):]
+    new_content = content[:idx] + replacement + content[idx + len(search) :]
 
-    with open('main.py', 'wb') as f:
+    with open("main.py", "wb") as f:
         f.write(new_content)
-    print('Replaced successfully')
+    print("Replaced successfully")
 else:
-    print('Search pattern not found')
+    print("Search pattern not found")

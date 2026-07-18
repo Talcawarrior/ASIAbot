@@ -11,6 +11,7 @@ Strategy:
      e. PnL: actual PnL scaled by (new_size / actual_size)
   3. Report: ROI, Sharpe, win_rate, total_trades, total_pnl per combo
 """
+
 import json
 import math
 import os
@@ -57,7 +58,7 @@ def load_settled_bets():
 
 def reevaluate_bet(bet, blend_weight, min_edge, kelly_fraction, bankroll):
     """Re-evaluate a single bet with new parameters.
-    
+
     Returns (would_bet, scaled_pnl) or (False, 0) if filtered out.
     """
     est_prob = bet["estimated_probability"]
@@ -110,9 +111,7 @@ def run_backtest(bets, blend_weight, min_edge, kelly_fraction, bankroll=INITIAL_
     total_staked = 0.0
 
     for bet in bets:
-        would_bet, scaled_pnl = reevaluate_bet(
-            bet, blend_weight, min_edge, kelly_fraction, bankroll
-        )
+        would_bet, scaled_pnl = reevaluate_bet(bet, blend_weight, min_edge, kelly_fraction, bankroll)
         if would_bet:
             pnls.append(scaled_pnl)
             # Estimate stake from the bet amount ratio
@@ -120,17 +119,24 @@ def run_backtest(bets, blend_weight, min_edge, kelly_fraction, bankroll=INITIAL_
             new_amount = bankroll * min(
                 kf(
                     bet["estimated_probability"] if bet["side"] == "YES" else 1 - bet["estimated_probability"],
-                    bet["entry_price"] if bet["side"] == "YES" else 1 - bet["entry_price"]
-                ) * kelly_fraction,
-                0.006
+                    bet["entry_price"] if bet["side"] == "YES" else 1 - bet["entry_price"],
+                )
+                * kelly_fraction,
+                0.006,
             )
             total_staked += new_amount
 
     if not pnls:
         return {
-            "trades": 0, "wins": 0, "win_rate": 0,
-            "total_pnl": 0, "roi_pct": 0, "sharpe": 0,
-            "avg_pnl": 0, "max_drawdown": 0, "total_staked": 0,
+            "trades": 0,
+            "wins": 0,
+            "win_rate": 0,
+            "total_pnl": 0,
+            "roi_pct": 0,
+            "sharpe": 0,
+            "avg_pnl": 0,
+            "max_drawdown": 0,
+            "total_staked": 0,
         }
 
     wins = sum(1 for p in pnls if p > 0)
@@ -175,7 +181,9 @@ def grid_search(bets):
     blend_weights = [0.35, 0.40, 0.45, 0.50]
 
     total = len(min_edges) * len(kelly_fractions) * len(blend_weights)
-    print(f"Grid search: {len(min_edges)} min_edge x {len(kelly_fractions)} kelly x {len(blend_weights)} blend = {total} combinations")
+    print(
+        f"Grid search: {len(min_edges)} min_edge x {len(kelly_fractions)} kelly x {len(blend_weights)} blend = {total} combinations"
+    )
     print(f"Loaded {len(bets)} settled bets with analysis data\n")
 
     results = []
@@ -191,13 +199,13 @@ def grid_search(bets):
         results.append(stats)
 
         # Track best by Sharpe (primary) then ROI (secondary)
-        if (stats["sharpe"] > best_sharpe and stats["trades"] >= 10):
+        if stats["sharpe"] > best_sharpe and stats["trades"] >= 10:
             best_sharpe = stats["sharpe"]
             best_combo = stats
             best_idx = i
 
         if (i + 1) % 50 == 0:
-            print(f"  [{i+1}/{total}] best_sharpe={best_sharpe:.4f}")
+            print(f"  [{i + 1}/{total}] best_sharpe={best_sharpe:.4f}")
 
     return results, best_combo
 
@@ -208,44 +216,58 @@ def print_top_results(results, top_n=20):
     valid = [r for r in results if r["trades"] >= 10]
     valid.sort(key=lambda r: r["sharpe"], reverse=True)
 
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print(f"TOP {top_n} RESULTS BY SHARPE (min 10 trades)")
-    print(f"{'='*100}")
-    print(f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'AvgPnL':>8} {'MaxDD':>8}")
+    print(f"{'=' * 100}")
+    print(
+        f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'AvgPnL':>8} {'MaxDD':>8}"
+    )
     print("-" * 100)
     for i, r in enumerate(valid[:top_n]):
-        print(f"{i+1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
-              f"{r['trades']:>7} {r['wins']:>5} {r['win_rate']*100:>5.1f}% "
-              f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
-              f"${r['avg_pnl']:>7.2f} ${r['max_drawdown']:>7.2f}")
+        print(
+            f"{i + 1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
+            f"{r['trades']:>7} {r['wins']:>5} {r['win_rate'] * 100:>5.1f}% "
+            f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
+            f"${r['avg_pnl']:>7.2f} ${r['max_drawdown']:>7.2f}"
+        )
 
     # Also sort by ROI
     valid_by_roi = sorted(valid, key=lambda r: r["roi_pct"], reverse=True)
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print(f"TOP {top_n} RESULTS BY ROI (min 10 trades)")
-    print(f"{'='*100}")
-    print(f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'AvgPnL':>8} {'MaxDD':>8}")
+    print(f"{'=' * 100}")
+    print(
+        f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'AvgPnL':>8} {'MaxDD':>8}"
+    )
     print("-" * 100)
     for i, r in enumerate(valid_by_roi[:top_n]):
-        print(f"{i+1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
-              f"{r['trades']:>7} {r['wins']:>5} {r['win_rate']*100:>5.1f}% "
-              f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
-              f"${r['avg_pnl']:>7.2f} ${r['max_drawdown']:>7.2f}")
+        print(
+            f"{i + 1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
+            f"{r['trades']:>7} {r['wins']:>5} {r['win_rate'] * 100:>5.1f}% "
+            f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
+            f"${r['avg_pnl']:>7.2f} ${r['max_drawdown']:>7.2f}"
+        )
 
     # Balanced: Sharpe * sqrt(trades) — reward both performance and volume
     for r in valid:
-        r["balanced_score"] = r["sharpe"] * math.sqrt(r["trades"]) if r["sharpe"] > 0 else r["sharpe"] * math.sqrt(r["trades"])
+        r["balanced_score"] = (
+            r["sharpe"] * math.sqrt(r["trades"]) if r["sharpe"] > 0 else r["sharpe"] * math.sqrt(r["trades"])
+        )
     valid_by_balanced = sorted(valid, key=lambda r: r["balanced_score"], reverse=True)
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print(f"TOP {top_n} RESULTS BY BALANCED SCORE (Sharpe * sqrt(trades))")
-    print(f"{'='*100}")
-    print(f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'BalScore':>9}")
+    print(f"{'=' * 100}")
+    print(
+        f"{'#':>3} {'min_edge':>8} {'kelly':>6} {'blend':>6} {'trades':>7} {'wins':>5} {'win%':>6} {'PnL':>10} {'ROI%':>8} {'Sharpe':>8} {'BalScore':>9}"
+    )
     print("-" * 100)
     for i, r in enumerate(valid_by_balanced[:top_n]):
-        print(f"{i+1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
-              f"{r['trades']:>7} {r['wins']:>5} {r['win_rate']*100:>5.1f}% "
-              f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
-              f"{r['balanced_score']:>9.4f}")
+        print(
+            f"{i + 1:>3} {r['min_edge']:>8.2f} {r['kelly_fraction']:>6.2f} {r['blend_weight']:>6.2f} "
+            f"{r['trades']:>7} {r['wins']:>5} {r['win_rate'] * 100:>5.1f}% "
+            f"${r['total_pnl']:>9.2f} {r['roi_pct']:>7.1f}% {r['sharpe']:>8.4f} "
+            f"{r['balanced_score']:>9.4f}"
+        )
 
 
 if __name__ == "__main__":
@@ -256,9 +278,9 @@ if __name__ == "__main__":
     results, best = grid_search(bets)
     print_top_results(results)
 
-    print(f"\n{'='*100}")
+    print(f"\n{'=' * 100}")
     print("BEST COMBO (by Sharpe, min 10 trades):")
-    print(f"{'='*100}")
+    print(f"{'=' * 100}")
     for k, v in best.items():
         if k != "balanced_score":
             print(f"  {k}: {v}")

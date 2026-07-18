@@ -412,7 +412,57 @@ class WeatherEngine:
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
-    # _compute_effective_min_edge Calculator sınıfında (satır 364) tanımlı.
+    @staticmethod
+    def _compute_effective_min_edge(market, std: float | None = None) -> float:
+        """Time-to-close-scaled min_edge for a market.
+
+        Delegates to utils.probability.compute_effective_min_edge.
+        """
+        from utils.probability import compute_effective_min_edge
+
+        return compute_effective_min_edge(market, std=std)
+
+    def calculate_probability_above(self, threshold: float, consensus: dict, market_id: str = None) -> float:
+        """Calculate P(T >= threshold) using consensus mean/std.
+
+        Thin wrapper around utils.probability.estimate_probability for
+        backward compatibility with tests.
+        """
+        if not consensus:
+            return 0.5
+        mean = consensus.get("weighted_mean") or consensus.get("mean")
+        std = consensus.get("weighted_std") or consensus.get("std", 1.0)
+        if mean is None:
+            return 0.5
+        from utils.probability import estimate_probability
+
+        return estimate_probability(
+            mean=mean,
+            std=std,
+            threshold=threshold,
+            market_type="HIGH",
+        )
+
+    def calculate_probability_below(self, threshold: float, consensus: dict, market_id: str = None) -> float:
+        """Calculate P(T <= threshold) using consensus mean/std.
+
+        Thin wrapper around utils.probability.estimate_probability for
+        backward compatibility with tests.
+        """
+        if not consensus:
+            return 0.5
+        mean = consensus.get("weighted_mean") or consensus.get("mean")
+        std = consensus.get("weighted_std") or consensus.get("std", 1.0)
+        if mean is None:
+            return 0.5
+        from utils.probability import estimate_probability
+
+        return estimate_probability(
+            mean=mean,
+            std=std,
+            threshold=threshold,
+            market_type="LOW",
+        )
 
     async def get_multi_model_forecast(
         self,
@@ -474,9 +524,7 @@ class WeatherEngine:
             for attempt in range(1, _ENSEMBLE_MAX_RETRIES + 1):
                 try:
                     async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            url, params=params, timeout=aiohttp.ClientTimeout(total=30)
-                        ) as resp:
+                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                             if resp.status == 429:
                                 retry_after = resp.headers.get("Retry-After")
                                 try:
@@ -509,8 +557,13 @@ class WeatherEngine:
                     await asyncio.sleep(2 * attempt)
                     continue
             else:
-                logger.warning("Ensemble API: all %d attempts failed (%s) for (%.4f, %.4f)",
-                               _ENSEMBLE_MAX_RETRIES, last_err, latitude, longitude)
+                logger.warning(
+                    "Ensemble API: all %d attempts failed (%s) for (%.4f, %.4f)",
+                    _ENSEMBLE_MAX_RETRIES,
+                    last_err,
+                    latitude,
+                    longitude,
+                )
                 return None
 
         try:

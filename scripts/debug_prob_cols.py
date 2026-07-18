@@ -1,6 +1,7 @@
 """Debug: verify prob_ columns are created correctly."""
+
 import logging
-from asi_engine.karpathy_weekly import add_per_model_probabilities, _build_splits_from_brier, DEFAULT_MODELS
+from asi_engine.karpathy_weekly import add_per_model_probabilities, _build_splits_from_brier
 from data_pipeline.unified_datastore import UnifiedDatastore
 
 logging.basicConfig(level=logging.INFO)

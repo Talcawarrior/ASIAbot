@@ -1,5 +1,7 @@
 """Debug _join_from_calibrations step by step."""
-import os, math, sqlite3
+
+import os
+import sqlite3
 import pandas as pd
 from data_pipeline.unified_datastore import UnifiedDatastore
 
@@ -7,7 +9,7 @@ from data_pipeline.unified_datastore import UnifiedDatastore
 ds = UnifiedDatastore()
 
 # 1. Build brier_df (what add_per_model_probabilities receives)
-from asi_engine.karpathy_weekly import DEFAULT_MODELS, OPEN_METEO_API_TO_INTERNAL
+from asi_engine.karpathy_weekly import OPEN_METEO_API_TO_INTERNAL
 
 brier = ds.build_brier_dataset()
 brier["join_date"] = pd.to_datetime(brier["target_date"], errors="coerce").dt.date.astype(str)

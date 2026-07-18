@@ -127,6 +127,7 @@ def run_cli():
     # Bot başlamadan önce DB backup al
     try:
         from db_backup import create_backup
+
         create_backup("startup")
     except Exception:
         pass
@@ -225,12 +226,14 @@ def run_cli():
         # Silmeden ÖNCE backup al
         try:
             from db_backup import create_backup
+
             create_backup("pre_reset_cli")
         except Exception:
             pass
         # Bets ve portfolio'yu parquet'a arşivle
         try:
             from database.db_cleanup import archive_bets_and_portfolio
+
             archive_bets_and_portfolio()
         except Exception:
             pass

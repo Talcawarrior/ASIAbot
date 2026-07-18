@@ -56,7 +56,7 @@ class PolymarketConfig:
         # Initialize fee categories if not provided
         if self.fee_categories is None:
             self.fee_categories = {
-                "weather": 0.05,    # Weather markets: 5% fee
+                "weather": 0.05,  # Weather markets: 5% fee
             }
 
 
@@ -472,6 +472,7 @@ class _ConfigProxy:
         "FLAT_BET_USD": ("strategy", "flat_bet_usd"),
         "DAILY_LOSS_LIMIT": ("strategy", "daily_loss_limit"),
         "TOTAL_EXPOSURE_PCT": ("strategy", "total_exposure_pct"),
+        "CURRENT_FEE_RATE": ("strategy", "current_fee_rate"),
     }
 
     def _resolve(self, name: str):

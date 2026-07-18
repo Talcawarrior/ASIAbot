@@ -4,7 +4,10 @@ Her tier için spesifik fiyat senaryoları:
 - Eski strateji: her tier'da sabit TP=80%, SL=20%, TS=15%
 - Yeni strateji: tier-aware TP/SL/TS
 """
-import json, os, sys
+
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime, timedelta, timezone
@@ -44,6 +47,7 @@ def run_scenarios(rm, scenarios, risk_cfg):
 
     # Temporarily patch global bot_config.risk for _get_risk_config()
     from config.settings import bot_config
+
     old_risk = bot_config.risk
     bot_config.risk = risk_cfg
 
@@ -79,9 +83,15 @@ def run_scenarios(rm, scenarios, risk_cfg):
 def main():
     # Configs
     old_cfg = RiskConfig()
-    old_cfg.tier1_take_profit = 0.80;  old_cfg.tier1_trailing_stop = 0.15; old_cfg.tier1_stop_loss = 0.20
-    old_cfg.tier2_take_profit = 0.80;  old_cfg.tier2_trailing_stop = 0.15; old_cfg.tier2_stop_loss = 0.20
-    old_cfg.tier4_take_profit = 0.80;  old_cfg.tier4_trailing_stop = 0.15; old_cfg.tier4_stop_loss = 0.20
+    old_cfg.tier1_take_profit = 0.80
+    old_cfg.tier1_trailing_stop = 0.15
+    old_cfg.tier1_stop_loss = 0.20
+    old_cfg.tier2_take_profit = 0.80
+    old_cfg.tier2_trailing_stop = 0.15
+    old_cfg.tier2_stop_loss = 0.20
+    old_cfg.tier4_take_profit = 0.80
+    old_cfg.tier4_trailing_stop = 0.15
+    old_cfg.tier4_stop_loss = 0.20
 
     new_cfg = RiskConfig()  # tiered defaults
     old_rm = RiskManager(None, old_cfg)
@@ -95,29 +105,27 @@ def main():
 
     tier1_scenarios = [
         # Scenario 1: Lottery WIN — 0.02 giris, 0.95'te settle
-        ("Lottery WIN: 0.02→0.95 settle", 0.02,
-         [0.02, 0.03, 0.05, 0.08, 0.12, 0.20, 0.35, 0.50, 0.70, 0.85, 0.95],
-         0.95),
+        (
+            "Lottery WIN: 0.02→0.95 settle",
+            0.02,
+            [0.02, 0.03, 0.05, 0.08, 0.12, 0.20, 0.35, 0.50, 0.70, 0.85, 0.95],
+            0.95,
+        ),
         # Scenario 2: Moderate pump — 0.03 giris, 0.15'e cikar, sonra duser
-        ("Moderate pump: 0.03→0.15→0.06", 0.03,
-         [0.03, 0.04, 0.06, 0.08, 0.12, 0.15, 0.14, 0.11, 0.08, 0.06],
-         0.06),
+        ("Moderate pump: 0.03→0.15→0.06", 0.03, [0.03, 0.04, 0.06, 0.08, 0.12, 0.15, 0.14, 0.11, 0.08, 0.06], 0.06),
         # Scenario 3: Small win — 0.04 giris, 0.20'ye cikar, settle
-        ("Small win: 0.04→0.20 settle", 0.04,
-         [0.04, 0.05, 0.07, 0.10, 0.14, 0.18, 0.20, 0.30, 0.50],
-         0.50),
+        ("Small win: 0.04→0.20 settle", 0.04, [0.04, 0.05, 0.07, 0.10, 0.14, 0.18, 0.20, 0.30, 0.50], 0.50),
         # Scenario 4: Quick loss — 0.02 giris, 0.01'e duser
-        ("Quick loss: 0.02→0.01", 0.02,
-         [0.02, 0.018, 0.015, 0.012, 0.01],
-         0.01),
+        ("Quick loss: 0.02→0.01", 0.02, [0.02, 0.018, 0.015, 0.012, 0.01], 0.01),
         # Scenario 5: Volatile hold — 0.01 giris, cok dalgalanir, settle at 0.80
-        ("Volatile hold: 0.01→0.05→0.02→0.80", 0.01,
-         [0.01, 0.02, 0.04, 0.05, 0.03, 0.02, 0.03, 0.06, 0.15, 0.30, 0.60, 0.80],
-         0.80),
+        (
+            "Volatile hold: 0.01→0.05→0.02→0.80",
+            0.01,
+            [0.01, 0.02, 0.04, 0.05, 0.03, 0.02, 0.03, 0.06, 0.15, 0.30, 0.60, 0.80],
+            0.80,
+        ),
         # Scenario 6: Near-miss — 0.02 giris, 0.50'ye cikar ama settle at 0.0
-        ("Near-miss: 0.02→0.50→settle at 0", 0.02,
-         [0.02, 0.05, 0.10, 0.20, 0.35, 0.50, 0.30, 0.15, 0.05, 0.02],
-         0.02),
+        ("Near-miss: 0.02→0.50→settle at 0", 0.02, [0.02, 0.05, 0.10, 0.20, 0.35, 0.50, 0.30, 0.15, 0.05, 0.02], 0.02),
     ]
 
     t1_old_scenarios = [(Bet(ep), prices, Market(48)) for _, ep, prices, _ in tier1_scenarios]
@@ -136,11 +144,13 @@ def main():
         arrow = "▲" if diff > 0.001 else ("▼" if diff < -0.001 else "=")
         print(f"  {name:<38} ${old_one['pnl']:>+9.2f}  ${new_one['pnl']:>+9.2f}  {arrow} ${abs(diff):>6.2f}")
 
-    print(f"\n  {'TOPLAM':<38} ${old_r['pnl']:>+9.2f}  ${new_r['pnl']:>+9.2f}  {'▲' if new_r['pnl'] > old_r['pnl'] else '='} ${abs(new_r['pnl'] - old_r['pnl']):>6.2f}")
+    print(
+        f"\n  {'TOPLAM':<38} ${old_r['pnl']:>+9.2f}  ${new_r['pnl']:>+9.2f}  {'▲' if new_r['pnl'] > old_r['pnl'] else '='} ${abs(new_r['pnl'] - old_r['pnl']):>6.2f}"
+    )
     print(f"  {'Kazanan':<38} {old_r['wins']:>10}    {new_r['wins']:>10}")
     print(f"  {'Exit Reasonları':<38}")
-    for k in sorted(set(list(old_r['exits'].keys()) + list(new_r['exits'].keys()))):
-        print(f"    {k}: eski={old_r['exits'].get(k,0)}, yeni={new_r['exits'].get(k,0)}")
+    for k in sorted(set(list(old_r["exits"].keys()) + list(new_r["exits"].keys()))):
+        print(f"    {k}: eski={old_r['exits'].get(k, 0)}, yeni={new_r['exits'].get(k, 0)}")
 
     # ── TIER 2 SENARYOLARI (0.05-0.15 entry) ────────────────
     print(f"\n{'=' * 72}")
@@ -149,18 +159,10 @@ def main():
     print("=" * 72)
 
     tier2_scenarios = [
-        ("Big win: 0.08→0.80", 0.08,
-         [0.08, 0.12, 0.18, 0.25, 0.35, 0.50, 0.65, 0.80],
-         0.80),
-        ("Pump & dump: 0.10→0.25→0.08", 0.10,
-         [0.10, 0.14, 0.18, 0.22, 0.25, 0.22, 0.18, 0.14, 0.10, 0.08],
-         0.08),
-        ("Steady climb: 0.06→0.40", 0.06,
-         [0.06, 0.08, 0.10, 0.14, 0.18, 0.22, 0.28, 0.35, 0.40],
-         0.40),
-        ("Loss: 0.12→0.04", 0.12,
-         [0.12, 0.10, 0.08, 0.06, 0.05, 0.04],
-         0.04),
+        ("Big win: 0.08→0.80", 0.08, [0.08, 0.12, 0.18, 0.25, 0.35, 0.50, 0.65, 0.80], 0.80),
+        ("Pump & dump: 0.10→0.25→0.08", 0.10, [0.10, 0.14, 0.18, 0.22, 0.25, 0.22, 0.18, 0.14, 0.10, 0.08], 0.08),
+        ("Steady climb: 0.06→0.40", 0.06, [0.06, 0.08, 0.10, 0.14, 0.18, 0.22, 0.28, 0.35, 0.40], 0.40),
+        ("Loss: 0.12→0.04", 0.12, [0.12, 0.10, 0.08, 0.06, 0.05, 0.04], 0.04),
     ]
 
     for name, ep, prices, final in tier2_scenarios:
@@ -185,17 +187,17 @@ def main():
 
     partial_scenarios = [
         # Senaryo 1: 0.20 giris, 0.40'a cikar → partial TP → sonra 0.80'e cikar, 0.60'a dus → TS tetik
-        ("0.20→0.40(partial)→0.80→0.60(TS)", 0.20,
-         [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.75, 0.70, 0.65, 0.60]),
+        (
+            "0.20→0.40(partial)→0.80→0.60(TS)",
+            0.20,
+            [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.75, 0.70, 0.65, 0.60],
+        ),
         # Senaryo 2: 0.20 giris, 0.40'a cikar → partial TP → settle at 1.0
-        ("0.20→0.40(partial)→settle at 1.0", 0.20,
-         [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]),
+        ("0.20→0.40(partial)→settle at 1.0", 0.20, [0.20, 0.25, 0.30, 0.35, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.0]),
         # Senaryo 3: 0.35 giris, 0.70'e cikar → partial TP → sonra 0.50'ye dus
-        ("0.35→0.70(partial)→0.50(TS)", 0.35,
-         [0.35, 0.45, 0.55, 0.65, 0.70, 0.65, 0.60, 0.55, 0.50]),
+        ("0.35→0.70(partial)→0.50(TS)", 0.35, [0.35, 0.45, 0.55, 0.65, 0.70, 0.65, 0.60, 0.55, 0.50]),
         # Senaryo 4: 0.15 giris, hic 0.30'a cikmaz → partial TP tetiklenmez, normal devam
-        ("0.15→0.25(hic TP yok)", 0.15,
-         [0.15, 0.18, 0.20, 0.22, 0.25, 0.23, 0.20]),
+        ("0.15→0.25(hic TP yok)", 0.15, [0.15, 0.18, 0.20, 0.22, 0.25, 0.23, 0.20]),
     ]
 
     for name, ep, prices in partial_scenarios:

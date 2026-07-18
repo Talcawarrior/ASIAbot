@@ -35,7 +35,7 @@ def is_bot_running() -> bool:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3)
-        result =         sock.connect_ex(('127.0.0.1', 8091))
+        result = sock.connect_ex(("127.0.0.1", 8091))
         sock.close()
         return result == 0
     except Exception:
@@ -67,6 +67,7 @@ def stop_bot():
         # Sadece bu bot'un PID'ini öldür, tüm python process'lerini değil!
         import subprocess as _subprocess
         import os as _os
+
         try:
             netstat = _subprocess.check_output(["netstat", "-ano"], text=True, stderr=_subprocess.DEVNULL)
             bot_pids = set()
@@ -81,9 +82,15 @@ def stop_bot():
             my_pid = _os.getpid()
             bot_pids.discard(my_pid)
             for pid in bot_pids:
-                _subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, creationflags=_subprocess.CREATE_NO_WINDOW)
+                _subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    creationflags=_subprocess.CREATE_NO_WINDOW,
+                )
         except Exception:
-            _subprocess.run(["taskkill", "/F", "/IM", "python.exe"], capture_output=True, creationflags=_subprocess.CREATE_NO_WINDOW)
+            _subprocess.run(
+                ["taskkill", "/F", "/IM", "python.exe"], capture_output=True, creationflags=_subprocess.CREATE_NO_WINDOW
+            )
     else:
         subprocess.run(["pkill", "-f", "main.py bot"], capture_output=True)
     log("Bot stopped")
@@ -103,6 +110,7 @@ def watchdog_loop():
                 # Bot health check (HTTP)
                 try:
                     import urllib.request
+
                     req = urllib.request.urlopen(f"{BOT_URL}/api/status", timeout=5)
                     if req.status == 200:
                         log("Bot OK")

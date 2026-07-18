@@ -1,10 +1,9 @@
 """Fetch active Polymarket weather markets and add to brier_df."""
+
 import logging
 import os
 import re
-import sqlite3
 import sys
-import time
 
 import pandas as pd
 
@@ -175,8 +174,16 @@ def run():
 
     # Filter for weather markets
     weather_keywords = [
-        "temperature", "high temp", "low temp", "°f", "°c",
-        "fahrenheit", "celsius", "weather", "rain", "snow",
+        "temperature",
+        "high temp",
+        "low temp",
+        "°f",
+        "°c",
+        "fahrenheit",
+        "celsius",
+        "weather",
+        "rain",
+        "snow",
     ]
 
     def is_weather(row):
@@ -211,21 +218,24 @@ def run():
             if outcomes:
                 try:
                     import json
+
                     prices = json.loads(outcomes) if isinstance(outcomes, str) else outcomes
                     if isinstance(prices, list) and len(prices) >= 1:
                         yes_price = float(prices[0])
                 except (json.JSONDecodeError, ValueError, IndexError):
                     pass
 
-            results.append({
-                "market_id": str(row.get("id", "")),
-                "question": question,
-                "city": city,
-                "threshold": round(threshold_c, 1),
-                "market_type": market_type,
-                "yes_price": yes_price,
-                "volume": row.get("volume", 0),
-            })
+            results.append(
+                {
+                    "market_id": str(row.get("id", "")),
+                    "question": question,
+                    "city": city,
+                    "threshold": round(threshold_c, 1),
+                    "market_type": market_type,
+                    "yes_price": yes_price,
+                    "volume": row.get("volume", 0),
+                }
+            )
 
     df = pd.DataFrame(results)
     logger.info("Extracted %d weather markets with structured data", len(df))

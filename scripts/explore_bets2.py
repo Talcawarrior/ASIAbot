@@ -1,4 +1,5 @@
 """Deep explore of bet data for backtest."""
+
 import sqlite3
 import os
 
@@ -50,7 +51,9 @@ c.execute("""
 """)
 print("\nBets with analysis:")
 for r in c.fetchall():
-    print(f"  id={r[0]}, side={r[1]}, entry={r[2]}, pnl={r[3]}, status={r[4]}, outcome={r[5]}, est_prob={r[6]:.4f}, edge={r[7]:.4f}, raw={r[8]:.4f}, implied={r[9]:.4f}, shares={r[10]}, amount={r[11]}")
+    print(
+        f"  id={r[0]}, side={r[1]}, entry={r[2]}, pnl={r[3]}, status={r[4]}, outcome={r[5]}, est_prob={r[6]:.4f}, edge={r[7]:.4f}, raw={r[8]:.4f}, implied={r[9]:.4f}, shares={r[10]}, amount={r[11]}"
+    )
 
 # Won bets: what's the payout relationship?
 c.execute("""

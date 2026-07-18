@@ -113,19 +113,9 @@ def estimate_probability(  # pylint: disable=too-many-arguments,too-many-positio
     elif mt == "LOW":
         prob = normal_cdf(z)
     elif mt == "RANGE":
-        low = (
-            range_low
-            if (range_low is not None and range_high is not None)
-            else threshold - 0.5
-        )
-        high = (
-            range_high
-            if (range_low is not None and range_high is not None)
-            else threshold + 0.5
-        )
-        prob = normal_cdf((high - mean) / total_std) - normal_cdf(
-            (low - mean) / total_std
-        )
+        low = range_low if (range_low is not None and range_high is not None) else threshold - 0.5
+        high = range_high if (range_low is not None and range_high is not None) else threshold + 0.5
+        prob = normal_cdf((high - mean) / total_std) - normal_cdf((low - mean) / total_std)
     else:
         logger.warning("Unknown market_type=%r, falling back to HIGH", market_type)
         prob = 1.0 - normal_cdf(z)
@@ -165,9 +155,7 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
         base = s.min_edge
 
     try:
-        resolution = getattr(market, "resolution_date", None) or getattr(
-            market, "target_date", None
-        )
+        resolution = getattr(market, "resolution_date", None) or getattr(market, "target_date", None)
         if resolution is None:
             return base
         now = datetime.now(timezone.utc)

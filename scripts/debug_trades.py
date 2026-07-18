@@ -1,5 +1,5 @@
 """Debug: look at individual trade decisions."""
-import math
+
 import pandas as pd
 from asi_engine.karpathy_weekly import (
     add_per_model_probabilities,

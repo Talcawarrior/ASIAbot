@@ -43,7 +43,7 @@ def create_backup(label="auto"):
 
     # Eski backup'ları temizle
     backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db")))
-    for old in backups[:len(backups) - MAX_BACKUPS]:
+    for old in backups[: len(backups) - MAX_BACKUPS]:
         os.unlink(old)
         for ext in ["-wal", "-shm"]:
             p = old + ext

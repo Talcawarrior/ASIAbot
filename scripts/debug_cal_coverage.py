@@ -1,4 +1,5 @@
 """Debug: check full calibration data coverage."""
+
 import sqlite3
 import pandas as pd
 
@@ -14,6 +15,7 @@ print()
 
 # Check which cities overlap with brier_df
 from data_pipeline.unified_datastore import UnifiedDatastore
+
 ds = UnifiedDatastore()
 brier = ds.build_brier_dataset()
 brier_cities = set(brier["city"].unique())

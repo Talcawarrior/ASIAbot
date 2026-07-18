@@ -15,9 +15,7 @@ from engine.calculator import Calculator
 
 
 def _market(hours_from_now: float) -> SimpleNamespace:
-    return SimpleNamespace(
-        resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
-    )
+    return SimpleNamespace(resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now))
 
 
 def test_calculator_static_method_exists():
@@ -28,15 +26,15 @@ def test_calculator_static_method_exists():
 
 
 def test_calculator_matches_weather_engine_behavior():
-    """Calculator and WeatherEngine must produce the same answer
-    for the same market so the two classes cannot drift apart."""
-    from engine.calculator import WeatherEngine
+    """Calculator and utils.probability.compute_effective_min_edge must produce the same answer
+    for the same market so the two implementations cannot drift apart."""
+    from utils.probability import compute_effective_min_edge
 
     cases = [48, 24, 12, 1, 0, -5]
     for h in cases:
         m = _market(h)
         a = Calculator._compute_effective_min_edge(m)
-        b = WeatherEngine._compute_effective_min_edge(m)
+        b = compute_effective_min_edge(m)
         assert abs(a - b) < 1e-8, f"drift at h={h}: {a} vs {b}"
 
 

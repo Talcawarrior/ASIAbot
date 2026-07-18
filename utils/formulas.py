@@ -46,9 +46,7 @@ def max_bet_cap(portfolio_value: float, max_bet_pct: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def conservative_portfolio_value(
-    initial_capital: float, realized_before_today: float
-) -> float:
+def conservative_portfolio_value(initial_capital: float, realized_before_today: float) -> float:
     """Portfolio basis that prevents the feedback loop.
 
     Only counts:
@@ -72,9 +70,7 @@ def conservative_portfolio_value(
 # ---------------------------------------------------------------------------
 
 
-def max_exposure_cap(
-    initial_capital: float, realized_before_today: float, total_exposure_pct: float
-) -> float:
+def max_exposure_cap(initial_capital: float, realized_before_today: float, total_exposure_pct: float) -> float:
     """Total open-position ceiling.
 
     Formula: (initial + realized_before_today) × TOTAL_EXPOSURE_PCT
@@ -84,10 +80,7 @@ def max_exposure_cap(
       - main.py     (API /api/status → portfolio.max_exposure)
       - bet_placer.py (Cap 2)
     """
-    return (
-        conservative_portfolio_value(initial_capital, realized_before_today)
-        * total_exposure_pct
-    )
+    return conservative_portfolio_value(initial_capital, realized_before_today) * total_exposure_pct
 
 
 # ---------------------------------------------------------------------------
@@ -120,9 +113,7 @@ def settlement_payout(stake: float, entry_price: float) -> float:
     return stake / entry_price if entry_price > 0 else 0.0
 
 
-def settlement_pnl(
-    stake: float, entry_price: float, entry_fee: float, won: bool
-) -> float:
+def settlement_pnl(stake: float, entry_price: float, entry_fee: float, won: bool) -> float:
     """Realised PnL when Polymarket resolves a bet.
 
     According to Polymarket's official fee model:
@@ -229,9 +220,7 @@ def portfolio_total_value(cash_balance: float, open_exposure: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def portfolio_current_value(
-    initial_capital: float, realized_pnl: float, unrealized_pnl: float
-) -> float:
+def portfolio_current_value(initial_capital: float, realized_pnl: float, unrealized_pnl: float) -> float:
     """Market value: initial + all PnL (includes unrealised paper gains).
 
     Used by:
@@ -319,6 +308,3 @@ def win_rate_pct(wins: int, total_closed: int) -> float:
     if total_closed <= 0:
         return 0.0
     return (wins / total_closed) * 100
-
-
-

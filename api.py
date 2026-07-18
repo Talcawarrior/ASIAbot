@@ -55,11 +55,11 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv("ASIAbot_API_KEY", "")
 if not API_KEY:
     API_KEY = secrets.token_urlsafe(32)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("WARNING: ASIAbot_API_KEY not set. Generated random key:")
     print(f"  {API_KEY}")
     print(f"Add to .env: ASIAbot_API_KEY={API_KEY}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 async def verify_api_key(x_api_key: str = Header(default="")):
@@ -132,6 +132,7 @@ async def lifespan(_app: FastAPI):
     # Startup'ta DB backup al (API ile başlatılsa bile)
     try:
         from db_backup import create_backup
+
         create_backup("startup")
     except Exception as e:
         logger.warning("Startup backup warning: %s", e)
@@ -543,9 +544,7 @@ def get_markets():
             db.query(Analysis, WeatherMarket)
             .join(WeatherMarket, Analysis.market_id == WeatherMarket.id)
             .filter(Analysis.should_bet.is_(True))
-            .filter(
-                ~Analysis.market_id.in_(db.query(Bet.market_id).filter(Bet.status.in_(OPEN_BET_STATUSES)))
-            )
+            .filter(~Analysis.market_id.in_(db.query(Bet.market_id).filter(Bet.status.in_(OPEN_BET_STATUSES))))
             .order_by(Analysis.analyzed_at.desc())
             .all()
         )
@@ -704,6 +703,7 @@ def get_signals():
         latest_analysis_by_market = {}
         if market_ids:
             from sqlalchemy import func as sa_func
+
             latest_subq = (
                 db.query(
                     Analysis.market_id,
@@ -717,8 +717,7 @@ def get_signals():
                 db.query(Analysis)
                 .join(
                     latest_subq,
-                    (Analysis.market_id == latest_subq.c.market_id)
-                    & (Analysis.analyzed_at == latest_subq.c.max_ts),
+                    (Analysis.market_id == latest_subq.c.market_id) & (Analysis.analyzed_at == latest_subq.c.max_ts),
                 )
                 .all()
             ):
@@ -1171,6 +1170,7 @@ async def reset_bot(_key: str = Depends(verify_api_key)):
     # Silmeden ÖNCE backup al — asla veri kaybı olmasın
     try:
         from db_backup import create_backup
+
         create_backup("pre_reset")
     except Exception as e:
         logger.warning("Pre-reset backup failed: %s", e)
@@ -1178,6 +1178,7 @@ async def reset_bot(_key: str = Depends(verify_api_key)):
     # Bets ve portfolio'yu parquet'a arşivle (reset sonrası kurtarma için)
     try:
         from database.db_cleanup import archive_bets_and_portfolio
+
         archive_bets_and_portfolio()
     except Exception as e:
         logger.warning("Pre-reset archive failed: %s", e)

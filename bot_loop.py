@@ -26,9 +26,9 @@ _FAST_SCAN_INTERVAL = 60
 _NORMAL_SCAN_INTERVAL = 900
 
 # Watchdog thresholds (seconds)
-_WATCHDOG_WARNING = 900    # 15 dakika — warning
-_WATCHDOG_DEAD = 1800      # 30 dakika — dead
-_WATCHDOG_RESTART = 3600   # 1 saat — restart
+_WATCHDOG_WARNING = 900  # 15 dakika — warning
+_WATCHDOG_DEAD = 1800  # 30 dakika — dead
+_WATCHDOG_RESTART = 3600  # 1 saat — restart
 
 
 def _get_market_count() -> int:
@@ -38,6 +38,7 @@ def _get_market_count() -> int:
 
 def _is_midnight_window(now: datetime) -> bool:
     from config.settings import bot_config
+
     window_minutes = bot_config.midnight_scan_window
     return now.hour == 0 and now.minute < window_minutes
 
@@ -46,6 +47,7 @@ def _get_scan_interval(now: datetime, fast_mode_until: datetime | None) -> int:
     if fast_mode_until and now < fast_mode_until:
         return _FAST_SCAN_INTERVAL
     from config.settings import bot_config
+
     if _is_midnight_window(now):
         return bot_config.midnight_scan_interval
     return _NORMAL_SCAN_INTERVAL
@@ -109,10 +111,14 @@ async def scan_and_bet_loop(state):
                 current_count = _get_market_count()
                 if current_count > previous_market_count:
                     new_markets = current_count - previous_market_count
-                    fast_mode_until = (datetime.now(timezone.utc) + timedelta(minutes=_FAST_MODE_MINUTES)).replace(tzinfo=None)
+                    fast_mode_until = (datetime.now(timezone.utc) + timedelta(minutes=_FAST_MODE_MINUTES)).replace(
+                        tzinfo=None
+                    )
                     logger.info(
                         "NEW MARKETS DETECTED: +%d (total: %d) — FAST MODE for %d min",
-                        new_markets, current_count, _FAST_MODE_MINUTES
+                        new_markets,
+                        current_count,
+                        _FAST_MODE_MINUTES,
                     )
                 previous_market_count = current_count
             except Exception as e:
@@ -169,23 +175,16 @@ async def settlement_loop(state):
                 if elapsed > _WATCHDOG_DEAD:
                     if scan_healthy:
                         logger.error(
-                            "SCAN LOOP WATCHDOG: No scan for %.1f minutes! last_scan=%s",
-                            elapsed / 60, state.last_scan
+                            "SCAN LOOP WATCHDOG: No scan for %.1f minutes! last_scan=%s", elapsed / 60, state.last_scan
                         )
                         scan_healthy = False
                     # 1 saatten fazlaysa bot'u durdur
                     if elapsed > _WATCHDOG_RESTART:
-                        logger.critical(
-                            "SCAN LOOP DEAD for >%.0f min — stopping bot for restart",
-                            elapsed / 60
-                        )
+                        logger.critical("SCAN LOOP DEAD for >%.0f min — stopping bot for restart", elapsed / 60)
                         state.is_running = False
                         break
                 elif elapsed > _WATCHDOG_WARNING:
-                    logger.warning(
-                        "SCAN LOOP WATCHDOG: Last scan %.1f min ago (warning)",
-                        elapsed / 60
-                    )
+                    logger.warning("SCAN LOOP WATCHDOG: Last scan %.1f min ago (warning)", elapsed / 60)
                 else:
                     if not scan_healthy:
                         logger.info("Scan loop recovered — healthy again")
@@ -201,6 +200,7 @@ async def settlement_loop(state):
             today = datetime.now(timezone.utc).date()
             if last_cleanup_date != today:
                 from database.db_cleanup import auto_cleanup
+
                 await asyncio.to_thread(auto_cleanup, hot_days=10, cold_days=120)
                 last_cleanup_date = today
 
@@ -245,6 +245,7 @@ def _cleanup_stale_bets():
 
             if should_cancel:
                 from utils.accounting import credit_sale
+
                 bet.status = "cancelled"
                 bet.settled_at = now
                 bet.close_reason = "stale_cleanup"

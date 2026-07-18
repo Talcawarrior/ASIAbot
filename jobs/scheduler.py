@@ -293,13 +293,9 @@ def _partial_close_early(bet, sess, reason, current_price):
     portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
     if portfolio:
         open_exposure = (
-            sess.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-            .scalar()
+            sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
         ) or 0.0
-        portfolio.total_value = portfolio_total_value(
-            float(portfolio.cash_balance or 0.0), float(open_exposure)
-        )
+        portfolio.total_value = portfolio_total_value(float(portfolio.cash_balance or 0.0), float(open_exposure))
         portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
         portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
         portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -309,7 +305,13 @@ def _partial_close_early(bet, sess, reason, current_price):
         sess.add(portfolio)
     logger.info(
         "Partial TP bet=%s market=%s sold %.2f/%.2f shares (%.1f%%) realized=$%.2f fee=$%.2f (stays open)",
-        bet.id, bet.market_id, sold_shares, original_shares, fraction_to_sell * 100, realized, fee,
+        bet.id,
+        bet.market_id,
+        sold_shares,
+        original_shares,
+        fraction_to_sell * 100,
+        realized,
+        fee,
     )
     return True
 

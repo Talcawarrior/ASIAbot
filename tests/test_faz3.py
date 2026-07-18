@@ -15,20 +15,20 @@ from database.db import init_db  # noqa: E402
 
 init_db()
 
-from config.settings import bot_config, config  # noqa: E402
+from config.settings import bot_config  # noqa: E402
 
 
 def test_fee_drag():
-    """Test 1: FEE_DRAG must be 0.02."""
-    assert config.FEE_DRAG == 0.02, f"FEE_DRAG={config.FEE_DRAG}, expected 0.02"
-    assert bot_config.strategy.fee_drag == 0.02, (
-        f"strategy.fee_drag={bot_config.strategy.fee_drag}, expected 0.02"
+    """Test 1: current_fee_rate must be 0.05 (weather category default)."""
+    assert bot_config.strategy.current_fee_rate == 0.05, (
+        f"current_fee_rate={bot_config.strategy.current_fee_rate}, expected 0.05"
     )
-    print("✅ Test 1: FEE_DRAG = 0.02")
+    # fee_drag is dynamic: fee_rate * p * (1-p). At p=0.5, 0.05 * 0.5 * 0.5 = 0.0125
+    print("✅ Test 1: current_fee_rate = 0.05 (fee_drag is dynamic: rate * p * (1-p))")
 
 
 def test_ev_with_fee():
-    """Test 2: EV = edge - FEE_DRAG in analyze_signal."""
+    """Test 2: EV = edge - fee_drag in analyze_signal."""
     from engine.strategy import BettingEngine
 
     be = BettingEngine()
@@ -43,10 +43,12 @@ def test_ev_with_fee():
         side="YES",
     )
     assert signal is not None
-    # edge = 0.75 - 0.60 = 0.15, ev = 0.15 - 0.02 = 0.13
+    # edge = 0.75 - 0.60 = 0.15
+    # fee_drag at p=0.60: 0.05 * 0.6 * 0.4 = 0.012
+    # ev = 0.15 - 0.012 = 0.138
     assert abs(signal["edge"] - 0.15) < 0.001, f"edge={signal['edge']}"
-    assert abs(signal["ev"] - 0.13) < 0.001, f"ev={signal['ev']}"
-    print(f"✅ Test 2: EV={signal['ev']:.4f} (edge={signal['edge']:.4f} - FEE_DRAG)")
+    assert abs(signal["ev"] - 0.138) < 0.001, f"ev={signal['ev']}"
+    print(f"✅ Test 2: EV={signal['ev']:.4f} (edge={signal['edge']:.4f} - fee_drag)")
 
 
 def test_kelly_bankroll():
@@ -119,17 +121,11 @@ def test_kelly_bankroll():
 
     # Access attributes within session to avoid DetachedInstanceError
     with get_session() as session:
-        analysis = (
-            session.query(Analysis)
-            .filter(Analysis.market_id == "test-faz3-bankroll")
-            .first()
-        )
+        analysis = session.query(Analysis).filter(Analysis.market_id == "test-faz3-bankroll").first()
         assert analysis is not None, "Analysis not found in DB!"
         rec_amount = analysis.recommended_amount
         assert rec_amount > 0, f"recommended_amount is {rec_amount}!"
-        print(
-            f"✅ Test 3: recommended_amount=${rec_amount:.2f} (bankroll=$2000, max_bet=$50)"
-        )
+        print(f"✅ Test 3: recommended_amount=${rec_amount:.2f} (bankroll=$2000, max_bet=$50)")
 
 
 def test_sia_status():
@@ -141,9 +137,7 @@ def test_sia_status():
     src = inspect.getsource(SIALoop.analyze_model_performance)
     assert '"won"' in src, "Missing 'won' in status filter"
     assert '"lost"' in src, "Missing 'lost' in status filter"
-    assert '"settled"' not in src.replace('"won", "lost"', ""), (
-        "'settled' should not be in status filter"
-    )
+    assert '"settled"' not in src.replace('"won", "lost"', ""), "'settled' should not be in status filter"
     print("✅ Test 4: SIALoop uses 'won'/'lost' statuses")
 
 
@@ -156,13 +150,9 @@ def test_sia_brier_input():
     src = inspect.getsource(SIALoop.analyze_model_performance)
     assert "model_probs" in src, "Missing model_probs in Brier calculation"
     # Verify Brier uses _resolve_market_outcome (market resolution), not bet.status
-    assert "_resolve_market_outcome" in src, (
-        "Brier should use market resolution outcome, not bet.status"
-    )
+    assert "_resolve_market_outcome" in src, "Brier should use market resolution outcome, not bet.status"
     # Ensure Bet.fair_value is NOT the Brier prediction input
-    assert "bet.fair_value" not in src, (
-        "Brier should not use bet.fair_value; uses per-model probs from analysis"
-    )
+    assert "bet.fair_value" not in src, "Brier should not use bet.fair_value; uses per-model probs from analysis"
     print("✅ Test 5: SIALoop uses per-model probability for Brier score")
 
 
@@ -175,13 +165,9 @@ def test_ladder_pending():
     ladder = be.create_ladder_orders(signal, 30.0)
     assert len(ladder) == 3, f"Expected 3 levels, got {len(ladder)}"
     for lvl in ladder:
-        assert lvl["status"] == "pending", (
-            f"Level {lvl['level']} status is '{lvl['status']}', expected 'pending'"
-        )
+        assert lvl["status"] == "pending", f"Level {lvl['level']} status is '{lvl['status']}', expected 'pending'"
         assert "filled_at" in lvl, f"Level {lvl['level']} missing 'filled_at'"
-    print(
-        f"✅ Test 6: Ladder pending OK — {ladder[0]['price']}, {ladder[1]['price']}, {ladder[2]['price']}"
-    )
+    print(f"✅ Test 6: Ladder pending OK — {ladder[0]['price']}, {ladder[1]['price']}, {ladder[2]['price']}")
 
 
 def test_exposure_query():
@@ -213,27 +199,26 @@ def test_betting_engine_ev_full():
     try:
         be = BettingEngine()
 
-        # Test with edge above min_edge (0.15 from config)
+        # Test with positive EV (edge=0.16, fee_drag=0.0105 -> ev=0.1495)
         s1 = be.analyze_signal(
             {"yes_price": 0.70, "city_code": "KLGA"},
             model_prob=0.86,
             side="YES",
         )
-        # edge=0.16, ev=0.14 → eligible (ev>0, edge>=min_edge=0.15)
+        # edge=0.16, fee=0.0105 -> ev=0.1495 > 0 → eligible
         assert s1 is not None, "Should be eligible"
         assert s1["ev"] > 0, f"EV={s1['ev']}, expected positive"
 
-        # Test with edge below min_edge (0.15 from config)
+        # Test with positive but small EV (edge=0.10, fee_drag=0.0105 -> ev=0.0895)
         s2 = be.analyze_signal(
             {"yes_price": 0.70, "city_code": "KLGA"},
             model_prob=0.80,
             side="YES",
         )
-        # edge=0.10 < min_edge=0.15 → not eligible
-        assert s2 is None, "Should NOT be eligible (edge < 0.15)"
-        print(
-            f"✅ Test 9: EV pipeline OK — eligible edge={s1['edge']}->ev={s1['ev']}, rejected edge=0.10->ev=0.08"
-        )
+        # edge=0.10, fee_drag=0.0105 -> ev=0.0895 > 0 → eligible (only ev>0 checked, not min_edge)
+        assert s2 is not None, "Should be eligible (ev>0)"
+        assert s2["ev"] > 0, f"EV={s2['ev']}, expected positive"
+        print(f"✅ Test 9: EV pipeline OK — s1: edge={s1['edge']}->ev={s1['ev']}, s2: edge={s2['edge']}->ev={s2['ev']}")
     finally:
         bot_config.strategy.min_edge = orig_min_edge
 

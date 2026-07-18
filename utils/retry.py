@@ -32,9 +32,7 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                         except RuntimeError:
                             time.sleep(wait)
                     else:
-                        logger.error(
-                            f"{func.__name__} FAILED after {max_attempts} attempts: {e}"
-                        )
+                        logger.error(f"{func.__name__} FAILED after {max_attempts} attempts: {e}")
             raise last_exception
 
         return wrapper

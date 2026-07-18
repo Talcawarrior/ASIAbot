@@ -47,9 +47,7 @@ def _clean():
 def _setup_market_and_forecasts():
     _clean()
     with get_session() as session:
-        pf = Portfolio(
-            id=1, cash_balance=1000.0, total_value=1000.0, current_value=1000.0
-        )
+        pf = Portfolio(id=1, cash_balance=1000.0, total_value=1000.0, current_value=1000.0)
         session.add(pf)
         market = WeatherMarket(
             id="test-faz5-nyc",
@@ -95,11 +93,7 @@ def test_analyze_creates_analysis():
         calc.analyze_market("test-faz5-nyc")
         # Re-query from DB to avoid DetachedInstanceError
         with get_session() as session:
-            analysis = (
-                session.query(Analysis)
-                .filter(Analysis.market_id == "test-faz5-nyc")
-                .first()
-            )
+            analysis = session.query(Analysis).filter(Analysis.market_id == "test-faz5-nyc").first()
             assert analysis is not None, "Analysis is NULL"
             assert analysis.should_bet, f"should_bet=False (edge={analysis.edge})"
             assert analysis.recommended_amount > 0, "recommended_amount=0"
@@ -121,14 +115,8 @@ def test_place_bets_creates_bet_row():
         calc.analyze_market("test-faz5-nyc")
         # Re-query to verify should_bet
         with get_session() as session:
-            analysis = (
-                session.query(Analysis)
-                .filter(Analysis.market_id == "test-faz5-nyc")
-                .first()
-            )
-            assert analysis is not None and analysis.should_bet, (
-                "Analysis should_bet is False"
-            )
+            analysis = session.query(Analysis).filter(Analysis.market_id == "test-faz5-nyc").first()
+            assert analysis is not None and analysis.should_bet, "Analysis should_bet is False"
         from jobs.scheduler import run_place_bets
 
         run_place_bets()
@@ -160,9 +148,7 @@ def test_portfolio_cash_decreases_after_bet():
         run_place_bets()
         with get_session() as session:
             pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
-            assert pf.cash_balance < initial_cash, (
-                f"Cash did not decrease: {pf.cash_balance}"
-            )
+            assert pf.cash_balance < initial_cash, f"Cash did not decrease: {pf.cash_balance}"
             bet = session.query(Bet).filter(Bet.market_id == "test-faz5-nyc").first()
             assert bet is not None
             # Level 1 = 50% of recommended, cash -= Level 1 + entry_fee
@@ -201,15 +187,9 @@ def test_ladder_data_json():
                 ), f"Bad status: {level['status']}"
             # L1 is immediately 'filled' at placement (Bug B fix — prevents
             # double-debit in run_update_prices). L2/L3 remain pending.
-            assert ladder[0]["status"] == "filled", (
-                f"Level 1 should be filled: {ladder[0]}"
-            )
-            assert ladder[1]["status"] == "pending", (
-                f"Level 2 should be pending: {ladder[1]}"
-            )
-            assert ladder[2]["status"] == "pending", (
-                f"Level 3 should be pending: {ladder[2]}"
-            )
+            assert ladder[0]["status"] == "filled", f"Level 1 should be filled: {ladder[0]}"
+            assert ladder[1]["status"] == "pending", f"Level 2 should be pending: {ladder[1]}"
+            assert ladder[2]["status"] == "pending", f"Level 3 should be pending: {ladder[2]}"
             # L1 should also have a filled_at timestamp
             assert ladder[0].get("filled_at") is not None, "Level 1 missing filled_at"
     finally:

@@ -90,12 +90,9 @@ class TestResearcherAgentHonesty:
         old_weights = cb.get_best_parameters()["model_weights"]
 
         assert new_weights["gfs_seamless"] >= old_weights["gfs_seamless"], (
-            f"gfs_seamless should be boosted: was {old_weights['gfs_seamless']}, "
-            f"now {new_weights['gfs_seamless']}"
+            f"gfs_seamless should be boosted: was {old_weights['gfs_seamless']}, now {new_weights['gfs_seamless']}"
         )
-        assert (
-            new_weights["meteofrance_seamless"] <= old_weights["meteofrance_seamless"]
-        ), (
+        assert new_weights["meteofrance_seamless"] <= old_weights["meteofrance_seamless"], (
             f"meteofrance_seamless should be trimmed: was {old_weights['meteofrance_seamless']}, "
             f"now {new_weights['meteofrance_seamless']}"
         )

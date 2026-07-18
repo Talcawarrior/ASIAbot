@@ -458,7 +458,9 @@ class MeteoFetcher:
                                             predicted_value=float(tmp),
                                             model_weight=we.model_weights.get(mn, 0.0),
                                             fetched_at=datetime.now(UTC).replace(tzinfo=None),
-                                            raw_data=str({"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}),
+                                            raw_data=str(
+                                                {"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}
+                                            ),
                                         )
                                     )
                         _sess.commit()
