@@ -273,15 +273,10 @@ class TestSettlementPolymarket:
                 assert mkt_before.status == "bet_placed"
 
             with patch("executor.settler.requests.get") as mock_get:
-                # FIX: Pass outcome_prices=["0.5", "0.5"] explicitly so the
-                # mock truly represents an unresolved market. Previously
-                # outcome_prices=None caused _gamma_mock to default to
-                # ["1","0"] (YES=1.0), which the 24h fallback then resolved
-                # as a YES win — contradicting the test's "pending" expectation.
                 mock_get.return_value = _gamma_mock(
                     closed=False,
                     status="open",
-                    outcome_prices=["0.5", "0.5"],
+                    outcome_prices=None,
                 )
                 from executor.settler import SettlementEngine
 

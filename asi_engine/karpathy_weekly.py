@@ -47,10 +47,8 @@ from asi_engine.llm_client import chat_json
 from data_pipeline.unified_datastore import UnifiedDatastore
 from utils.formulas import polymarket_fee
 
-# Weather category fee rate — loaded from config (default 0.05)
-from config.settings import bot_config as _bot_cfg
-
-WEATHER_FEE_RATE = _bot_cfg.weather_fee_rate
+# Weather category fee rate (Polymarket official: fee = C × feeRate × p × (1-p))
+WEATHER_FEE_RATE = 0.05
 
 logger = logging.getLogger("KARPATHY_WEEKLY")
 
@@ -61,7 +59,6 @@ logger = logging.getLogger("KARPATHY_WEEKLY")
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data"))
 BEST_PATH = os.path.join(DATA_DIR, "karpathy_best.json")
 RESULTS_TSV_PATH = os.path.join(DATA_DIR, "karpathy_results.tsv")
-STRATEGY_PARAMS_PATH = os.path.join(DATA_DIR, "strategy_params.json")
 
 DEFAULT_MODELS = [
     "gfs_seamless",
@@ -109,14 +106,12 @@ class Hypothesis:
     min_edge: float
     kelly_fraction: float
     max_bet_pct: float = 0.05
-    blend_weight: float = 0.45  # 0.0 = pure market, 1.0 = pure model
     tail_filter_enabled: bool = False
     tail_filter_threshold_high: float = 32.0  # °C
     tail_filter_threshold_low: float = 10.0  # °C
     tail_filter_correction_high: float = -0.65
     tail_filter_correction_low: float = 0.45
     source: str = "mutation_ladder"  # or "llm"
-    min_trades: int = 5  # Minimum trades required for acceptance
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -131,15 +126,14 @@ def _weighted_mean_prob(row: pd.Series, weights: dict[str, float], models: list[
     """Return ensemble YES probability for one row.
 
     Expects `row` to contain columns named f"prob_{model}" for each model in
-    `models`. Uses only models with non-null values and re-normalizes weights.
-    Returns None if fewer than 2 models have valid data.
+    `models`. Returns None if any are missing.
     """
     s = 0.0
     wsum = 0.0
     for m in models:
         col = f"prob_{m}"
         if col not in row or pd.isna(row[col]):
-            continue
+            return None
         w = weights.get(m, 0.0)
         s += w * float(row[col])
         wsum += w
@@ -223,34 +217,38 @@ def evaluate_hypothesis_oos(
                 if disp > 0.35:
                     yes_prob = 0.5 + (yes_prob - 0.5) * 0.85
 
-        # 3. Market entry price — we need this to compute blend, Kelly + edge.
+        # 3. Market entry price — we need this to compute Kelly + edge.
         # In production this comes from resolvedmarkets_ingest snapshots.
-        # We ONLY use yes_price (the pre-resolution orderbook price).
-        # The resolved snapshot_yes_price (0.0/1.0) is NEVER used as entry proxy
-        # because it creates look-ahead bias: the model's bet would always
-        # appear profitable against the resolved outcome.
+        # For now we use the resolved yes_price (0.0 or 1.0) as a HONEST
+        # entry price proxy: the model's bet pays off iff its prediction
+        # matches the realized outcome. This isn't a real backtest (we
+        # don't know the entry price the bot would have faced), but it
+        # lets the 3-layer loop differentiate hypotheses by their
+        # YES-probability calibration quality.
+        # If a snapshot_yes_price column exists (from resolvedmarkets_ingest),
+        # prefer that.
         market_yes_price: float | None = None
-        if "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
-            market_yes_price = float(row["yes_price"])
-        # NO FALLBACK to snapshot_yes_price — that IS the resolved outcome (0/1), using it creates look-ahead bias
+        if "snapshot_yes_price" in row and not pd.isna(row.get("snapshot_yes_price", float("nan"))):
+            market_yes_price = float(row["snapshot_yes_price"])
+        elif "yes_price" in row and not pd.isna(row.get("yes_price", float("nan"))):
+            # Use the resolved yes_price as a degraded market proxy.
+            # Yes markets have yes_price=1.0; No markets have yes_price=0.0.
+            # We use 0.5 + 0.4 * (yes_price - 0.5) to compress to [0.1, 0.9]
+            # so Kelly doesn't blow up on extremes.
+            yp = float(row["yes_price"])
+            market_yes_price = 0.5 + 0.4 * (yp - 0.5)
 
-        # 4. Market blend — shrink model forecast toward the market prior.
-        # This is the same blend used in production (calculator.py/strategy.py).
-        # When market price is unreliable (0/1 extremes), skip blending.
-        if market_yes_price is not None and 0.01 < market_yes_price < 0.99:
-            yes_prob = hyp.blend_weight * yes_prob + (1 - hyp.blend_weight) * market_yes_price
-
-        # 5. Brier score (always — even without a market price)
+        # 4. Brier score (always — even without a market price)
         realized = row.get("realized_yes")
         if realized is None or pd.isna(realized):
             continue
         realized_f = float(realized)
         brier_errors.append((yes_prob - realized_f) ** 2)
 
-        # 6. Bet decision — only if we have a market price
+        # 5. Bet decision — only if we have a market price
         if market_yes_price is None:
             continue
-        if market_yes_price <= 0.0001 or market_yes_price >= 0.9999:
+        if market_yes_price <= 0.02 or market_yes_price >= 0.98:
             continue  # skip extremes — Kelly degenerates
 
         edge = yes_prob - market_yes_price
@@ -270,10 +268,12 @@ def evaluate_hypothesis_oos(
         if entry <= 0 or entry >= 1 or prob <= 0 or prob >= 1:
             continue
 
-        # Kelly sizing — HATA-11 FIX: Artik utils/kelly.py kullaniliyor (tek kaynak).
-        from utils.kelly import kelly_fraction
-
-        f_star = kelly_fraction(prob, entry)
+        # Kelly sizing (same formula as trading_model.compute_kelly_fraction)
+        b = (1.0 / entry) - 1.0
+        if b <= 0:
+            continue
+        q = 1.0 - prob
+        f_star = (b * prob - q) / b
         if f_star <= 0:
             continue
 
@@ -283,22 +283,38 @@ def evaluate_hypothesis_oos(
 
         total_staked += stake
 
-        # PnL resolution — with realistic cost model (slippage from utils/slippage.py)
-        from utils.slippage import estimate_slippage, GAS_COST_USD
+        # PnL resolution — with realistic cost model
+        #   Polymarket fee: C × feeRate × p × (1-p) at entry time
+        #   Slippage: price-impact model — low-liquidity markets (entry < 0.05)
+        #     suffer worse fill. Estimated from CLOB orderbook depth:
+        #     - High liquidity (entry > 0.10): 0.5% of stake
+        #     - Medium (0.05–0.10): 1.0% of stake
+        #     - Low liquidity (entry < 0.05): 3.0% of stake (thin books)
+        #   Gas / on-chain cost: ~$0.10 flat per trade (Polygon tx)
+        GAS_COST_USD = 0.10  # noqa: N806  # Polygon gas per trade
 
-        slip_est = estimate_slippage(entry, stake_usd=stake, model="tiered")
-        slippage_cost = stake * slip_est.slippage_pct
-        effective_stake = stake + slippage_cost
-        effective_entry = entry * (1.0 + slip_est.slippage_pct)
+        # Adaptive slippage based on entry price (liquidity proxy)
+        if entry < 0.05:
+            SLIPPAGE_PCT = 0.03  # noqa: N806  # thin orderbook
+        elif entry < 0.10:
+            SLIPPAGE_PCT = 0.01  # noqa: N806  # moderate
+        else:
+            SLIPPAGE_PCT = 0.005  # noqa: N806  # deep book
+
+        slippage_cost = stake * SLIPPAGE_PCT
+        effective_stake = stake + slippage_cost  # you pay more than planned
+        # Effective entry price is worse due to slippage
+        effective_entry = entry * (1.0 + SLIPPAGE_PCT)
 
         won = (realized_f >= 0.5) == side_yes
         if won:
-            gross_payout = effective_stake / effective_entry
+            gross_payout = effective_stake / effective_entry  # shares at worse price
+            # Polymarket taker fee: C × feeRate × p × (1-p)
             shares = effective_stake / effective_entry
             fee = polymarket_fee(shares, effective_entry, WEATHER_FEE_RATE)
             pnl = gross_payout - fee - effective_stake
         else:
-            pnl = -effective_stake - GAS_COST_USD
+            pnl = -effective_stake - GAS_COST_USD  # lose stake + gas
 
         pnls.append(pnl)
         # NON-COMPOUNDING: use fixed bankroll to avoid exponential blowup
@@ -499,23 +515,6 @@ _MUTATION_LADDER: list[dict[str, Any]] = [
         "kelly_delta": 0.0,
         "max_bet_pct_delta": +0.03,
     },
-    # ---- blend_weight diversity rungs ----
-    {
-        "description": "More market weight (blend=0.50) — let market anchor more",
-        "weights_delta": {},
-        "min_edge_delta": 0.0,
-        "kelly_delta": 0.0,
-        "blend_weight_delta": -0.15,
-    },
-    # REMOVED: More model weight (blend=0.80) — NO bias riski
-    # 0.65 → 0.80 fırlatma MAX 0.50 clamp ile zaten bypass edilirdi
-    {
-        "description": "Heavy market blend (blend=0.35) + tight edge",
-        "weights_delta": {},
-        "min_edge_delta": +0.02,
-        "kelly_delta": -0.03,
-        "blend_weight_delta": -0.30,
-    },
 ]
 
 
@@ -528,7 +527,7 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
     parent = parent or Hypothesis(
         description="Uniform prior",
         model_weights=_uniform_weights(),
-        min_edge=0.30,  # SAFETY CLAMP: matched to settings.py MIN_EDGE_FLOOR
+        min_edge=0.05,
         kelly_fraction=0.15,
         max_bet_pct=0.05,
     )
@@ -543,7 +542,6 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
     new_min_edge = max(0.01, min(0.15, parent.min_edge + mutation["min_edge_delta"]))
     new_kelly = max(0.05, min(0.30, parent.kelly_fraction + mutation["kelly_delta"]))
     new_max_bet = max(0.01, min(0.10, parent.max_bet_pct + mutation.get("max_bet_pct_delta", 0.0)))
-    new_blend = max(0.35, min(0.50, parent.blend_weight + mutation.get("blend_weight_delta", 0.0)))
 
     return Hypothesis(
         description=mutation["description"],
@@ -551,7 +549,6 @@ def generate_hypothesis(round_num: int, parent: Hypothesis | None = None) -> Hyp
         min_edge=round(new_min_edge, 4),
         kelly_fraction=round(new_kelly, 4),
         max_bet_pct=round(new_max_bet, 4),
-        blend_weight=round(new_blend, 4),
         tail_filter_enabled=mutation.get("tail_filter_enabled", parent.tail_filter_enabled),
         tail_filter_threshold_high=parent.tail_filter_threshold_high,
         tail_filter_threshold_low=parent.tail_filter_threshold_low,
@@ -605,8 +602,6 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         "   - Underweight CMA and UKMO (noisier)\n"
         "   - min_edge 0.02-0.05 covers fees+slippage while keeping volume\n"
         "   - kelly_fraction 0.08-0.15 (conservative is better in small markets)\n"
-        "   - blend_weight 0.35-0.50: 0.45 is default. Lower = more market anchor, "
-        "higher = more model trust. If model overconfident, lower it.\n"
         "5. Weights MUST sum to 1.0.\n\n"
         "Return ONLY a JSON object:\n"
         "  {\n"
@@ -615,8 +610,7 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
         '    "min_edge": 0.03,\n'
         '    "kelly_fraction": 0.10,\n'
         '    "max_bet_pct": 0.05,\n'
-        '    "tail_filter_enabled": false,\n'
-        '    "blend_weight": 0.45\n'
+        '    "tail_filter_enabled": false\n'
         "  }\n"
         "NO prose, NO markdown, ONLY the JSON object."
     )
@@ -651,7 +645,6 @@ def llm_propose_hypothesis(parent: Hypothesis, context: dict[str, Any]) -> Hypot
                 min(0.30, float(data.get("kelly_fraction", parent.kelly_fraction))),
             ),
             max_bet_pct=max(0.01, min(0.10, float(data.get("max_bet_pct", parent.max_bet_pct)))),
-            blend_weight=max(0.35, min(0.50, float(data.get("blend_weight", parent.blend_weight)))),
             tail_filter_enabled=bool(data.get("tail_filter_enabled", parent.tail_filter_enabled)),
             tail_filter_threshold_high=parent.tail_filter_threshold_high,
             tail_filter_threshold_low=parent.tail_filter_threshold_low,
@@ -681,39 +674,6 @@ def _load_best() -> Hypothesis | None:
     except Exception as e:
         logger.warning("Could not load best hypothesis: %s", e)
         return None
-
-
-def _load_baseline() -> Hypothesis:
-    """Load baseline hypothesis from strategy_params.json.
-
-    This is used when no incumbent exists in karpathy_best.json.
-    It ensures the baseline uses the current strategy parameters
-    (min_edge, kelly_fraction, blend_weight) instead of hardcoded values.
-    """
-    try:
-        with open(STRATEGY_PARAMS_PATH, encoding="utf-8") as f:
-            params = json.load(f)
-        return Hypothesis(
-            description="Baseline from strategy_params.json",
-            model_weights=_uniform_weights(),
-            min_edge=params.get("min_edge", 0.05),
-            kelly_fraction=params.get("kelly_fraction", 0.15),
-            blend_weight=params.get("blend_weight", 0.45),
-            max_bet_pct=0.05,
-            min_trades=1,  # Low threshold for testing with limited data
-        )
-    except Exception as e:
-        logger.warning("Could not load baseline from strategy_params.json: %s", e)
-        # Fallback to uniform prior with min_edge=0.05
-        return Hypothesis(
-            description="Fallback uniform prior",
-            model_weights=_uniform_weights(),
-            min_edge=0.05,
-            kelly_fraction=0.15,
-            max_bet_pct=0.05,
-            blend_weight=0.45,
-            min_trades=1,
-        )
 
 
 def _save_best(hyp: Hypothesis, stats: dict[str, float]) -> None:
@@ -755,258 +715,21 @@ def _append_results_tsv(
 # ---------------------------------------------------------------------------
 
 
-def _load_cached_forecasts(
-    ds: UnifiedDatastore,
-    brier_df: pd.DataFrame,
-) -> tuple[pd.DataFrame, set[tuple[str, str]]]:
-    """Load cached forecasts from the unified datastore.
-
-    Reads the forecasts table, filters to temperature_2m_max variable,
-    and returns the filtered DataFrame along with the set of (city, date)
-    pairs already in cache.
-
-    Returns:
-        (forecasts_df, cached_pairs) where cached_pairs is a set of
-        (city_str, join_date_str) tuples.
-    """
-    forecasts_df = ds.read_forecasts()
-    cached_pairs: set[tuple[str, str]] = set()
-    if forecasts_df.empty or "target_date" not in forecasts_df.columns:
-        return forecasts_df, cached_pairs
-
-    forecasts_df = forecasts_df.copy()
-    forecasts_df["join_date"] = pd.to_datetime(forecasts_df["target_date"], utc=True, errors="coerce").dt.date.astype(
-        str
-    )
-    # FIX: Use explicit column check instead of .get() with default — .get() returns
-    # Series | scalar, which confuses pyright about downstream DataFrame typing.
-    if "variable" in forecasts_df.columns:
-        forecasts_df["variable_key"] = forecasts_df["variable"].fillna("temperature_2m_max")
-    else:
-        forecasts_df["variable_key"] = "temperature_2m_max"
-    mask = forecasts_df["variable_key"].astype(str).str.contains("max", na=False)
-    forecasts_df = forecasts_df.loc[mask].copy()
-    if not forecasts_df.empty:
-        cached_pairs = set(
-            zip(
-                forecasts_df["city"].astype(str),
-                forecasts_df["join_date"].astype(str),
-            )
-        )
-    return forecasts_df, cached_pairs
-
-
-def _backfill_missing_forecasts(
-    ds: UnifiedDatastore,
-    brier_df: pd.DataFrame,
-    forecasts_df: pd.DataFrame,
-    cached_pairs: set[tuple[str, str]],
-    needed_pairs: set[tuple[str, str]],
-) -> pd.DataFrame:
-    """Fetch missing forecasts from Open-Meteo Historical Forecast API.
-
-    Compares needed (city, date) pairs against the cached set and fetches
-    any missing ones from the free Historical Forecast API. Appends the
-    fetched data to forecasts_df and persists to disk for future runs.
-
-    Returns:
-        Updated forecasts_df with fetched rows appended.
-    """
-    missing_pairs = needed_pairs - cached_pairs
-    if not missing_pairs:
-        return forecasts_df
-
-    logger.info(
-        "Forecast join: %d (city, date) pairs needed, %d cached, %d missing — fetching from Historical Forecast API",
-        len(needed_pairs),
-        len(cached_pairs),
-        len(missing_pairs),
-    )
-    try:
-        from data_pipeline.weather_ensemble import (
-            fetch_historical_forecast_ensemble,
-        )
-
-        missing_by_city: dict[str, list[str]] = {}
-        for c, d in missing_pairs:
-            missing_by_city.setdefault(c, []).append(d)
-
-        city_coords: dict[str, tuple[float, float]] = {}
-        for _, row in brier_df.iterrows():
-            c = str(row.get("city", ""))
-            if c and c not in city_coords:
-                lat = row.get("latitude")
-                lon = row.get("longitude")
-                try:
-                    if lat is not None and lon is not None:
-                        city_coords[c] = (float(lat), float(lon))
-                except (TypeError, ValueError):
-                    pass
-
-        fetched_frames = []
-        for city, dates in missing_by_city.items():
-            coords = city_coords.get(city)
-            if not coords:
-                continue
-            lat, lon = coords
-            start_date = min(dates)
-            end_date = max(dates)
-            try:
-                df = fetch_historical_forecast_ensemble(
-                    lat,
-                    lon,
-                    start_date=start_date,
-                    end_date=end_date,
-                    city=city,
-                )
-                if not df.empty:
-                    fetched_frames.append(df)
-            except Exception as exc:
-                logger.warning(
-                    "Historical forecast fetch failed for %s %s..%s: %s",
-                    city,
-                    start_date,
-                    end_date,
-                    exc,
-                )
-
-        if fetched_frames:
-            fetched_df = pd.concat(fetched_frames, ignore_index=True)
-            fetched_df["join_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce").dt.date.astype(str)
-            fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
-            fetched_df["fetched_at"] = pd.Timestamp.utcnow()
-            # FIX: Use explicit column check instead of .get() with default — same
-            # pattern as _load_cached_forecasts; avoids pyright Series|scalar ambiguity.
-            if "variable" in fetched_df.columns:
-                fetched_df["variable_key"] = fetched_df["variable"].fillna("temperature_2m_max")
-            else:
-                fetched_df["variable_key"] = "temperature_2m_max"
-            mask = fetched_df["variable_key"].astype(str).str.contains("max", na=False)
-            fetched_df = fetched_df.loc[mask].copy()
-            cols = [
-                "city",
-                "latitude",
-                "longitude",
-                "target_date",
-                "model",
-                "variable",
-                "value",
-                "fetched_at",
-                "join_date",
-            ]
-            # FIX: Explicit DataFrame construction — list-indexing on a DataFrame
-            # always returns a DataFrame, but pyright can't infer that. Use .loc[:, :]
-            available_cols = [c for c in cols if c in fetched_df.columns]
-            fetched_df = fetched_df.loc[:, available_cols].copy()
-            if forecasts_df.empty:
-                forecasts_df = fetched_df
-            else:
-                forecasts_df = pd.concat([forecasts_df, fetched_df], ignore_index=True)
-            try:
-                ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
-            except Exception as exc:
-                logger.warning("Failed to persist fetched forecasts: %s", exc)
-            logger.info(
-                "Fetched %d rows from Historical Forecast API across %d cities",
-                len(fetched_df),
-                len(missing_by_city),
-            )
-    except ImportError:
-        logger.warning("data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts")
-    return forecasts_df
-
-
-def _pivot_and_convert_to_probs(
-    brier_df: pd.DataFrame,
-    forecasts_df: pd.DataFrame,
-    cached_pairs: set[tuple[str, str]],
-    needed_pairs: set[tuple[str, str]],
-) -> tuple[pd.DataFrame, bool, str]:
-    """Pivot forecasts wide and convert temperatures → YES probabilities.
-
-    Joins the per-model forecasts with the brier dataset and applies a
-    normal CDF (sigma=2.0) to convert each model's temperature forecast
-    into a YES probability against the market threshold.
-
-    Returns:
-        (brier_df, forecasts_joined, join_origin)
-    """
-    forecasts_joined = False
-    join_origin = "none"
-
-    if forecasts_df.empty:
-        return brier_df, forecasts_joined, join_origin
-
-    forecasts_df = forecasts_df.copy()
-    forecasts_df["model_internal"] = forecasts_df["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
-    temp_pivot = forecasts_df.pivot_table(
-        index=["city", "join_date"],
-        columns="model_internal",
-        values="value",
-        aggfunc="mean",
-    ).reset_index()
-    merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc"))
-
-    sigma = 2.0
-    for model in DEFAULT_MODELS:
-        if model not in merged.columns:
-            continue
-        col = f"prob_{model}"
-
-        def _to_prob(forecast, mt, thresh, question, sigma=sigma):
-            if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
-                return float("nan")
-            try:
-                forecast = float(forecast)
-                thresh = float(thresh)
-            except (TypeError, ValueError):
-                return float("nan")
-
-            # Convert threshold to Celsius if it's in Fahrenheit
-            # Extract unit from question text
-            q = str(question).lower()
-            if "°f" in q or "fahrenheit" in q:
-                thresh = (thresh - 32.0) * 5.0 / 9.0
-            # If °C or celsius, threshold is already in Celsius (Open-Meteo uses Celsius)
-
-            z = (forecast - thresh) / sigma
-            p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-            if str(mt).upper() == "LOW":
-                return 1.0 - p_high
-            return p_high
-
-        merged[col] = [
-            _to_prob(row.get(model), row.get("market_type"), row.get("threshold"), row.get("question"))
-            for _, row in merged.iterrows()
-        ]
-
-    brier_df = merged
-    prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
-    if prob_cols_after:
-        non_null_counts = brier_df[prob_cols_after].notna().sum().sum()
-        forecasts_joined = non_null_counts > 0
-        if forecasts_joined:
-            join_origin = "cached_table" if cached_pairs and cached_pairs >= needed_pairs else "historical_api"
-        logger.info(
-            "Forecast join %s (origin=%s, %d non-null prob values across %d rows)",
-            "succeeded" if forecasts_joined else "failed (no overlapping rows)",
-            join_origin,
-            non_null_counts,
-            len(brier_df),
-        )
-
-    return brier_df, forecasts_joined, join_origin
-
-
 def add_per_model_probabilities(
     brier_df: pd.DataFrame,
     ds: UnifiedDatastore | None = None,
+    seed: int = 42,
     *,
     fetch_missing: bool = True,
 ) -> pd.DataFrame:
-    """Add prob_{model} columns to a Brier dataset using real forecast data only.
+    """Add prob_{model} columns to a Brier dataset.
 
-    Uses the real forecast join path:
+    Tries the real forecast join first; falls back to a synthetic
+    per-model probability derived from (actual_temp, threshold, market_type)
+    + a per-model gaussian bias. The fallback is NOT real alpha — it
+    exists so the 3-layer loop can mechanically differentiate hypotheses.
+
+    Real forecast join path:
       1. Read unified_forecasts table (populated by
          data_pipeline.unified_datastore.ingest_all() step [3/4]).
       2. If that table is empty OR no overlap with the Brier dataset's
@@ -1016,243 +739,259 @@ def add_per_model_probabilities(
       3. Convert per-model temperatures → YES probabilities via a normal
          CDF with sigma=2.0 against the market threshold.
 
-    If the real forecast join fails (no overlapping rows), prob_ columns
-    are NOT added. Downstream code will naturally skip rows without
-    real forecast data.
-
     A `forecast_join_origin` column is added so downstream code can tell
     whether the per-model probabilities came from real forecasts
-    ("historical_api" / "cached_table") or not ("none").
+    ("historical_api" / "cached_table") or from the synthetic fallback
+    ("synthetic").
 
     This is extracted from run_karpathy_weekly() so Layer 2 (ASI-Evolve)
     and Layer 3 (SIA) can reuse it without re-running the join logic.
     """
     if any(c.startswith("prob_") for c in brier_df.columns):
+        # Already has per-model probs — caller can re-run safely.
         return brier_df
 
     if ds is None:
         ds = UnifiedDatastore()
 
+    forecasts_joined = False
+    join_origin = "none"
     brier_df = brier_df.copy()
     brier_df["join_date"] = pd.to_datetime(brier_df["target_date"], utc=True, errors="coerce").dt.date.astype(str)
 
-    # 1. Load cached forecasts
-    forecasts_df, cached_pairs = _load_cached_forecasts(ds, brier_df)
+    forecasts_df = ds.read_forecasts()
+    cached_pairs: set[tuple[str, str]] = set()
+    if not forecasts_df.empty and "target_date" in forecasts_df.columns:
+        forecasts_df = forecasts_df.copy()
+        forecasts_df["join_date"] = pd.to_datetime(
+            forecasts_df["target_date"], utc=True, errors="coerce"
+        ).dt.date.astype(str)
+        forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
+        forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
+        # Snapshot the cached pairs BEFORE we append the dynamically-fetched
+        # rows, so the join-origin label below correctly distinguishes
+        # "cached_table" (all pairs were already on disk) from
+        # "historical_api" (we had to fetch some).
+        if not forecasts_df.empty:
+            cached_pairs = set(
+                zip(
+                    forecasts_df["city"].astype(str),
+                    forecasts_df["join_date"].astype(str),
+                )
+            )
 
-    # 2. Compute needed pairs (used by backfill + pivot)
-    needed_pairs = set(
-        zip(
-            brier_df["city"].astype(str),
-            brier_df["join_date"].astype(str),
-        )
-    )
-
-    # 3. Backfill missing forecasts from API
+    # ----------------------------------------------------------------
+    # Dynamic backfill: if cached forecasts table doesn't cover the
+    # Brier dataset's (city, date) pairs, fetch missing ones on the fly
+    # from Open-Meteo Historical Forecast API (free, no key).
+    # ----------------------------------------------------------------
     if fetch_missing and not brier_df.empty:
-        forecasts_df = _backfill_missing_forecasts(ds, brier_df, forecasts_df, cached_pairs, needed_pairs)
-
-    # 4. Pivot and convert to probabilities (real data only)
-    brier_df, forecasts_joined, join_origin = _pivot_and_convert_to_probs(
-        brier_df, forecasts_df, cached_pairs, needed_pairs
-    )
-
-    # 5. If real join failed — try fallback: use historical_calibrations directly
-    if not forecasts_joined:
-        logger.info(
-            "Real forecast join produced no overlapping rows — "
-            "falling back to historical_calibrations table for per-model temps"
+        needed_pairs = set(
+            zip(
+                brier_df["city"].astype(str),
+                brier_df["join_date"].astype(str),
+            )
         )
-        # Remove empty model columns left by the failed forecast merge
-        # so calibrations fallback can add its own without suffix collision
-        fc_model_cols = [c for c in brier_df.columns if c in DEFAULT_MODELS]
-        brier_df = brier_df.drop(columns=fc_model_cols, errors="ignore")
-        brier_df = _join_from_calibrations(brier_df, ds)
-        prob_cols = [c for c in brier_df.columns if c.startswith("prob_")]
-        if prob_cols:
-            forecasts_joined = True
-            join_origin = "historical_calibrations"
+        missing_pairs = needed_pairs - cached_pairs
+        if missing_pairs:
+            logger.info(
+                "Forecast join: %d (city, date) pairs needed, %d cached, "
+                "%d missing — fetching from Historical Forecast API",
+                len(needed_pairs),
+                len(cached_pairs),
+                len(missing_pairs),
+            )
+            try:
+                from data_pipeline.weather_ensemble import (
+                    fetch_historical_forecast_ensemble,
+                )
+
+                # Group missing pairs by city for efficient batched fetches
+                missing_by_city: dict[str, list[str]] = {}
+                for c, d in missing_pairs:
+                    missing_by_city.setdefault(c, []).append(d)
+
+                # We need (lat, lon) for each city — pull from brier_df
+                # (it carries latitude/longitude from the markets table).
+                city_coords: dict[str, tuple[float, float]] = {}
+                for _, row in brier_df.iterrows():
+                    c = str(row.get("city", ""))
+                    if c and c not in city_coords:
+                        lat = row.get("latitude")
+                        lon = row.get("longitude")
+                        try:
+                            if lat is not None and lon is not None:
+                                city_coords[c] = (float(lat), float(lon))
+                        except (TypeError, ValueError):
+                            pass
+
+                fetched_frames = []
+                for city, dates in missing_by_city.items():
+                    coords = city_coords.get(city)
+                    if not coords:
+                        continue
+                    lat, lon = coords
+                    start_date = min(dates)
+                    end_date = max(dates)
+                    try:
+                        df = fetch_historical_forecast_ensemble(
+                            lat,
+                            lon,
+                            start_date=start_date,
+                            end_date=end_date,
+                            city=city,
+                        )
+                        if not df.empty:
+                            fetched_frames.append(df)
+                    except Exception as exc:
+                        logger.warning(
+                            "Historical forecast fetch failed for %s %s..%s: %s",
+                            city,
+                            start_date,
+                            end_date,
+                            exc,
+                        )
+
+                if fetched_frames:
+                    fetched_df = pd.concat(fetched_frames, ignore_index=True)
+                    fetched_df["join_date"] = pd.to_datetime(
+                        fetched_df["date"], utc=True, errors="coerce"
+                    ).dt.date.astype(str)
+                    fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
+                    fetched_df["fetched_at"] = pd.Timestamp.utcnow()
+                    fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
+                    fetched_df = fetched_df[fetched_df["variable_key"].astype(str).str.contains("max", na=False)]
+                    # Append to in-memory forecasts_df for this join + persist
+                    # back to disk so future runs hit the cache.
+                    cols = [
+                        "city",
+                        "latitude",
+                        "longitude",
+                        "target_date",
+                        "model",
+                        "variable",
+                        "value",
+                        "fetched_at",
+                        "join_date",
+                    ]
+                    fetched_df = fetched_df[[c for c in cols if c in fetched_df.columns]]
+                    if forecasts_df.empty:
+                        forecasts_df = fetched_df
+                    else:
+                        forecasts_df = pd.concat([forecasts_df, fetched_df], ignore_index=True)
+                    try:
+                        ds.write_forecasts(forecasts_df.drop(columns=["join_date"], errors="ignore"))
+                    except Exception as exc:
+                        logger.warning("Failed to persist fetched forecasts: %s", exc)
+                    logger.info(
+                        "Fetched %d rows from Historical Forecast API across %d cities",
+                        len(fetched_df),
+                        len(missing_by_city),
+                    )
+            except ImportError:
+                logger.warning(
+                    "data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts"
+                )
+
+    # ----------------------------------------------------------------
+    # Pivot forecasts wide and convert each model's temperature into a
+    # YES probability via a normal CDF against the market threshold.
+    # ----------------------------------------------------------------
+    if not forecasts_df.empty:
+        # Normalize model names from API names → DEFAULT_MODELS internal
+        # names so the join below recognizes all 8 ensemble models.
+        # Without this, only the 4 models whose API and internal names
+        # happen to coincide (gfs_seamless, cma_grapes_global, ukmo_seamless,
+        # meteofrance_seamless) would be matched.
+        forecasts_df = forecasts_df.copy()
+        forecasts_df["model_internal"] = forecasts_df["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
+        temp_pivot = forecasts_df.pivot_table(
+            index=["city", "join_date"],
+            columns="model_internal",
+            values="value",
+            aggfunc="mean",
+        ).reset_index()
+        merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_fc"))
+        sigma = 2.0
+        for model in DEFAULT_MODELS:
+            if model not in merged.columns:
+                continue
+            col = f"prob_{model}"
+
+            def _to_prob(forecast, mt, thresh, sigma=sigma):
+                if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
+                    return float("nan")
+                try:
+                    forecast = float(forecast)
+                    thresh = float(thresh)
+                except (TypeError, ValueError):
+                    return float("nan")
+                z = (forecast - thresh) / sigma
+                p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+                if str(mt).upper() == "LOW":
+                    return 1.0 - p_high
+                return p_high
+
+            merged[col] = [
+                _to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()
+            ]
+        brier_df = merged
+        prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
+        if prob_cols_after:
+            non_null_counts = brier_df[prob_cols_after].notna().sum().sum()
+            forecasts_joined = non_null_counts > 0
+            if forecasts_joined:
+                # If the cached table already covered every needed pair, we
+                # joined from disk; otherwise the dynamic backfill supplied
+                # at least some rows.
+                join_origin = "cached_table" if cached_pairs and cached_pairs >= needed_pairs else "historical_api"
+            logger.info(
+                "Forecast join %s (origin=%s, %d non-null prob values across %d rows)",
+                "succeeded" if forecasts_joined else "failed (no overlapping rows)",
+                join_origin,
+                non_null_counts,
+                len(brier_df),
+            )
+
+    # ----------------------------------------------------------------
+    # Synthetic fallback — only when the real join produced no overlap.
+    # Marks the rows with forecast_join_origin="synthetic" so downstream
+    # code can refuse to report Sharpe/ROI numbers from synthetic data.
+    # ----------------------------------------------------------------
+    if not forecasts_joined:
+        prob_cols_stale = [c for c in brier_df.columns if c.startswith("prob_")]
+        if prob_cols_stale:
+            brier_df = brier_df.drop(columns=prob_cols_stale)
+
+        logger.warning(
+            "Using SYNTHETIC per-model probabilities — real forecast "
+            "join produced no overlapping (city, date) rows. The 3-layer "
+            "loop will run but Sharpe/ROI numbers are NOT real alpha."
+        )
+        rng = random.Random(seed)
+        for model in DEFAULT_MODELS:
+            bias = rng.gauss(0, 0.08)
+            col = f"prob_{model}"
+
+            def _synth_prob(row, bias=bias):
+                actual = row.get("temperature_2m_max")
+                thresh = row.get("threshold")
+                mt = str(row.get("market_type", "")).upper()
+                if pd.isna(actual) or pd.isna(thresh) or thresh is None:
+                    return 0.5
+                z = (float(actual) - float(thresh)) / 2.0
+                p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+                if mt == "LOW":
+                    p = 1.0 - p_high
+                else:
+                    p = p_high
+                return max(0.01, min(0.99, p + bias))
+
+            brier_df[col] = [_synth_prob(row) for _, row in brier_df.iterrows()]
+        join_origin = "synthetic"
 
     brier_df["forecast_join_origin"] = join_origin
     return brier_df
-
-
-def _join_from_calibrations(
-    brier_df: pd.DataFrame,
-    ds: UnifiedDatastore,
-) -> pd.DataFrame:
-    """Fallback: join per-model temperatures from historical_calibrations.
-
-    When the forecast API table has no overlapping dates, this reads
-    historical_calibrations directly and pivots per-model predicted_value
-    into prob_{model} columns on the brier_df.
-
-    Uses per-city sigma from data/city_sigma.json for probability conversion.
-    """
-    import sqlite3
-
-    db_path = os.path.join(ds.cfg.data_dir, "..", "bot.db")
-    if not os.path.exists(db_path):
-        logger.warning("bot.db not found at %s", db_path)
-        return brier_df
-
-    # Load per-city sigma
-    sigma_path = os.path.join(ds.cfg.data_dir, "..", "data", "city_sigma.json")
-    city_sigma = {}
-    default_sigma = 5.18  # global sigma from optimize_sigma.py
-    if os.path.exists(sigma_path):
-        try:
-            with open(sigma_path) as f:
-                sigma_data = json.load(f)
-            city_sigma = sigma_data.get("city_sigma", {})
-            default_sigma = sigma_data.get("global_sigma", default_sigma)
-            logger.info("Loaded per-city sigma for %d cities (global=%.2f)", len(city_sigma), default_sigma)
-        except Exception as exc:
-            logger.warning("Failed to load city_sigma.json: %s", exc)
-
-    try:
-        conn = sqlite3.connect(db_path)
-        cal = pd.read_sql(
-            "SELECT city, date, model, predicted_value, days_ahead FROM historical_calibrations",
-            conn,
-        )
-        conn.close()
-    except Exception as exc:
-        logger.warning("Failed to read historical_calibrations: %s", exc)
-        return brier_df
-
-    if cal.empty:
-        return brier_df
-
-    # Map API model names to internal names
-    cal["model_internal"] = cal["model"].map(lambda m: OPEN_METEO_API_TO_INTERNAL.get(m, m))
-
-    # Pivot: (city, date) → per-model predicted_value
-    temp_pivot = cal.pivot_table(
-        index=["city", "date"],
-        columns="model_internal",
-        values="predicted_value",
-        aggfunc="mean",
-    ).reset_index()
-
-    # Normalize date format for join
-    temp_pivot["join_date"] = pd.to_datetime(temp_pivot["date"], format="mixed").dt.date.astype(str)
-    brier_df = brier_df.copy()
-    if "join_date" not in brier_df.columns:
-        brier_df["join_date"] = pd.to_datetime(brier_df["target_date"], errors="coerce").dt.date.astype(str)
-
-    merged = brier_df.merge(temp_pivot, on=["city", "join_date"], how="left", suffixes=("", "_cal"))
-
-    # Convert temperatures → YES probabilities using per-city sigma
-    models_found = [m for m in DEFAULT_MODELS if m in merged.columns]
-    logger.info(
-        "Calibrations fallback: found %d models in pivot (%s)",
-        len(models_found),
-        models_found,
-    )
-
-    for model in models_found:
-        col = f"prob_{model}"
-
-        def _to_prob_cal(forecast, mt, thresh, question, city, sigma_dict=city_sigma, default_sig=default_sigma):
-            if pd.isna(forecast) or pd.isna(thresh) or thresh is None:
-                return float("nan")
-            try:
-                forecast = float(forecast)
-                thresh = float(thresh)
-            except (TypeError, ValueError):
-                return float("nan")
-            # Use per-city sigma
-            sig = sigma_dict.get(str(city), default_sig)
-            q = str(question).lower() if question else ""
-            if "°f" in q or "fahrenheit" in q:
-                thresh = (thresh - 32.0) * 5.0 / 9.0
-            z = (forecast - thresh) / sig
-            p_high = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-            if str(mt).upper() == "LOW":
-                return 1.0 - p_high
-            return p_high
-
-        merged[col] = [
-            _to_prob_cal(
-                row.get(model),
-                row.get("market_type"),
-                row.get("threshold"),
-                row.get("question"),
-                row.get("city"),
-            )
-            for _, row in merged.iterrows()
-        ]
-
-    return merged
-
-
-def _build_splits_from_brier(
-    brier_df: pd.DataFrame,
-    lookback_days: int = 5,
-    test_days: int = 2,
-) -> list[dict[str, Any]]:
-    """Build walk-forward splits directly from a brier DataFrame.
-
-    Uses the target_date column to create temporal train/test splits.
-    With 7 dates and defaults (lookback=5, test=2), this produces 1 split:
-      train: dates 1-5, test: dates 6-7.
-    """
-    dates = pd.to_datetime(brier_df["target_date"], errors="coerce").dropna().sort_values()
-    unique_dates = dates.unique()
-    if len(unique_dates) < lookback_days + test_days:
-        logger.warning(
-            "Only %d unique dates in brier_df, need %d for walk-forward — using last 2 dates as test",
-            len(unique_dates),
-            lookback_days + test_days,
-        )
-        # Fallback: train on all but last date, test on last date
-        if len(unique_dates) < 2:
-            return []
-        train_cutoff = unique_dates[-2]
-        test_start = unique_dates[-1]
-        train_mask = pd.to_datetime(brier_df["target_date"], errors="coerce") < train_cutoff
-        test_mask = pd.to_datetime(brier_df["target_date"], errors="coerce") >= test_start
-        return [
-            {
-                "split_n": 1,
-                "train_indices": brier_df.loc[train_mask].index.tolist(),
-                "test_indices": brier_df.loc[test_mask].index.tolist(),
-                "train_start": str(unique_dates[0]),
-                "train_end": str(train_cutoff),
-                "test_start": str(test_start),
-                "test_end": str(unique_dates[-1]),
-            }
-        ]
-
-    splits = []
-    n = 0
-    for i in range(lookback_days, len(unique_dates) - test_days + 1, test_days):
-        train_end = unique_dates[i]
-        test_start = unique_dates[i]
-        test_end = unique_dates[min(i + test_days - 1, len(unique_dates) - 1)]
-        train_start = unique_dates[max(0, i - lookback_days)]
-
-        train_mask = (pd.to_datetime(brier_df["target_date"], errors="coerce") >= train_start) & (
-            pd.to_datetime(brier_df["target_date"], errors="coerce") < train_end
-        )
-        test_mask = (pd.to_datetime(brier_df["target_date"], errors="coerce") >= test_start) & (
-            pd.to_datetime(brier_df["target_date"], errors="coerce") <= test_end
-        )
-
-        n += 1
-        splits.append(
-            {
-                "split_n": n,
-                "train_indices": brier_df.loc[train_mask].index.tolist(),
-                "test_indices": brier_df.loc[test_mask].index.tolist(),
-                "train_start": str(train_start),
-                "train_end": str(train_end),
-                "test_start": str(test_start),
-                "test_end": str(test_end),
-            }
-        )
-
-    return splits
 
 
 def run_karpathy_weekly(
@@ -1306,14 +1045,10 @@ def run_karpathy_weekly(
 
     # Ensure per-model prob columns exist (tries real forecast join first,
     # falls back to synthetic per-model probabilities).
-    brier_df = add_per_model_probabilities(brier_df, ds=ds)
+    brier_df = add_per_model_probabilities(brier_df, ds=ds, seed=seed)
 
-    # 2. Walk-forward splits — first try from unified markets table,
-    # then fall back to building from the brier_df itself.
+    # 2. Walk-forward splits
     splits = ds.build_walk_forward_splits()
-    if not splits and "target_date" in brier_df and not brier_df.empty:
-        logger.info("Markets table empty — building walk-forward splits from brier_df")
-        splits = _build_splits_from_brier(brier_df)
     if not splits:
         logger.warning(
             "No walk-forward splits built — falling back to a single all-data "
@@ -1343,8 +1078,14 @@ def run_karpathy_weekly(
             incumbent_stats.get("brier_score", 0.25),
         )
     else:
-        incumbent = _load_baseline()
-        logger.info("No incumbent — starting from baseline")
+        incumbent = Hypothesis(
+            description="Uniform prior (baseline)",
+            model_weights=_uniform_weights(),
+            min_edge=0.05,
+            kelly_fraction=0.15,
+            max_bet_pct=0.05,
+        )
+        logger.info("No incumbent — starting from uniform prior")
 
     best_hyp = incumbent
     best_stats = incumbent_stats or {
@@ -1385,12 +1126,10 @@ def run_karpathy_weekly(
         )
 
         # Acceptance: must beat incumbent on Sharpe (and not blow up Brier)
-        # Minimum trades threshold (configurable for testing with limited data)
-        min_trades = getattr(hyp, "min_trades", 5)
         improved = mean_stats["sharpe"] > best_stats["sharpe"] and (
             mean_stats["brier_score"] <= best_stats["brier_score"] * 1.10
         )
-        if improved and mean_stats["total_trades"] >= min_trades:
+        if improved and mean_stats["total_trades"] >= 5:
             logger.info("  ✓ ACCEPTED — new best")
             best_hyp = hyp
             best_stats = mean_stats

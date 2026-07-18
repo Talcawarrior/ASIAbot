@@ -1,15 +1,4 @@
 {
   "min_edge": 0.05,
-  "kelly_fraction": 0.15,
-  "blend_weight": 0.35,
-  "model_weights": {
-    "ecmwf_ifs025": 0.4334,
-    "icon_global": 0.195,
-    "ukmo_seamless": 0.1516,
-    "gem_global": 0.1083,
-    "gfs_seamless": 0.0563,
-    "jma_seamless": 0.0363,
-    "cma_grapes_global": 0.0095,
-    "meteofrance_seamless": 0.0095
-  }
+  "kelly_fraction": 0.15
 }

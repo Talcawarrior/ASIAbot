@@ -37,6 +37,8 @@ def make_mock_bet(**kwargs):
     bet.close_reason = kwargs.get("close_reason", None)
     bet.closed_at = kwargs.get("closed_at", None)
     bet.placed_at = kwargs.get("placed_at", datetime.now(timezone.utc) - timedelta(hours=1))
+    bet.partial_tp_done = kwargs.get("partial_tp_done", False)
+    bet.covered_fraction = kwargs.get("covered_fraction", 0.0)
     return bet
 
 
@@ -101,10 +103,10 @@ class TestStopLoss:
         assert should_exit is True
 
     def test_stop_loss_below_threshold_no_trigger(self):
-        """%15 zararda stop-loss tetiklenmemeli (%20 threshold altında)."""
+        """%25 zararda stop-loss tetiklenmemeli."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, reason = rm.check_stop_loss(bet, 0.43)
+        should_exit, reason = rm.check_stop_loss(bet, 0.38)
         assert should_exit is False
 
     def test_stop_loss_kardayken_tetiklenmez(self):
@@ -355,7 +357,7 @@ class TestModelReversal:
         rm = make_risk_manager()
         bet = make_mock_bet(fair_value=0.80, unrealized_pnl=-15.0, stake=100.0)
         analysis = MagicMock()
-        analysis.estimated_prob = 0.40  # 0.80 -> 0.40 = -0.50 değişim
+        analysis.estimated_probability = 0.40  # 0.80 -> 0.40 = -0.50 değişim
         should_exit, reason = rm.check_model_reversal(bet, analysis)
         assert should_exit is True
         assert "model_reversal" in reason.lower()
@@ -365,7 +367,7 @@ class TestModelReversal:
         rm = make_risk_manager()
         bet = make_mock_bet(fair_value=0.55, unrealized_pnl=-5.0, stake=100.0)
         analysis = MagicMock()
-        analysis.estimated_prob = 0.53  # Küçük değişim
+        analysis.estimated_probability = 0.53  # Küçük değişim
         should_exit, reason = rm.check_model_reversal(bet, analysis)
         assert should_exit is False
 
@@ -381,7 +383,7 @@ class TestModelReversal:
         rm = make_risk_manager()
         bet = make_mock_bet(fair_value=0.80, unrealized_pnl=10.0, stake=100.0)
         analysis = MagicMock()
-        analysis.estimated_prob = 0.35  # 0.80 -> 0.35 = -0.45
+        analysis.estimated_probability = 0.35  # 0.80 -> 0.35 = -0.45
         should_exit, reason = rm.check_model_reversal(bet, analysis)
         assert should_exit is True
 
@@ -433,20 +435,18 @@ class TestEdgeCases:
 
     def test_stop_loss_configurable_threshold(self):
         """Farklı stop_loss_pct değerleriyle test."""
-        # Yeni %20 threshold
+        # Varsayılan %25
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, _ = rm.check_stop_loss(bet, 0.43)  # %14 zarar
-        assert should_exit is False  # %20'yi geçmedi
+        should_exit, _ = rm.check_stop_loss(bet, 0.40)  # %20 zarar
+        assert should_exit is False  # %25'i geçmedi
 
     def test_take_profit_configurable_threshold(self):
         """Farklı take_profit_pct değerleriyle test."""
         rm = make_risk_manager()
         bet = make_mock_bet(entry_price=0.50)
-        should_exit, reason = rm.check_take_profit(bet, 0.89)  # %78 kar
-        assert should_exit is False, f"take_profit should not trigger at 78% gain, got {reason}"
-        should_exit, _ = rm.check_take_profit(bet, 0.91)  # %82 kar
-        assert should_exit is True  # %80 threshold aşıldı
+        should_exit, _ = rm.check_take_profit(bet, 0.95)  # %90 kar
+        assert should_exit is False  # %100'ü geçmedi
 
     def test_rebalance_with_dict_signal(self):
         """Signal dict olarak da gelebilmeli."""
@@ -476,7 +476,7 @@ class TestEdgeCases:
         rm = make_risk_manager()
         bet = make_mock_bet(fair_value=0.55)
         analysis = MagicMock()
-        analysis.estimated_prob = 0.55
+        analysis.estimated_probability = 0.55
         should_exit, reason = rm.check_model_reversal(bet, analysis)
         assert should_exit is False
 

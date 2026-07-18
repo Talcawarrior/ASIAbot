@@ -37,8 +37,12 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Project root: two parents up from utils/ -> repo root.
-_WEIGHTS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json"))
-_STRATEGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json"))
+_WEIGHTS_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
+)
+_STRATEGY_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
+)
 
 # Diversification floor — no model may drop below this weight after save.
 # Set to 5% so the ensemble cannot collapse to a 1-2 model solution even
@@ -67,71 +71,19 @@ _lock = threading.Lock()
 def load_strategy_params() -> dict[str, float] | None:
     """Read strategy parameters from disk."""
     try:
-        with open(_STRATEGY_PATH, encoding="utf-8-sig") as f:
+        with open(_STRATEGY_PATH, encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return None
 
 
 def save_strategy_params(params: dict[str, float]):
-    """Save strategy parameters to disk with safety clamps.
-
-    MERGE MODE: reads existing file first, then updates only the provided keys.
-    This prevents callers that write a subset of params from erasing others
-    (e.g. orchestrator writing min_edge+kelly but not blend_weight).
-
-    SAFETY CLAMPS (hard limits — SIA/Karpathy/LLM cannot override):
-      - min_edge: [0.05, 0.50]  — floor 5% (breakeven after fees).
-      - kelly_fraction: [0.05, 0.25] — quarter-Kelly ceiling.
-      - min_entry_price: floor 0.05 — long-shot markets bleed asymmetrically.
-      - inefficiency_min: floor -0.20 — anything more negative = noise.
-      - blend_weight: [0.35, 0.50] — MAX 0.50, model over-trust engelle.
-    """
+    """Save strategy parameters to disk."""
     with _lock:
         try:
-            # MERGE: load existing params so callers writing a subset don't
-            # erase keys they didn't pass (e.g. orchestrator omits blend_weight).
-            existing: dict[str, float] = {}
-            if os.path.exists(_STRATEGY_PATH):
-                try:
-                    with open(_STRATEGY_PATH, encoding="utf-8-sig") as f:
-                        existing = json.load(f)
-                except Exception:
-                    pass
-            # PROTECTED KEYS: once set in the file, these are never overwritten.
-            # The SIA/Evolve loop may only control blend_weight, not min_edge or
-            # kelly_fraction.  This preserves hand-tuned baseline values (KRT-6).
-            _PROTECTED = {"min_edge", "kelly_fraction"}
-            filtered_params = {k: v for k, v in params.items() if k not in _PROTECTED or k not in existing}
-            merged = {**existing, **filtered_params}
-
-            # Safety clamps — prevent SIA/Evolve/LLM from pushing values
-            # into dangerous territory. These are HARD limits.
-            _CLAMPS: dict[str, tuple[float, float]] = {
-                "min_edge": (0.05, 0.50),  # floor 5% (breakeven after fees), ceiling 50%
-                "kelly_fraction": (0.05, 0.25),  # ceiling 25% (quarter-Kelly)
-                "min_entry_price": (0.05, 0.95),  # floor 5%, ceiling 95%
-                "inefficiency_min": (-0.20, 0.0),  # floor -20%, ceiling 0
-                "blend_weight": (0.35, 0.50),  # MAX 0.50 — model over-trust'ı engelle
-            }
-            for key, (lo, hi) in _CLAMPS.items():
-                if key in merged:
-                    raw = float(merged[key])
-                    clamped = max(lo, min(hi, raw))
-                    if clamped != raw:
-                        logger.warning(
-                            "Clamped %s: %.4f -> %.4f (bounds [%.2f, %.2f])",
-                            key,
-                            raw,
-                            clamped,
-                            lo,
-                            hi,
-                        )
-                    merged[key] = clamped
-
             os.makedirs(os.path.dirname(_STRATEGY_PATH), exist_ok=True)
             with open(_STRATEGY_PATH, "w", encoding="utf-8") as f:
-                json.dump(merged, f, indent=2)
+                json.dump(params, f, indent=2)
             logger.info("Strategy parameters persisted to %s", _STRATEGY_PATH)
         except Exception as e:
             logger.warning("Could not save strategy parameters: %s", e)
@@ -188,7 +140,8 @@ def _apply_floor(
     n = len(weights)
     if floor * n >= 1.0:
         logger.warning(
-            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, falling back to uniform 1/%d",
+            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, "
+            "falling back to uniform 1/%d",
             floor,
             n,
             n,

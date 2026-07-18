@@ -41,21 +41,13 @@ export interface StatusResponse {
     max_drawdown_pct: number;
   };
   open_positions?: Array<{
-    id: string;
+    id: number;
     city: string;
     side: string;
-    entry_price: number;
+    shares: number;
     current_price: number;
     unrealized_pnl: number;
-    edge: number;
-    shares: number;
     amount: number;
-    opened_at: string | null;
-    market_id: string;
-    market_type: string | null;
-    threshold: number | null;
-    question: string | null;
-    metric: string | null;
   }>;
 }
 
@@ -84,23 +76,20 @@ export interface HistoryEntry {
   city: string;
   outcome: string;
   entry_price: number;
-  exit_price: number | null;  // actual fill price from DB
   stake_amount: number;
   realized_pnl: number;
   roi: number;
   edge: number | null;
-  result: "WIN" | "LOSS";
+  result: "WIN" | "LOSS" | "PARTIAL_TP";
   placed_at: string | null;
   settled_at: string | null;
   closed_at: string | null;  // Early exit time
-  exit_type: string;  // ST, TP, SL, TS, TD, OT
+  exit_type: string;  // ST, TP, SL, TS, TD, OT, PT
 }
 
 export interface HistoryStats {
   total_won: number;
   total_lost: number;
-  total_closed_early: number;
-  closed_early_pnl: number;
   win_rate: number;
   overall_roi: number;
   total_stake: number;
@@ -142,21 +131,6 @@ export interface HealthResponse {
     max_net_edge_pct: number;
     count: number;
   };
-  open_edge_distribution: {
-    values: Array<{
-      bet_id: number;
-      raw_edge_pct: number | null;
-      net_edge_pct: number | null;
-      market_id: string;
-      city: string;
-      amount: number;
-      status: string;
-    }>;
-    avg_net_edge_pct: number;
-    min_net_edge_pct: number;
-    max_net_edge_pct: number;
-    count: number;
-  };
   summary_all: {
     total_settled: number;
     wins: number;
@@ -177,13 +151,16 @@ export interface HealthResponse {
   daily_pnl_timeline: Array<{
     date: string;
     pnl: number;
+    stake: number;
     wins: number;
     losses: number;
     total: number;
+    win_rate: number;
+    roi: number;
   }>;
 }
 
-// ---- UI Component Types ----
+// ---- UI Component Types (matching mock-data.ts) ----
 
 export interface KpiData {
   portfolioValue: number;
@@ -257,7 +234,7 @@ export interface TradeHistoryEntry {
   entryPrice: number;
   exitPrice: number;
   pnl: number;
-  result: "WIN" | "LOSS";
+  result: "WIN" | "LOSS" | "PARTIAL_TP";
   edge: number;
   duration: string;
   closedAt: string;  // formatted closing date/time
@@ -301,15 +278,6 @@ async function fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 }
 
 // ---- Data mapping functions ----
-
-// HATA-13 FIX: Portfolio value hesabi tek yardimci fonksiyonda toplandi.
-function portfolioValue(
-  initial: number,
-  realizedPnl: number,
-  unrealizedPnl: number,
-): number {
-  return initial + realizedPnl + unrealizedPnl;
-}
 
 function mapKpiData(
   status: StatusResponse | null,
@@ -359,7 +327,7 @@ function mapKpiData(
   const closedLosses = hs?.total_lost ?? 0;
   const closedBets = closedWins + closedLosses;
   const winRate = closedBets > 0 ? (closedWins / closedBets) * 100 : 0;
-  const expectancy = closedBets > 0 ? realizedPnl / closedBets : 0;
+  const expectancy = closedBets > 0 ? totalPnlValue / closedBets : 0;
   const avgBetSize = closedBets > 0 && hs?.total_stake ? hs.total_stake / closedBets : 0;
   const profitFactor = hs?.profit_factor ?? 0;
 
@@ -384,7 +352,7 @@ function mapKpiData(
   const maxExposure = status.portfolio.max_exposure;
 
   return {
-    portfolioValue: portfolioValue(p.initial, p.realized_pnl, p.unrealized_pnl),
+    portfolioValue: p.initial + p.realized_pnl + p.unrealized_pnl,
     dailyPnl: p.daily_pnl,
     totalPnl: hs?.total_pnl ?? 0,
     openPositions: s.total_bets,
@@ -425,7 +393,7 @@ function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]
 
   if (settled.length === 0) {
     // Return a single point with current value
-    const current = status ? portfolioValue(initial, status.portfolio.realized_pnl, status.portfolio.unrealized_pnl) : initial;
+    const current = status ? initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl : initial;
     return [{ date: "Bugün", value: Math.round(current) }];
   }
 
@@ -450,7 +418,7 @@ function mapPortfolioData(status: StatusResponse | null, history: HistoryEntry[]
 
   // Add current value as last point
   if (status) {
-    const current = portfolioValue(initial, status.portfolio.realized_pnl, status.portfolio.unrealized_pnl);
+    const current = initial + status.portfolio.realized_pnl + status.portfolio.unrealized_pnl;
     const today = new Date();
     const todayKey = `${today.getDate()} ${today.toLocaleDateString("tr-TR", { month: "short" })}`;
     if (points.length === 0 || points[points.length - 1].date !== todayKey) {
@@ -667,32 +635,6 @@ function mapEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
   return buckets;
 }
 
-function mapOpenEdgeDistribution(health: HealthResponse | null): EdgeBucket[] {
-  const buckets: EdgeBucket[] = [
-    { range: "0-5%", count: 0 },
-    { range: "5-10%", count: 0 },
-    { range: "10-15%", count: 0 },
-    { range: "15-20%", count: 0 },
-    { range: "20-30%", count: 0 },
-    { range: "30%+", count: 0 },
-  ];
-
-  if (!health?.open_edge_distribution?.values?.length) return buckets;
-
-  for (const v of health.open_edge_distribution.values) {
-    const edge = v.net_edge_pct;
-    if (edge === null || edge === undefined) continue;
-    if (edge <= 5) buckets[0].count++;
-    else if (edge <= 10) buckets[1].count++;
-    else if (edge <= 15) buckets[2].count++;
-    else if (edge <= 20) buckets[3].count++;
-    else if (edge <= 30) buckets[4].count++;
-    else buckets[5].count++;
-  }
-
-  return buckets;
-}
-
 function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
   return history.map((h) => {
     const placedDate = h.placed_at ? new Date(h.placed_at) : new Date();
@@ -710,11 +652,13 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
       duration = hours > 0 ? `${hours}s ${mins}dk` : `${mins}dk`;
     }
 
-    // HATA-6 FIX: Backend hep exit_price gonderiyor (bet.current_price).
-    // Frontend fallback formulu (WIN/LOSS bazli) formulas.py ile capisiyordu.
-    const exitPrice = h.exit_price != null
-      ? h.exit_price
-      : h.entry_price;
+    // Compute exit price from pnl and entry
+    const stake = h.stake_amount || 10;
+    const exitPrice = h.result === "PARTIAL_TP"
+      ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / stake))
+      : h.result === "WIN"
+        ? Math.min(1.0, h.entry_price * (1.0 + h.realized_pnl / stake))
+        : Math.max(0, h.entry_price * (1.0 - Math.abs(h.realized_pnl) / stake));
 
     // closed_at for early exits, settled_at for normal settlements
     const closeDate = h.closed_at || h.settled_at;
@@ -751,20 +695,13 @@ function mapTradeHistory(history: HistoryEntry[]): TradeHistoryEntry[] {
 function mapModelScores(weights: Record<string, number | { weight: number; brier_score?: number | null; accuracy?: number | null; num_predictions?: number }>): ModelScore[] {
   const modelNames: Record<string, string> = {
     gfs_seamless: "GFS Seamless",
-    ecmwf_ifs025: "ECMWF IFS025",
     ecmwf_ifs04: "ECMWF IFS04",
     ecmwf_aifs025: "ECMWF AIFS",
-    ecmwf_seamless: "ECMWF Seamless",
     gfs025: "GFS 0.25",
     ncep_gfs_seamless: "NCEP GFS",
+    ecmwf_seamless: "ECMWF Seamless",
+    icon_seamless: "ICON",
     gfs_seamless_04: "GFS 0.04",
-    icon_global: "ICON Global",
-    icon_seamless: "ICON Seamless",
-    cma_grapes_global: "CMA GRAPES",
-    gem_global: "GEM Global",
-    jma_seamless: "JMA Seamless",
-    meteofrance_seamless: "MF Seamless",
-    ukmo_seamless: "UKMO Seamless",
   };
 
   return Object.entries(weights)
@@ -781,8 +718,8 @@ function mapModelScores(weights: Record<string, number | { weight: number; brier
         name: modelNames[key] ?? key,
         brierScore: perf?.brier_score ?? null,
         accuracy: perf?.accuracy ?? null,
-        weight: Math.round(w * 10000) / 100,
-        trend: (perf?.trend as "up" | "down" | "stable") ?? "stable",
+        weight: Math.round(w * 100),
+        trend: "stable" as const,
         sampleCount: perf?.num_predictions ?? 0,
       };
     });
@@ -871,24 +808,15 @@ export function useApiData() {
 
   // Map data to UI types
   const kpiData = mapKpiData(status, health, historyStats);
-  // Use equity curve from backend (all dates, no 300 limit).
-  // Compute drawdown per point from the equity curve values.
-  let portfolioData: PortfolioPoint[];
-  if (equityCurve?.points && equityCurve.points.length > 0) {
-    let peak = 0;
-    portfolioData = equityCurve.points.map((p) => {
-      const val = p.value;
-      if (val > peak) peak = val;
-      const dd = peak > 0 ? ((peak - val) / peak) * 100 : 0;
-      return { date: p.date, value: Math.round(val), drawdown: Math.round(dd * 10) / 10 };
-    });
-  } else {
-    portfolioData = mapPortfolioData(status, history);
-  }
+  // Use equity curve from backend (all dates, no 300 limit)
+  const portfolioData: PortfolioPoint[] = equityCurve?.points?.map((p) => ({
+    date: p.date,
+    value: Math.round(p.value),
+    drawdown: 0,
+  })) ?? mapPortfolioData(status, history);
   const openPositions = mapOpenPositions(signals);
   const activityFeed = mapActivityFeed(signals, history, status, health, weights);
   const edgeDistribution = mapEdgeDistribution(health);
-  const openEdgeDistribution = mapOpenEdgeDistribution(health);
   const tradeHistory = mapTradeHistory(history);
   const modelScores = mapModelScores(weights);
 
@@ -904,7 +832,6 @@ export function useApiData() {
     openPositions,
     activityFeed,
     edgeDistribution,
-    openEdgeDistribution,
     tradeHistory,
     modelScores,
     slippageData,

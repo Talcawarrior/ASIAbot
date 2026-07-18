@@ -43,20 +43,25 @@ ALL_TABLES = [FORECAST_TABLE, ANALYSIS_TABLE, PERF_TABLE, CALIB_TABLE]
 def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
     """Archive rows older than hot_days to Parquet, purge data older than cold_days.
 
+    1. Export rows older than hot_days -> Parquet files
+    2. Delete those rows from SQLite
+    3. Delete Parquet files older than cold_days (purge)
+
     Returns dict with counts per table.
     """
     os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
-    # Use naive datetime consistently - DB stores naive datetimes
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    hot_cutoff = (now - timedelta(days=hot_days)).strftime("%Y-%m-%d %H:%M:%S")
-    cold_cutoff = (now - timedelta(days=cold_days)).strftime("%Y-%m-%d %H:%M:%S")
+    hot_cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=hot_days)).isoformat()
+    cold_cutoff = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=cold_days)).isoformat()
 
     conn = sqlite3.connect(config.DB_PATH)
+    # M13: Set WAL PRAGMAs on raw connection to match SQLAlchemy mode
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     archived = 0
     result = {}
 
-    # Archive old rows
+    # --- Step 1+2: Archive old rows ---
     for table in ALL_TABLES:
         try:
             date_col = _TABLE_DATE_COL[table]
@@ -69,10 +74,14 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
                 logger.info("No old rows in %s", table)
                 continue
 
-            pq_path = os.path.join(ARCHIVE_DIR, f"{table}_{datetime.now():%Y%m%d}.parquet")
-            if os.path.exists(pq_path):
-                df = pd.concat([pd.read_parquet(pq_path), df], ignore_index=True)
+            date_tag = datetime.now().strftime("%Y%m%d")
+            pq_path = os.path.join(ARCHIVE_DIR, f"{table}_{date_tag}.parquet")
 
+            if os.path.exists(pq_path):
+                existing = pd.read_parquet(pq_path)
+                df = pd.concat([existing, df], ignore_index=True)
+
+            # H13: Write Parquet FIRST, then DELETE — prevents data loss on write failure
             df.to_parquet(pq_path, index=False, compression="snappy")
 
             cur = conn.cursor()
@@ -82,39 +91,56 @@ def archive_old_forecasts(hot_days: int = 10, cold_days: int = 120) -> dict:
 
             archived += len(df)
             result[table] = {"archived": len(df), "deleted": deleted, "file": pq_path}
-            logger.info("Archived %d / deleted %d rows from %s", len(df), deleted, table)
+            logger.info(
+                "Archived %d / deleted %d rows from %s",
+                len(df),
+                deleted,
+                table,
+            )
 
         except Exception as e:
             logger.warning("Archive failed for %s: %s", table, e)
             result[table] = {"error": str(e)}
 
-    # Purge old Parquet files
+    # --- Step 3: Purge old Parquet files beyond cold_days ---
     purged = 0
     for table in ALL_TABLES:
-        for pq_file in glob.glob(os.path.join(ARCHIVE_DIR, f"{table}_*.parquet")):
+        pattern = os.path.join(ARCHIVE_DIR, f"{table}_*.parquet")
+        for pq_file in glob.glob(pattern):
             try:
                 fname = os.path.basename(pq_file)
+                # Parse date from filename: {table}_YYYYMMDD.parquet
                 date_str = fname.rsplit("_", 1)[-1].replace(".parquet", "")
-                if datetime.strptime(date_str, "%Y%m%d").isoformat() < cold_cutoff:
+                file_date = datetime.strptime(date_str, "%Y%m%d")
+                if file_date.isoformat() < cold_cutoff:
                     os.remove(pq_file)
                     purged += 1
                     logger.info("Purged old archive: %s", fname)
             except Exception as e:
                 logger.warning("Purge failed for %s: %s", pq_file, e)
 
-    # VACUUM
+    # --- Step 4: VACUUM (skip if WAL mode — VACUUM blocks all readers) ---
     if archived > 0:
         try:
-            conn.execute("VACUUM")
-            logger.info("VACUUM completed")
+            journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if journal_mode == "wal":
+                logger.info("WAL mode active — using wal_checkpoint instead of VACUUM")
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            else:
+                conn.execute("VACUUM")
+            logger.info("Maintenance completed")
         except Exception as e:
-            logger.warning("VACUUM failed: %s", e)
+            logger.warning("Maintenance failed: %s", e)
 
     conn.close()
 
     result["total_archived"] = archived  # type: ignore[assignment]
     result["purged_files"] = purged  # type: ignore[assignment]
-    logger.info("Archive done: %d rows archived, %d old files purged", archived, purged)
+    logger.info(
+        "Archive done: %d rows archived, %d old files purged",
+        archived,
+        purged,
+    )
     return result
 
 
@@ -134,10 +160,7 @@ def load_archives(table: str = FORECAST_TABLE, since: str | None = None) -> pd.D
         date_col = _TABLE_DATE_COL.get(table, "fetched_at")
         if date_col in df.columns:
             df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
-            # FIX: Use .loc[] + .copy() for explicit DataFrame typing —
-            # boolean mask indexing returns DataFrame but pyright can't infer.
-            mask = df[date_col] >= ts
-            df = df.loc[mask].copy()
+            df = df[df[date_col] >= ts]
 
     return df
 
@@ -222,4 +245,56 @@ def auto_cleanup(hot_days: int = 10, cold_days: int = 120) -> dict:
         result.get("total_archived", 0),
         result.get("purged_files", 0),
     )
+    return result
+
+
+def archive_bets_and_portfolio():
+    """Settlement/reset ÖNCESI bets ve portfolio'yu parquet'a arşivle.
+
+    Silindikten sonra kurtarma için kullanılır.
+    Dosyalar: data/archive/bets_snapshot_YYYYMMDD_HHMMSS.parquet
+              data/archive/portfolio_snapshot_YYYYMMDD_HHMMSS.parquet
+    """
+    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    conn = sqlite3.connect(config.DB_PATH)
+    result = {}
+
+    # Bets tablosunu arşivle
+    try:
+        df = pd.read_sql_query("SELECT * FROM bets", conn)
+        if not df.empty:
+            path = os.path.join(ARCHIVE_DIR, f"bets_snapshot_{ts}.parquet")
+            df.to_parquet(path, index=False, compression="snappy")
+            result["bets"] = {"archived": len(df), "file": path}
+            logger.info("Bets archived: %d rows -> %s", len(df), path)
+    except Exception as e:
+        logger.warning("Bets archive failed: %s", e)
+        result["bets"] = {"error": str(e)}
+
+    # Portfolio snapshot
+    try:
+        df = pd.read_sql_query("SELECT * FROM portfolio", conn)
+        if not df.empty:
+            path = os.path.join(ARCHIVE_DIR, f"portfolio_snapshot_{ts}.parquet")
+            df.to_parquet(path, index=False, compression="snappy")
+            result["portfolio"] = {"archived": len(df), "file": path}
+            logger.info("Portfolio archived: %s", path)
+    except Exception as e:
+        logger.warning("Portfolio archive failed: %s", e)
+        result["portfolio"] = {"error": str(e)}
+
+    # M15: Cleanup old snapshot files (keep last 30 per prefix)
+    for prefix in ("bets_snapshot_", "portfolio_snapshot_"):
+        pattern = os.path.join(ARCHIVE_DIR, f"{prefix}*.parquet")
+        files = sorted(glob.glob(pattern))
+        if len(files) > 30:
+            for old_file in files[: len(files) - 30]:
+                try:
+                    os.remove(old_file)
+                    logger.info("Purged old snapshot: %s", os.path.basename(old_file))
+                except Exception as e:
+                    logger.warning("Snapshot purge failed for %s: %s", old_file, e)
+
+    conn.close()
     return result

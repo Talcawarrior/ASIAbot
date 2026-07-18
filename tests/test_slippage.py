@@ -54,30 +54,32 @@ class TestAdjustEdgeForCosts:
     """Net edge = raw edge - slippage - gas - fee."""
 
     def test_high_price_low_slip(self):
-        # entry=0.50 → 0.5% slippage + (0.01/30)*0.50=0.0167% gas + 5%×(0.50×0.50)=1.25% fee drag
+        # entry=0.50 → 0.5% slippage + (0.10/30)*0.50=0.167% gas + 5%×(0.50×0.50)=1.25% fee drag
         net = adjust_edge_for_costs(0.10, 0.50, bet_amount_usd=30.0)
-        gas_pct = (0.01 / 30.0) * 0.50
+        gas_pct = (0.10 / 30.0) * 0.50
         fee_drag = 0.05 * 0.50 * (1.0 - 0.50)
         assert net == pytest.approx(0.10 - 0.005 - gas_pct - fee_drag)
 
     def test_low_price_high_slip(self):
-        # entry=0.03 → 3% slippage + (0.01/30)*0.03=0.001% gas + 5%×0.03×0.97=0.1455% fee drag
+        # entry=0.03 → 3% slippage + (0.10/30)*0.03=0.01% gas + 5%×0.03×0.97=0.1455% fee drag
         net = adjust_edge_for_costs(0.08, 0.03, bet_amount_usd=30.0)
-        gas_pct = (0.01 / 30.0) * 0.03
+        gas_pct = (0.10 / 30.0) * 0.03
         fee_drag = 0.05 * 0.03 * (1.0 - 0.03)
         assert net == pytest.approx(0.08 - 0.03 - gas_pct - fee_drag)
 
     def test_negative_edge_stays_negative(self):
         net = adjust_edge_for_costs(0.01, 0.50, bet_amount_usd=30.0)
-        gas_pct = (0.01 / 30.0) * 0.50
+        gas_pct = (0.10 / 30.0) * 0.50
         fee_drag = 0.05 * 0.50 * (1.0 - 0.50)
         assert net == pytest.approx(0.01 - 0.005 - gas_pct - fee_drag)
 
     def test_fee_only(self):
         net = adjust_edge_for_costs(0.05, 0.50, include_fee=True, bet_amount_usd=30.0)
         assert net < 0.05
-        net_no_fee = adjust_edge_for_costs(0.05, 0.50, include_fee=False, bet_amount_usd=30.0)
-        gas_pct = (0.01 / 30.0) * 0.50
+        net_no_fee = adjust_edge_for_costs(
+            0.05, 0.50, include_fee=False, bet_amount_usd=30.0
+        )
+        gas_pct = (0.10 / 30.0) * 0.50
         assert net_no_fee == pytest.approx(0.05 - 0.005 - gas_pct)
 
 

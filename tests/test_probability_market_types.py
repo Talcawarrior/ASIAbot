@@ -28,7 +28,9 @@ def _cdf_diff(z_low: float, z_high: float) -> float:
 
 def test_high():
     """HIGH market: mean=25, std=1, strike=23 → P > 0.9 (most mass above 23)."""
-    p_high = estimate_probability(mean=25.0, std=1.0, threshold=23.0, market_type="HIGH")
+    p_high = estimate_probability(
+        mean=25.0, std=1.0, threshold=23.0, market_type="HIGH"
+    )
     assert p_high > 0.9, f"Expected >0.9, got {p_high}"
 
     # strike=27 (above mean) → P < 0.1
@@ -47,8 +49,12 @@ def test_low_is_complement():
     """P_LOW(X) + P_HIGH(X) ≈ 1 for same parameters."""
     for mean in (15.0, 20.0, 25.0):
         for threshold in (mean - 5, mean, mean + 5):
-            p_high = estimate_probability(mean, std=2.0, threshold=threshold, market_type="HIGH")
-            p_low = estimate_probability(mean, std=2.0, threshold=threshold, market_type="LOW")
+            p_high = estimate_probability(
+                mean, std=2.0, threshold=threshold, market_type="HIGH"
+            )
+            p_low = estimate_probability(
+                mean, std=2.0, threshold=threshold, market_type="LOW"
+            )
             total = p_high + p_low
             assert abs(total - 1.0) < 1e-9, (
                 f"mean={mean}, threshold={threshold}: P_HIGH={p_high}, P_LOW={p_low}, sum={total}"
@@ -64,15 +70,19 @@ def test_range_bucket():
     The standard normal CDF at z=0.5 is ~0.6915, so
     P(-0.5 < Z < 0.5) = 0.6915 - (1-0.6915) = 0.3830.
     """
-    p_range = estimate_probability(mean=18.0, std=1.0, threshold=18.0, market_type="RANGE")
-    # With min_std=1.5: z = ±0.5/1.5 = ±0.333 → CDF(0.333) - CDF(-0.333) ≈ 0.261
-    expected = normal_cdf(0.333) - normal_cdf(-0.333)  # ~0.261
+    p_range = estimate_probability(
+        mean=18.0, std=1.0, threshold=18.0, market_type="RANGE"
+    )
+    # Expected: normal_cdf(0.5) - normal_cdf(-0.5) = 0.6915 - 0.3085 = 0.3829
+    expected_half = normal_cdf(0.5)  # ~0.6915
+    expected = expected_half - (1.0 - expected_half)  # ~0.383
     assert abs(p_range - expected) < 0.005, f"Expected ~{expected:.4f}, got {p_range}"
 
-    # mean=21, threshold=18 → bucket far from mean → small probability
-    p_far = estimate_probability(mean=21.0, std=1.0, threshold=18.0, market_type="RANGE")
-    # With min_std=1.5: z lower=-2.33, z upper=-1.67 → P≈0.038
-    assert p_far <= 0.05, f"Expected small, got {p_far}"
+    # mean=21, threshold=18 → bucket far from mean → P <= 0.01 (clamp floor)
+    p_far = estimate_probability(
+        mean=21.0, std=1.0, threshold=18.0, market_type="RANGE"
+    )
+    assert p_far <= 0.01, f"Expected <=0.01, got {p_far}"
 
 
 # ── 4. RANGE buckets sum to ~1 ────────────────────────────────────────────────
@@ -89,7 +99,9 @@ def test_range_sums_to_one():
     std = 1.5
     total = 0.0
     for strike in range(10, 31):
-        total += estimate_probability(mean, std, threshold=float(strike), market_type="RANGE")
+        total += estimate_probability(
+            mean, std, threshold=float(strike), market_type="RANGE"
+        )
     assert total > 0.99, f"Expected sum > 0.99, got {total}"
 
 
@@ -138,7 +150,9 @@ def test_low_market_signal_direction():
             kelly_frac = 0.0
             recommended_side = None
 
-    assert recommended_side == "YES", f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
+    assert recommended_side == "YES", (
+        f"Expected recommended_side='YES' for LOW market, got {recommended_side}"
+    )
     assert kelly_frac > 0, "Kelly fraction should be > 0 for positive-edge LOW"
 
 

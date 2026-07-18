@@ -13,10 +13,6 @@ import logging
 import math
 from datetime import datetime, timezone
 
-# Calibrator placeholder — not active pending more settled bets.
-# The Platt-scaling approach needs ~500+ samples for a stable fit.
-_calibrator = None
-
 logger = logging.getLogger("PROBABILITY")
 
 HAS_SCIPY: bool
@@ -107,7 +103,7 @@ def estimate_probability(  # pylint: disable=too-many-arguments,too-many-positio
         Probability clamped to ``[0.01, 0.99]``.
     """
     total_std = math.sqrt(std**2 + (days_ahead * 0.5) ** 2)
-    total_std = max(total_std, 1.5)
+    total_std = max(total_std, 1.0)
 
     mt = market_type.upper()
     z = (threshold - mean) / total_std
@@ -117,15 +113,24 @@ def estimate_probability(  # pylint: disable=too-many-arguments,too-many-positio
     elif mt == "LOW":
         prob = normal_cdf(z)
     elif mt == "RANGE":
-        low = range_low if (range_low is not None and range_high is not None) else threshold - 0.5
-        high = range_high if (range_low is not None and range_high is not None) else threshold + 0.5
-        prob = normal_cdf((high - mean) / total_std) - normal_cdf((low - mean) / total_std)
+        low = (
+            range_low
+            if (range_low is not None and range_high is not None)
+            else threshold - 0.5
+        )
+        high = (
+            range_high
+            if (range_low is not None and range_high is not None)
+            else threshold + 0.5
+        )
+        prob = normal_cdf((high - mean) / total_std) - normal_cdf(
+            (low - mean) / total_std
+        )
     else:
         logger.warning("Unknown market_type=%r, falling back to HIGH", market_type)
         prob = 1.0 - normal_cdf(z)
 
-    prob = max(0.01, min(0.99, prob))
-    return prob
+    return max(0.01, min(0.99, prob))
 
 
 # ── Time-to-close edge escalation ─────────────────────────────────────────────
@@ -160,7 +165,9 @@ def compute_effective_min_edge(market, std: float | None = None) -> float:
         base = s.min_edge
 
     try:
-        resolution = getattr(market, "resolution_date", None) or getattr(market, "target_date", None)
+        resolution = getattr(market, "resolution_date", None) or getattr(
+            market, "target_date", None
+        )
         if resolution is None:
             return base
         now = datetime.now(timezone.utc)

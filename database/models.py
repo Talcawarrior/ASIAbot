@@ -3,7 +3,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text, Index
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -32,9 +32,6 @@ class BetStatus(enum.Enum):
     FAILED = "failed"
     WON = "won"
     LOST = "lost"
-    # HATA-10 FIX: closed_early ve rejected enum'a eklendi (string olarak kullaniliyordu)
-    CLOSED_EARLY = "closed_early"  # TP/SL/trailing ile erken kapandi
-    REJECTED = "rejected"  # risk cap veya depth filter tarafindan reddedildi
 
 
 # ── Open bet statuses ────────────────────────────────────────────────────
@@ -60,8 +57,12 @@ class WeatherMarket(Base):
     metric = Column(String)  # "temperature_max"
     threshold = Column(Float)  # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)  # "fahrenheit" or "celsius"
-    threshold_low = Column(Float, nullable=True)  # range lower bound (°C), e.g. "88-89°F" → 31.1
-    threshold_high = Column(Float, nullable=True)  # range upper bound (°C), e.g. "88-89°F" → 31.7
+    threshold_low = Column(
+        Float, nullable=True
+    )  # range lower bound (°C), e.g. "88-89°F" → 31.1
+    threshold_high = Column(
+        Float, nullable=True
+    )  # range upper bound (°C), e.g. "88-89°F" → 31.7
     target_date = Column(DateTime)  # 2025-07-04
     latitude = Column(Float)  # Latitude
     longitude = Column(Float)  # Longitude
@@ -73,11 +74,11 @@ class WeatherMarket(Base):
     volume = Column(Float)  # $50,000
     liquidity = Column(Float)  # Liquidity
 
-    # Polymarket CLOB token IDs (for orderbook depth & condition_id)
-    clob_token_ids = Column(Text)  # JSON: [{"token_id": "...", "outcome": "YES", "condition_id": "..."}, ...]
-
     # Durum
     status = Column(String, default=MarketStatus.OPEN.value)
+
+    # Polymarket dinamik fee oranı (feeSchedule.rate), 0.05 default
+    fee_rate = Column(Float, default=0.05)
 
     # Meta
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -87,18 +88,12 @@ class WeatherMarket(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
     raw_data = Column(Text)
-    fee_rate = Column(Float, default=0.05)  # Polymarket taker fee rate from feeSchedule
 
 
 class WeatherForecast(Base):
     """Meteoroloji API'lerinden çekilen tahminler."""
 
     __tablename__ = "weather_forecasts"
-
-    __table_args__ = (
-        Index("ix_wf_market_id", "market_id"),
-        Index("ix_wf_fetched_at", "fetched_at"),
-    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)  # Hangi market için
@@ -127,8 +122,6 @@ class Analysis(Base):
 
     __tablename__ = "analyses"
 
-    __table_args__ = (Index("ix_an_market_id", "market_id"),)
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)
 
@@ -137,7 +130,6 @@ class Analysis(Base):
     market_implied_prob = Column(Float)  # 0.35 (Polymarket'in fiyatı)
     edge = Column(Float)  # 0.37 (fark) — now net edge after slippage+fee
     raw_edge = Column(Float, nullable=True)  # pre-cost raw edge
-    adjusted_edge = Column(Float, nullable=True)  # time/type/side/RMSE/spread adjusted
     slippage_pct = Column(Float, nullable=True)  # estimated slippage at fill
 
     # Kaynak detayları
@@ -166,13 +158,6 @@ class Bet(Base):
 
     __tablename__ = "bets"
 
-    __table_args__ = (
-        Index("ix_bets_market_id", "market_id"),
-        Index("ix_bets_status", "status"),
-        Index("ix_bets_city", "city"),
-        Index("ix_bets_settled_at", "settled_at"),
-    )
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String, nullable=False)
     analysis_id = Column(Integer)
@@ -180,8 +165,8 @@ class Bet(Base):
     city_code = Column(String)
     city = Column(String)  # compatibility
     outcome = Column(String)  # "YES" or "NO"
-    stake = Column(Float)
-    stake_amount = Column(Float, default=0.0)
+    stake = Column(Float)  # DEPRECATED: dead column, kept for DB migration compatibility
+    stake_amount = Column(Float, default=0.0)  # DEPRECATED: dead column, kept for DB migration compatibility
     entry_price = Column(Float)
     shares = Column(Float)
     current_price = Column(Float, default=0.5)
@@ -190,7 +175,7 @@ class Bet(Base):
     fair_value = Column(Float, default=0.0)
     expected_value = Column(Float, default=0.0)
     strike_temp = Column(Float)
-    bet_type = Column(String)  # YES/NO or HIGH/LOW
+    bet_type = Column(String)  # DEPRECATED: dead column, kept for DB migration compatibility
     side = Column(String)  # YES/NO/HIGH/LOW
     realized_pnl = Column(Float, default=0.0)
     status = Column(String, default=BetStatus.OPEN.value)
@@ -204,12 +189,18 @@ class Bet(Base):
     order_id = Column(String)
     tx_hash = Column(String)
     error_message = Column(String)  # Hata varsa
-    entry_fee = Column(Float, default=0.0)  # Polymarket taker fee at entry (feeRate × stake × (1-p))
+    entry_fee = Column(
+        Float, default=0.0
+    )  # Polymarket taker fee at entry (feeRate × stake × (1-p))
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
     close_reason = Column(String, nullable=True)
     closed_at = Column(DateTime, nullable=True)  # Early exit zamanı
+
+    # Partial take-profit state (principal recovery without full closure)
+    partial_tp_done = Column(Boolean, default=False, nullable=False)
+    covered_fraction = Column(Float, default=0.0, nullable=False)  # fraction sold on partial TP
 
 
 class Portfolio(Base):
@@ -238,14 +229,12 @@ class ModelPerformance(Base):
 
     __tablename__ = "model_performance"
 
-    __table_args__ = (Index("ix_mp_model_name", "model_name"),)
-
     id = Column(Integer, primary_key=True)
     model_name = Column(String, nullable=False)
     total_predictions = Column(Integer, default=0)
     correct_predictions = Column(Integer, default=0)
     accuracy = Column(Float, default=0.0)
-    num_predictions = Column(Integer, default=0)
+    num_predictions = Column(Integer, default=0)  # DEPRECATED: dead column, kept for DB migration compatibility
     brier_score = Column(Float, default=0.0)
     weight = Column(Float, default=0.0)
     last_updated = Column(
@@ -256,15 +245,14 @@ class ModelPerformance(Base):
     recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+# Compatibility Aliases
+Market = WeatherMarket
+
+
 class HistoricalCalibration(Base):
     """Historical calibration records for Karpathy search and backtesting."""
 
     __tablename__ = "historical_calibrations"
-
-    __table_args__ = (
-        Index("ix_hc_city_model", "city_code", "model"),
-        Index("ix_hc_date", "date"),
-    )
 
     id = Column(Integer, primary_key=True)
     city_code = Column(String, nullable=False)
@@ -275,13 +263,7 @@ class HistoricalCalibration(Base):
     predicted_value = Column(Float, nullable=False)
     actual_value = Column(Float, nullable=False)
     bias = Column(Float, nullable=True)  # predicted - actual
-    analyzed_at = Column(DateTime, nullable=True)  # When this prediction was made
-    days_ahead = Column(Integer, nullable=True)  # (target_date - analyzed_at).days
     created_at = Column(
         DateTime,
         default=lambda: datetime.now(timezone.utc),
     )
-
-
-# Compatibility Aliases
-Market = WeatherMarket

@@ -24,7 +24,7 @@ logger = logging.getLogger("UTIL_SLIPPAGE")
 FEE_PCT: float = 0.05  # Polymarket Weather category taker fee rate (5 %)
 # Correct formula: fee = C × feeRate × p × (1-p) = stake × feeRate × (1-p)
 # See utils/formulas.py → polymarket_fee() for the canonical implementation.
-GAS_COST_USD: float = 0.01  # Polygon gas per round-trip (gasless tx ~$0.01)
+GAS_COST_USD: float = 0.10  # Polygon gas per round-trip
 
 
 @dataclass(frozen=True)
@@ -65,11 +65,7 @@ def _vwap_from_asks(asks: list[dict], stake_usd: float, fallback_price: float) -
     filled_shares = 0.0
     for level in asks:
         price = float(level.get("price", 0))
-        size_raw = level.get("size", 0)
-        try:
-            size = float(size_raw) if size_raw is not None else 0.0
-        except (TypeError, ValueError):
-            size = 0.0
+        size = float(level.get("size", 0))
         cost = price * size
         if cumulative + cost >= stake_usd:
             needed = stake_usd - cumulative
@@ -110,27 +106,15 @@ def _orderbook_slippage(
         return _tiered_fallback(entry_price, "orderbook: no condition_id")
 
     try:
-        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as LiveOrderbookClient
+        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient
 
-        ob = LiveOrderbookClient().get_live_orderbook(condition_id)
+        ob = ResolvedMarketsClient().get_live_orderbook(condition_id)
         if not ob or ("asks" not in ob and "bids" not in ob):
             logger.warning("Orderbook empty for %s, falling back to tiered", condition_id)
             return _tiered_fallback(entry_price, "orderbook: empty_book")
 
         asks = ob.get("asks", [])
         bids = ob.get("bids", [])
-
-        # M4 fix: Empty orderbook should report high slippage, not 0%
-        if not asks and not bids:
-            logger.warning("Orderbook completely empty for %s, using high slippage estimate", condition_id)
-            return SlippageEstimate(
-                slippage_pct=0.05,  # 5% slippage for empty book
-                model_used="orderbook",
-                fill_vwap=entry_price * 1.05,
-                depth_usd=0.0,
-                raw_spread_pct=0.05,
-            )
-
         best_ask = float(asks[0]["price"]) if asks else entry_price * 1.01
         best_bid = float(bids[0]["price"]) if bids else entry_price * 0.99
         mid = (best_ask + best_bid) / 2
@@ -235,7 +219,7 @@ def adjust_edge_for_costs(
         # Since edge is measured in price/probability units (same as p),
         # the fee drag in edge units = feeRate × p × (1-p).
         if entry_price > 0:
-            fee_drag = FEE_PCT * entry_price * (1.0 - entry_price)
+            fee_drag = bot_config.strategy.current_fee_rate * entry_price * (1.0 - entry_price)
         else:
             fee_drag = 0.0
         cost += fee_drag
@@ -313,48 +297,38 @@ def check_orderbook_depth(
     if min_depth_usd <= 0 or not condition_id:
         return True, 0.0
 
-    # HATA-2 FIX: Once gercek API'ye (resolvedmarkets_ingest) dene.
-    # Eger API anahtari yoksa veya cagri basarisizsa, mock data donen
-    # resolved_markets_helper'a fallback yapma — graceful skip yap.
-    ob = None
     try:
-        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient as LiveOrderbookClient
+        from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient
 
-        client = LiveOrderbookClient()
+        client = ResolvedMarketsClient()
         ob = client.get_live_orderbook(condition_id)
+        if not ob:
+            return True, 0.0
+
+        # Pick the relevant side: buying YES = consuming asks, buying NO = consuming bids
+        if side.upper() == "YES":
+            levels = ob.get("asks", [])
+        else:
+            levels = ob.get("bids", [])
+
+        # Sum depth within ±2 ticks (0.02) of fill_price
+        depth_usd = 0.0
+        for lvl in levels:
+            price = float(lvl.get("price", 0))
+            size = float(lvl.get("size", 0))
+            if abs(price - fill_price) <= 0.02:
+                depth_usd += price * size  # price * shares = USD value
+
+        ok = depth_usd >= min_depth_usd
+        if not ok:
+            logger.warning(
+                "Depth filter: %.2f USD < %.2f USD min at price %.4f (side=%s)",
+                depth_usd,
+                min_depth_usd,
+                fill_price,
+                side,
+            )
+        return ok, depth_usd
     except Exception as exc:
-        logger.warning("Live orderbook fetch failed: %s", exc)
-
-    if not ob or not isinstance(ob, dict):
-        # Gercek API yanit vermedi — mock kullanma, graceful skip
-        logger.info("Depth check skipped (no live orderbook data for %s)", condition_id)
+        logger.warning("Depth check failed (graceful skip): %s", exc)
         return True, 0.0
-
-    # Pick the relevant side: buying YES = consuming asks, buying NO = consuming bids
-    if side.upper() == "YES":
-        levels = ob.get("asks", [])
-    else:
-        levels = ob.get("bids", [])
-
-    # Sum depth within ±2 ticks (0.02) of fill_price
-    depth_usd = 0.0
-    for lvl in levels:
-        price = float(lvl.get("price", 0))
-        size_raw = lvl.get("size", 0)
-        try:
-            size = float(size_raw) if size_raw is not None else 0.0
-        except (TypeError, ValueError):
-            size = 0.0
-        if abs(price - fill_price) <= 0.02:
-            depth_usd += price * size  # price * shares = USD value
-
-    ok = depth_usd >= min_depth_usd
-    if not ok:
-        logger.warning(
-            "Depth filter: %.2f USD < %.2f USD min at price %.4f (side=%s)",
-            depth_usd,
-            min_depth_usd,
-            fill_price,
-            side,
-        )
-    return ok, depth_usd

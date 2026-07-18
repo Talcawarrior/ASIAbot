@@ -1,9 +1,7 @@
 """Database setup with WAL mode and custom transaction sessions."""
 
-import glob
 import logging
 import os
-import time
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event, text
@@ -18,38 +16,16 @@ DB_PATH = config.DB_PATH
 _DB_INITIALIZED = False
 
 
-def _cleanup_stale_locks():
-    """Remove stale WAL/SHM files from previous crashed processes."""
-    db_dir = os.path.dirname(DB_PATH)
-    if not db_dir:
-        return
-    now = time.time()
-    for pattern in ["*.db-wal", "*.db-shm"]:
-        for f in glob.glob(os.path.join(db_dir, pattern)):
-            try:
-                # Only delete if file is old (> 5 minutes) — likely stale
-                if now - os.path.getmtime(f) > 300:
-                    os.remove(f)
-                    logger.info("Removed stale lock file: %s", f)
-            except OSError:
-                pass  # File in use — skip
-
-
 def get_engine():
     """Create database engine with optimized SQLite settings."""
     db_dir = os.path.dirname(DB_PATH)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    _cleanup_stale_locks()
-
     eng = create_engine(
         f"sqlite:///{DB_PATH}",
         connect_args={"check_same_thread": False},
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
-        pool_timeout=30,
         echo=config.DB_ECHO,
     )
 
@@ -59,10 +35,6 @@ def get_engine():
         cursor.execute("PRAGMA journal_mode=WAL")
         cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.execute("PRAGMA cache_size=10000")
-        cursor.execute("PRAGMA busy_timeout=30000")
-        # FIX: Enable FK enforcement so Bet.market_id / Bet.analysis_id
-        # constraints are actually checked (was disabled by default).
-        cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
     return eng
@@ -95,6 +67,8 @@ def init_db():
     _migrate_add_column("historical_calibrations", "bias", "FLOAT")
     # Migration: add entry_fee to bets (Polymarket taker fee at entry time)
     _migrate_add_column("bets", "entry_fee", "FLOAT")
+    # Migration: add fee_rate to weather_markets (Polymarket dynamic fee rate)
+    _migrate_add_column("weather_markets", "fee_rate", "FLOAT")
 
     _DB_INITIALIZED = True
     logger.info("Database initialized at %s with WAL mode", DB_PATH)
@@ -108,16 +82,6 @@ def _ensure_db_init():
 
 def _migrate_add_column(table: str, column: str, col_type: str) -> None:
     """Idempotent ALTER TABLE ADD COLUMN for SQLite."""
-    import re
-
-    # Validate identifiers to prevent SQL injection
-    if not re.match(r"^[a-z_][a-z0-9_]*$", table):
-        raise ValueError(f"Invalid table name: {table}")
-    if not re.match(r"^[a-z_][a-z0-9_]*$", column):
-        raise ValueError(f"Invalid column name: {column}")
-    if not re.match(r"^[A-Z_]+$", col_type):
-        raise ValueError(f"Invalid column type: {col_type}")
-
     with engine.connect() as conn:
         row = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
         existing = [r[1] for r in row]  # column name is at index 1
@@ -151,12 +115,7 @@ def get_session_or(existing=None):
     for callers that don't pass a session.
     """
     if existing is not None:
-        try:
-            yield existing
-        except Exception:
-            # Fix: Rollback on exception even for shared sessions
-            existing.rollback()
-            raise
+        yield existing
     else:
         with get_session() as session:
             yield session

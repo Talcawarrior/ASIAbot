@@ -55,10 +55,6 @@ class TestUnitParsing:
         r = self._extract("Will the temperature be between 88-89°F on July 4?")
         assert r is not None, "expected a result"
         value_c, low_c, high_c = r
-        # FIX: Assert non-None before arithmetic — _extract_threshold returns
-        # Optional[float] for low/high when only a single value is parsed.
-        assert low_c is not None, "expected low_c to be set for range parse"
-        assert high_c is not None, "expected high_c to be set for range parse"
         # 88°F = 31.11°C, 89°F = 31.67°C
         assert abs(low_c - 31.1) < 0.2, f"low_c={low_c}, expected ~31.1"
         assert abs(high_c - 31.7) < 0.2, f"high_c={high_c}, expected ~31.7"

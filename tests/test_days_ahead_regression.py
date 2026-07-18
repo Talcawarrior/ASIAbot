@@ -64,18 +64,21 @@ def test_estimate_probability_clamps_to_open_unit_interval():
 
 def test_analyze_market_source_uses_inclusive_days_ahead_check():
     """Pin the actual code shape: the days_ahead check must use
-    `min_days_ahead <= days_ahead <=` (configurable lower bound), not a
-    hardcoded `0 <` strict inequality that would reject today's markets.
+    `0 <= days_ahead <=` (inclusive lower bound), not `0 < days_ahead <=`.
+    A regression that adds a strict inequality would reject today's
+    markets and produce should_bet=False for everything.
     """
     src = inspect.getsource(Calculator.analyze_market)
     # Look for the boolean expression that gates should_bet. Accept either
     # the inline form or the `days_ahead_for_check` form.
-    assert "min_days_ahead <= days_ahead" in src or "min_days_ahead <= days_ahead_for_check" in src, (
-        "Calculator.analyze_market must use `min_days_ahead <= days_ahead <= ...` "
-        "with configurable lower bound from StrategyConfig."
+    assert "0 <= days_ahead" in src or "0 <= days_ahead_for_check" in src, (
+        "Calculator.analyze_market must use `0 <= days_ahead <= ...` so that "
+        "today-resolving markets (days_ahead == 0) are not rejected."
     )
-    # And explicitly reject the old hardcoded form
-    assert "0 < days_ahead" not in src, "Strict `0 < days_ahead` rejects today's markets (regression)."
+    # And explicitly reject the old buggy form
+    assert "0 < days_ahead" not in src, (
+        "Strict `0 < days_ahead` rejects today's markets (regression)."
+    )
 
 
 def test_analyze_market_source_uses_min_liquidity_bypass():
@@ -91,21 +94,26 @@ def test_flat_bet_usd_default_is_disabled():
     """Config.FLAT_BET_USD defaults to 0.0 (Kelly sizing)."""
     from config.settings import Config
 
-    assert hasattr(Config, "FLAT_BET_USD"), "Config must expose FLAT_BET_USD so a flat-bet override can be set."
-    assert float(Config.FLAT_BET_USD) == 0.0, f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
+    assert hasattr(Config, "FLAT_BET_USD"), (
+        "Config must expose FLAT_BET_USD so a flat-bet override can be set."
+    )
+    assert float(Config.FLAT_BET_USD) == 0.0, (
+        f"FLAT_BET_USD must default to 0.0, got {Config.FLAT_BET_USD}"
+    )
 
 
-def test_strategy_min_edge_default_is_lowered():
-    """The default minimum edge threshold is set to 10%.
+def test_strategy_min_edge_is_lowered_to_one_percent():
+    """The minimum edge threshold is set to 5%.
 
-    After dogfooding, we lowered min_edge from 20% to 10% to expand
-    the opportunity set while the 30% persisted override still applies
-    in production via strategy_params.json.
+    After dogfooding, we raised min_edge from 1% to 5% to reduce
+    noise: only markets with >=5% edge after 2% fee drag are eligible.
     """
     from config.settings import StrategyConfig
 
     me = float(StrategyConfig().min_edge)
-    assert 0.05 <= me <= 0.15, f"StrategyConfig.min_edge should be between 5%-15%, got {me}"
+    assert 0.01 <= me <= 0.10, (
+        f"StrategyConfig.min_edge should be between 1%-10%, got {me}"
+    )
 
 
 def test_bet_placer_overrides_amount_when_flat_bet_set():
@@ -113,16 +121,14 @@ def test_bet_placer_overrides_amount_when_flat_bet_set():
     import executor.bet_placer as bp
 
     src = inspect.getsource(bp.BetPlacer.place_bet)
-    helper_src = inspect.getsource(bp.BetPlacer._calculate_proposed_amount)
-    combined = src + "\n" + helper_src
-    assert "FLAT_BET_USD" in combined, (
+    assert "FLAT_BET_USD" in src, (
         "place_bet must reference Config.FLAT_BET_USD so the override "
         "actually fires. Without it the Kelly-based amount wins."
     )
     assert (
-        "proposed_amount = flat_bet" in combined
-        or "proposed_amount = flat_bet_usd" in combined
-        or ("flat_bet > 0" in combined and "proposed_amount = flat_bet" in combined)
+        "proposed_amount = flat_bet" in src
+        or "proposed_amount = flat_bet_usd" in src
+        or ("flat_bet > 0" in src and "proposed_amount = flat_bet" in src)
     ), (
         "place_bet must overwrite proposed_amount with the flat value when "
         "FLAT_BET_USD is set. Look for the assignment to proposed_amount."

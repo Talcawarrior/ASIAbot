@@ -16,107 +16,29 @@ Formula inventory:
   10. portfolio_current       — initial + all PnL (market value, includes unrealised)
   11. roi_pct                 — return on stake
   12. win_rate_pct            — wins / closed
-  13. daily_pnl               — today's profit / loss
-  14. bet_shares              — stake / price (shares purchased)
+  13. bet_shares              — stake / price (shares purchased)
 """
 
 from __future__ import annotations
 
-import logging
-import time
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Fee schedule — live from Gamma API with in-memory cache
-# ---------------------------------------------------------------------------
-
-# Cache: { "condition_id": {"rate": float, "exponent": float, "takerOnly": bool, "rebateRate": float, "_ts": float} }
-_fee_schedule_cache: dict[str, dict[str, Any]] = {}
-_FEE_CACHE_TTL = 3600  # 1 hour
-
-
-def get_fee_schedule(condition_id: str | None = None) -> dict[str, Any]:
-    """Fetch fee schedule from Gamma API for a given market.
-
-    Returns dict with keys: rate, exponent, takerOnly, rebateRate.
-    Defaults to Weather rate (0.05, exponent=1) if API fails or condition_id is None.
-
-    Caches results for 1 hour in-memory to avoid hammering the API.
-    """
-    from config.settings import bot_config
-
-    defaults = {
-        "rate": bot_config.weather_fee_rate,
-        "exponent": 1.0,
-        "takerOnly": True,
-        "rebateRate": 0.25,
-    }
-
-    if condition_id is None:
-        return defaults
-
-    # Check cache
-    cached = _fee_schedule_cache.get(condition_id)
-    if cached and (time.time() - cached.get("_ts", 0)) < _FEE_CACHE_TTL:
-        return cached
-
-    # Fetch from API
-    try:
-        import requests as _req
-
-        resp = _req.get(
-            f"https://gamma-api.polymarket.com/markets/{condition_id}",
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            schedule = data.get("feeSchedule") or {}
-            if schedule:
-                result = {
-                    "rate": float(schedule.get("rate", defaults["rate"])),
-                    "exponent": float(schedule.get("exponent", defaults["exponent"])),
-                    "takerOnly": schedule.get("takerOnly", defaults["takerOnly"]),
-                    "rebateRate": float(schedule.get("rebateRate", defaults["rebateRate"])),
-                    "_ts": time.time(),
-                }
-                _fee_schedule_cache[condition_id] = result
-                return result
-    except Exception as e:
-        logger.debug("Fee schedule fetch failed for %s: %s", condition_id, e)
-
-    return defaults
-
-
-def clear_fee_cache() -> None:
-    """Clear the fee schedule cache (e.g. on config reload)."""
-    _fee_schedule_cache.clear()
-
+# Import bot_config for dynamic fee rates
+from config.settings import bot_config
 
 # ---------------------------------------------------------------------------
 # 1. Max bet per position
 # ---------------------------------------------------------------------------
 
 
-def max_bet_cap(conservative_value: float, max_bet_pct: float) -> float:
-    """Per-bet dollar ceiling = conservative_value × MAX_EXPOSURE_PCT × max_bet_pct.
-
-    conservative_value = initial capital + realized PnL (bets closed before today).
-    This ensures max_bet is proportional to the daily risk budget (exposure cap),
-    not the full market-value portfolio.
-
-    Essentially: max_bet_cap = exposure_cap × max_bet_pct
-    where exposure_cap = conservative_value × MAX_EXPOSURE_PCT.
+def max_bet_cap(portfolio_value: float, max_bet_pct: float) -> float:
+    """Per-bet dollar ceiling = portfolio_value × max_bet_pct.
 
     Used by:
-      - calculator.py (:284, :296) — Kelly sizing
-      - bet_placer.py (:242)       — Cap 1 hard ceiling
+      - calculator.py (:309, :325) — Kelly sizing
+      - bet_placer.py (:182)       — Cap 1 hard ceiling
+      - utils/kelly.py (:110)      — kelly_bet_amount wrapper
+      - strategy.py (:555)         — was duplicated, now deleted
     """
-    from config.settings import Config
-
-    daily_limit = conservative_value * Config.MAX_EXPOSURE_PCT
-    return daily_limit * max_bet_pct
+    return portfolio_value * max_bet_pct
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +46,9 @@ def max_bet_cap(conservative_value: float, max_bet_pct: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def conservative_portfolio_value(initial_capital: float, realized_before_today: float) -> float:
+def conservative_portfolio_value(
+    initial_capital: float, realized_before_today: float
+) -> float:
     """Portfolio basis that prevents the feedback loop.
 
     Only counts:
@@ -148,7 +72,9 @@ def conservative_portfolio_value(initial_capital: float, realized_before_today: 
 # ---------------------------------------------------------------------------
 
 
-def max_exposure_cap(initial_capital: float, realized_before_today: float, total_exposure_pct: float) -> float:
+def max_exposure_cap(
+    initial_capital: float, realized_before_today: float, total_exposure_pct: float
+) -> float:
     """Total open-position ceiling.
 
     Formula: (initial + realized_before_today) × TOTAL_EXPOSURE_PCT
@@ -158,7 +84,10 @@ def max_exposure_cap(initial_capital: float, realized_before_today: float, total
       - main.py     (API /api/status → portfolio.max_exposure)
       - bet_placer.py (Cap 2)
     """
-    return conservative_portfolio_value(initial_capital, realized_before_today) * total_exposure_pct
+    return (
+        conservative_portfolio_value(initial_capital, realized_before_today)
+        * total_exposure_pct
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +120,9 @@ def settlement_payout(stake: float, entry_price: float) -> float:
     return stake / entry_price if entry_price > 0 else 0.0
 
 
-def settlement_pnl(stake: float, entry_price: float, entry_fee: float, won: bool) -> float:
+def settlement_pnl(
+    stake: float, entry_price: float, entry_fee: float, won: bool
+) -> float:
     """Realised PnL when Polymarket resolves a bet.
 
     According to Polymarket's official fee model:
@@ -227,60 +158,41 @@ def settlement_pnl(stake: float, entry_price: float, entry_fee: float, won: bool
 # ---------------------------------------------------------------------------
 
 
-def polymarket_fee(
-    shares: float,
-    price: float,
-    fee_rate: float,
-    exponent: float = 1.0,
-) -> float:
+def polymarket_fee(shares: float, price: float, fee_rate: float | None = None) -> float:
     """Polymarket taker fee at trade match time.
 
-    Official formula (per docs.polymarket.com/trading/fees):
-      fee = C × feeRate × p × (1-p)^exponent
+    Official formula (per docs.polymarket.com):
+      fee = C × feeRate × p × (1-p)
 
     Where:
       C        = number of shares traded
-      feeRate  = category rate (Weather = 0.05, Crypto = 0.07, etc.)
+      feeRate  = fetched from Polymarket API (default: 0.05 for weather)
       p        = trade price (0.01–0.99)
-      exponent = category exponent (Weather=1, may change in future)
 
     Fee is collected at order match time, NOT at market settlement.
     Settlement fee is always zero (p→1 ⇒ p(1-p)→0).
-
-    Rounding: 5 decimal places, minimum 0.00001 USDC.
-
-    This is the canonical implementation. All fee calculations go through this.
-
-    Used by:
-      - scheduler.py (:301)  — early-exit fee
-      - backtest_simulator.py — backtest fee
-      - karpathy_weekly.py   — ISA-Karpathy fee
     """
-    if price <= 0 or price >= 1:
-        return 0.0
-    fee = shares * fee_rate * price * ((1.0 - price) ** exponent)
-    return round(fee, 5) if fee >= 0.00001 else 0.0
+    if fee_rate is None:
+        fee_rate = bot_config.strategy.current_fee_rate
+
+    return shares * fee_rate * price * (1.0 - price)
 
 
-def polymarket_fee_from_stake(
-    stake: float,
-    price: float,
-    fee_rate: float,
-    exponent: float = 1.0,
-) -> float:
+def polymarket_fee_from_stake(stake: float, price: float, fee_rate: float | None = None) -> float:
     """Stake-based shortcut for polymarket_fee.
 
-    Since shares = stake / price, we delegate to polymarket_fee() for
-    consistency. Both functions now use the same canonical formula:
-      fee = C × feeRate × p × (1-p)^exponent
+    Since shares = stake / price, the fee formula simplifies to:
+      fee = (stake / price) × feeRate × p × (1-p) = stake × feeRate × (1-p)
 
-    Used by:
-      - bet_placer.py — entry_fee at bet creation time
+    Fee rate is fetched from Polymarket API (default: 0.05 for weather).
     """
     if price <= 0:
         return 0.0
-    shares = stake / price
-    return polymarket_fee(shares, price, fee_rate, exponent)
+
+    if fee_rate is None:
+        fee_rate = bot_config.strategy.current_fee_rate
+
+    return stake * fee_rate * (1.0 - price)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +229,9 @@ def portfolio_total_value(cash_balance: float, open_exposure: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def portfolio_current_value(initial_capital: float, realized_pnl: float, unrealized_pnl: float) -> float:
+def portfolio_current_value(
+    initial_capital: float, realized_pnl: float, unrealized_pnl: float
+) -> float:
     """Market value: initial + all PnL (includes unrealised paper gains).
 
     Used by:
@@ -332,22 +246,65 @@ def portfolio_current_value(initial_capital: float, realized_pnl: float, unreali
 # ---------------------------------------------------------------------------
 
 
+def pnl_ratio(current_price: float, entry_price: float) -> float:
+    """Fiyat değişimi oranı (0-1 arası ratio, percentage DEĞİL).
+
+    pnl_ratio = (current_price - entry_price) / entry_price
+
+    Tüm exit check'ler bu fonksiyonu kullanmalı.
+    1.0 = %100 kâr, -0.3 = %30 zarar.
+
+    Kullanım:
+      - check_take_profit: pnl_ratio >= cfg.take_profit_pct
+      - check_stop_loss: pnl_ratio <= -cfg.stop_loss_pct
+      - check_time_decay: pnl_ratio <= cfg.time_decay_threshold
+    """
+    if entry_price <= 0:
+        return 0.0
+    return (current_price - entry_price) / entry_price
+
+
+def drop_ratio(peak_price: float, current_price: float) -> float:
+    """Tepeden düşüş oranı (trailing stop için).
+
+    drop_ratio = (peak_price - current_price) / peak_price
+
+    Kullanım:
+      - check_trailing_stop: drop_ratio >= cfg.trailing_stop_pct
+    """
+    if peak_price <= 0:
+        return 0.0
+    return (peak_price - current_price) / peak_price
+
+
 def roi_pct(pnl: float, stake: float) -> float:
     """Return on investment as a percentage.
 
     ROI = (pnl / stake) × 100
 
-    Used by:
-      - main.py (:282, :855, :904)
-      - API trade-history and health stats
+    Kullanım: API display, historical stats
     """
     if stake <= 0:
         return 0.0
     return (pnl / stake) * 100
 
 
+# profit_pct KALDIRILDI — pnl_ratio() * 100 kullanın
+
+
 # ---------------------------------------------------------------------------
-# 11. Win rate
+# 11. Daily PnL
+# ---------------------------------------------------------------------------
+
+
+def daily_pnl(today_realized: float, open_bets: list) -> float:
+    """Today's total PnL = realised today + sum(unrealised on open bets)."""
+    unrealized_total = sum(getattr(b, "unrealized_pnl", 0) or 0 for b in open_bets)
+    return today_realized + float(unrealized_total)
+
+
+# ---------------------------------------------------------------------------
+# 12. Win rate
 # ---------------------------------------------------------------------------
 
 
@@ -364,24 +321,4 @@ def win_rate_pct(wins: int, total_closed: int) -> float:
     return (wins / total_closed) * 100
 
 
-# ---------------------------------------------------------------------------
-# 12. Daily PnL
-# ---------------------------------------------------------------------------
 
-
-def daily_pnl(today_realized: float, open_bets: list) -> float:
-    """Today's total PnL = realised today + sum(unrealised on open bets).
-
-    Used by:
-      - main.py (:293)  — API daily_pnl
-    """
-    unrealized_total = sum(getattr(b, "unrealized_pnl", 0) or 0 for b in open_bets)
-    return today_realized + float(unrealized_total)
-
-
-# ---------------------------------------------------------------------------
-# 13. (removed) exit_price_from_pnl — HATA-16 FIX
-# ---------------------------------------------------------------------------
-# Bu fonksiyon artik kullanilmiyor (dead code). Frontend zaten backend'den
-# gelen exit_price (bet.current_price) kullaniyor. Onceki Python docstring
-# YES/NO bazliydi, frontend fallback WIN/LOSS bazliydi — capisma vardi.

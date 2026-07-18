@@ -58,7 +58,10 @@ CONFIRMATIONS = 20
 #   uint256 fee
 #   uint256 builder
 #   bytes32 metadata
-ORDER_FILLED_SIGNATURE = "OrderFilled(bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,bytes32)"
+ORDER_FILLED_SIGNATURE = (
+    "OrderFilled(bytes32,address,address,uint8,uint256,"
+    "uint256,uint256,uint256,bytes32,bytes32)"
+)
 # ORDER_FILLED_TOPIC0 computed below after _keccak_topic is defined.
 
 # Polygon block generation ~2s. We scan in chunks to respect RPC limits.
@@ -107,7 +110,8 @@ def _keccak_topic(signature: str) -> str:
             # Computed via eth_utils.keccak(text=ORDER_FILLED_SIGNATURE)
             # Caller should pip install eth-utils for production use.
             logger.warning(
-                "eth-utils not installed — using hard-coded topic hash. Install eth-utils for correctness verification."
+                "eth-utils not installed — using hard-coded topic hash. "
+                "Install eth-utils for correctness verification."
             )
             return "0xd543adfd945773f1a62f74f0ee55a5e3b9b1a28262980ba90b1a89f2ea84d8ee"
 
@@ -125,8 +129,12 @@ ORDER_FILLED_TOPIC0 = _keccak_topic(ORDER_FILLED_SIGNATURE)
 class PolyDataConfig:
     """Configuration for the Polygon RPC ingester."""
 
-    rpc_url: str = os.environ.get("POLYGON_RPC_URL", "https://polygon-bor-rpc.publicnode.com")
-    block_chunk: int = int(os.environ.get("POLYGON_MAX_BLOCK_RANGE", str(DEFAULT_BLOCK_CHUNK)))
+    rpc_url: str = os.environ.get(
+        "POLYGON_RPC_URL", "https://polygon-bor-rpc.publicnode.com"
+    )
+    block_chunk: int = int(
+        os.environ.get("POLYGON_MAX_BLOCK_RANGE", str(DEFAULT_BLOCK_CHUNK))
+    )
     ctf_exchange: str = CTF_EXCHANGE_V2
     gamma_url: str = GAMMA_MARKETS_URL
     request_timeout: float = 30.0
@@ -182,7 +190,9 @@ class PolygonRPCClient:
                         exc,
                     )
                     time.sleep(backoff)
-        raise RuntimeError(f"RPC call {method} failed after {retries + 1} attempts: {last_exc}")
+        raise RuntimeError(
+            f"RPC call {method} failed after {retries + 1} attempts: {last_exc}"
+        )
 
     def get_latest_block(self) -> int:
         return int(self._call("eth_blockNumber", []), 16)
@@ -429,7 +439,9 @@ class PolyDataIngest:
         if to_block is None:
             latest = self.rpc.get_latest_block()
             if latest is None:
-                logger.warning("PolyDataIngest: could not fetch latest block, aborting scan")
+                logger.warning(
+                    "PolyDataIngest: could not fetch latest block, aborting scan"
+                )
                 return pd.DataFrame()
             to_block = latest - CONFIRMATIONS  # reorg-safe
         if max_blocks is not None:
@@ -446,6 +458,7 @@ class PolyDataIngest:
         all_events: list[dict] = []
         # Track unique block numbers so we can batch-fetch timestamps
         block_timestamps: dict[int, int] = {}
+        original_chunk = self.cfg.block_chunk
         cur = from_block
         while cur <= to_block:  # type: ignore[reportOptionalOperand]
             chunk_end = min(cur + self.cfg.block_chunk - 1, to_block)  # type: ignore[reportOptionalOperand]
@@ -457,7 +470,9 @@ class PolyDataIngest:
                     topics=[ORDER_FILLED_TOPIC0],
                 )
             except Exception as exc:
-                logger.warning("getLogs failed for %d-%d: %s — reducing chunk", cur, chunk_end, exc)
+                logger.warning(
+                    "getLogs failed for %d-%d: %s — reducing chunk", cur, chunk_end, exc
+                )
                 # Adaptive backoff: halve the chunk and retry once
                 if self.cfg.block_chunk > 1:
                     self.cfg.block_chunk = max(1, self.cfg.block_chunk // 2)
@@ -472,6 +487,8 @@ class PolyDataIngest:
                     if bn not in block_timestamps:
                         block_timestamps[bn] = None  # placeholder
 
+            # Restore original chunk size after a successful request
+            self.cfg.block_chunk = original_chunk
             save_cursor({"last_block": chunk_end})
             logger.info(
                 "  blocks %d-%d: %d events (cumulative %d)",
@@ -487,7 +504,9 @@ class PolyDataIngest:
 
         # Batch-fetch block timestamps for all unique blocks we saw events in.
         # eth_getBlockByNumber is cheap but we batch to avoid hammering RPC.
-        logger.info("Fetching block timestamps for %d unique blocks...", len(block_timestamps))
+        logger.info(
+            "Fetching block timestamps for %d unique blocks...", len(block_timestamps)
+        )
         for bn in list(block_timestamps.keys()):
             try:
                 result = self.rpc._call("eth_getBlockByNumber", [hex(bn), False])
@@ -495,11 +514,13 @@ class PolyDataIngest:
                 block_timestamps[bn] = ts
             except Exception as exc:
                 logger.debug("getBlock failed for %d: %s", bn, exc)
-                block_timestamps[bn] = 0
+                block_timestamps[bn] = None
 
         df = pd.DataFrame(all_events)
         # Attach block timestamp (UTC)
-        df["timestamp"] = df["block_number"].map(block_timestamps).fillna(0).astype(int)
+        df["timestamp"] = df["block_number"].map(block_timestamps)
+        df = df[df["timestamp"].notna()].copy()
+        df["timestamp"] = df["timestamp"].astype(int)
         df["datetime_utc"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
         # Attach trade side from asset ids (will be refined during join)
         df["taker_side"] = df["taker_asset_id"].map(asset_id_to_side)
@@ -591,14 +612,20 @@ class PolyDataIngest:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
     ingest = PolyDataIngest()
 
     print("\n=== Markets metadata ===")
     markets = ingest.fetch_markets_metadata()
     print(f"Markets fetched: {len(markets)}")
     if not markets.empty:
-        print(markets[["id", "question"]].head(5).to_string() if "question" in markets.columns else markets.head(5))
+        print(
+            markets[["id", "question"]].head(5).to_string()
+            if "question" in markets.columns
+            else markets.head(5)
+        )
 
     print("\n=== OrderFilled scan (latest 1000 blocks) ===")
     latest = ingest.rpc.get_latest_block()

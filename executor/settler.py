@@ -29,9 +29,6 @@ class SettlementEngine:
     ``outcomePrices`` are available.
     """
 
-    def __init__(self):
-        pass
-
     # ── Public API ─────────────────────────────────────────────────────────
 
     def settle_all(self) -> dict:
@@ -77,8 +74,12 @@ class SettlementEngine:
                     result = self._settle_market(session, market, risk_manager)
                     if result is None:
                         pending_count += 1
-                        # 48-hour pending alert (status unchanged)
-                        self._check_stale_pending(market, now_naive)
+                        if market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+                            logger.error(
+                                "Market %s has been pending >48h (target=%s). Gamma API may not have resolved it yet.",
+                                market.id,
+                                market.target_date,
+                            )
                     else:
                         won_count += result.get("won", 0)
                         lost_count += result.get("lost", 0)
@@ -90,9 +91,7 @@ class SettlementEngine:
                         e,
                         exc_info=True,
                     )
-                    # Re-raise to prevent silent failures - if one market fails
-                    # systematically (e.g., API format change), we want to know
-                    raise
+                    pending_count += 1
 
             session.commit()
 
@@ -109,7 +108,7 @@ class SettlementEngine:
                     cash = float(portfolio.cash_balance or 0)
                     portfolio.total_value = portfolio_total_value(cash, float(open_exposure))
                     portfolio.current_value = portfolio.total_value
-                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                    portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)  # pyright: ignore
                     sync_session.commit()
 
         logger.info(
@@ -151,12 +150,9 @@ class SettlementEngine:
 
         # ── Fetch resolution from Gamma API ────────────────────────────────
         outcome = self._fetch_market_resolution(market)
-        # FIX: Threshold was 24h in code but 48h in comments/logs — unified to 48h.
-        # This gives Polymarket enough time to publish umaResolutionStatus before
-        # we fall back to outcomePrices inspection.
-        if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+        if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=24):
             # Fallback: resolution tarihi +48h geçmişse, outcomePrices'a bak
-            outcome = self._fallback_price_resolution(market)
+            outcome = self._fetch_market_resolution(market, force=True)
             if outcome:
                 logger.warning(
                     "Market %s resolved via fallback price resolution (48h+ past target): outcome=%s",
@@ -183,59 +179,48 @@ class SettlementEngine:
         bet_lost_count = 0
 
         for bet in open_bets:
-            try:
-                bet_won = bet.side == outcome
+            bet_won = bet.side == outcome
+            if bet_won:
+                bet_won_count += 1
+            else:
+                bet_lost_count += 1
+            bet.status = "won" if bet_won else "lost"
+            bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+            stake = float(bet.amount or 0)
+            entry_price = float(bet.entry_price or bet.price or 0.5)
+            # Load entry_fee stored at bet placement time (default 0 for pre-migration bets)
+            entry_fee = float(getattr(bet, "entry_fee", 0.0) or 0.0)
+
+            # Settlement PnL — Polymarket charges fee at entry, NOT at settlement.
+            # At settlement (p→1) the fee formula gives 0: p×(1-p) = 1×0 = 0.
+            realized_pnl = settlement_pnl(stake, entry_price, entry_fee, bet_won)
+            payout = settlement_payout(stake, entry_price) if bet_won else 0.0
+
+            bet.realized_pnl = round(realized_pnl, 2)
+            bet.pnl = round(realized_pnl, 2)
+            bet.unrealized_pnl = 0.0
+            total_market_pnl += realized_pnl
+            any_settled = True
+
+            # Update daily PnL for circuit breaker (strategy.py)
+            if risk_manager:
+                risk_manager.update_daily_pnl(realized_pnl)
+
+            # Update portfolio via central accounting
+            from utils.accounting import credit_settlement
+
+            portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
+            if portfolio:
                 if bet_won:
-                    bet_won_count += 1
+                    # Credit FULL payout — the entry fee was already debited
+                    # at bet placement time (bet_placer.py :: debit_stake for fee).
+                    # Settlement fee is always 0 (mathematical zero at p→1).
+                    credit_settlement(session, payout, 0.0, f"settle:{bet.market_id}:won")
+                    portfolio.total_won = (portfolio.total_won or 0) + 1
                 else:
-                    bet_lost_count += 1
-                bet.status = "won" if bet_won else "lost"
-                bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
-
-                stake = float(bet.amount or 0)
-                entry_price = float(bet.entry_price or bet.price or 0.5)
-                # Load entry_fee stored at bet placement time (default 0 for pre-migration bets)
-                entry_fee = float(getattr(bet, "entry_fee", 0.0) or 0.0)
-
-                # Settlement PnL — Polymarket charges fee at entry, NOT at settlement.
-                # At settlement (p→1) the fee formula gives 0: p×(1-p) = 1×0 = 0.
-                realized_pnl = settlement_pnl(stake, entry_price, entry_fee, bet_won)
-                payout = settlement_payout(stake, entry_price) if bet_won else 0.0
-
-                bet.realized_pnl = round(realized_pnl, 2)
-                bet.pnl = round(realized_pnl, 2)
-                bet.unrealized_pnl = 0.0
-                total_market_pnl += realized_pnl
-                any_settled = True
-
-                # Update daily PnL for circuit breaker (strategy.py)
-                if risk_manager:
-                    risk_manager.update_daily_pnl(realized_pnl)
-
-                # Update portfolio via central accounting
-                from utils.accounting import credit_settlement
-
-                portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
-                if portfolio:
-                    if bet_won:
-                        # Credit FULL payout — the entry fee was already debited
-                        # at bet placement time (bet_placer.py :: debit_stake for fee).
-                        # Settlement fee is always 0 (mathematical zero at p→1).
-                        credit_settlement(session, payout, 0.0, f"settle:{bet.market_id}:won")
-                        portfolio.total_won = (portfolio.total_won or 0) + 1
-                    else:
-                        portfolio.total_lost = (portfolio.total_lost or 0) + 1
-                    portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
-            except Exception as e:
-                logger.error(
-                    "Settlement error for bet #%s (market %s): %s",
-                    bet.id,
-                    bet.market_id,
-                    e,
-                    exc_info=True,
-                )
-                # Re-raise to prevent silent failures
-                raise
+                    portfolio.total_lost = (portfolio.total_lost or 0) + 1
+                portfolio.total_realized_pnl = (portfolio.total_realized_pnl or 0) + realized_pnl
 
         if any_settled:
             market.status = "settled_win" if outcome == "YES" else "settled_loss"
@@ -245,22 +230,22 @@ class SettlementEngine:
 
     # ── Gamma API resolution ───────────────────────────────────────────────
 
-    def _fetch_market_resolution(self, market) -> str | None:
+    def _fetch_market_resolution(self, market, force: bool = False) -> str | None:
         """Fetch market resolution from Polymarket Gamma API.
 
         Returns ``"YES"``, ``"NO"``, or ``None`` if not yet resolved.
 
-        Resolution criteria (ALL must hold):
-          1. ``closed == true``
-          2. ``umaResolutionStatus == "resolved"``
-          3. ``outcomePrices`` is a parseable JSON string list
+        When *force* is False (default), the market must be officially closed
+        with a resolved status.  When *force* is True, any outcomePrices with
+        a clear winner (≥0.98) is accepted — used as a 48h+ fallback.
         """
         data = self._call_gamma_api(market)
         if data is None:
             return None
 
-        if not data.get("closed") or data.get("umaResolutionStatus") != "resolved":
-            return None
+        if not force:
+            if not data.get("closed") or data.get("umaResolutionStatus") != "resolved":
+                return None
 
         prices = self._parse_outcome_prices(market, data.get("outcomePrices"))
         if prices is None:
@@ -277,13 +262,13 @@ class SettlementEngine:
             )
             return None
 
-        if yes_price >= 0.99:
+        if yes_price >= 0.98:
             outcome = "YES"
-        elif no_price >= 0.99:
+        elif no_price >= 0.98:
             outcome = "NO"
         else:
             logger.warning(
-                "Split/no-clear resolution for %s: outcomePrices=%s (neither side >= 0.99)",
+                "Split/no-clear resolution for %s: outcomePrices=%s (neither side >= 0.98)",
                 market.id,
                 prices,
             )
@@ -291,41 +276,10 @@ class SettlementEngine:
 
         market.raw_data = json.dumps(
             {
-                "source": "polymarket",
+                "source": "fallback_price" if force else "polymarket",
                 "outcome": outcome,
                 "outcomePrices": prices,
-                "umaResolutionStatus": data.get("umaResolutionStatus"),
-                "settled_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        return outcome
-
-    def _fallback_price_resolution(self, market) -> str | None:
-        """Fallback: if target_date +48h passed but Gamma API not resolved,
-        use current outcomePrices to determine winner.
-        YES >= 0.98 → YES won, NO >= 0.98 → NO won."""
-        data = self._call_gamma_api(market)
-        if data is None:
-            return None
-        prices = self._parse_outcome_prices(market, data.get("outcomePrices"))
-        if prices is None:
-            return None
-        try:
-            yes_price = float(prices[0])
-            no_price = float(prices[1])
-        except (TypeError, ValueError):
-            return None
-        if yes_price >= 0.98:
-            outcome = "YES"
-        elif no_price >= 0.98:
-            outcome = "NO"
-        else:
-            return None
-        market.raw_data = json.dumps(
-            {
-                "source": "fallback_price",
-                "outcome": outcome,
-                "outcomePrices": prices,
+                "umaResolutionStatus": data.get("umaResolutionStatus") if not force else None,
                 "settled_at": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -370,13 +324,3 @@ class SettlementEngine:
         return list(prices)
 
     # ── Helpers ────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _check_stale_pending(market, now_naive: datetime) -> None:
-        """Log an ERROR if a market has been pending longer than 48 hours."""
-        if market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
-            logger.error(
-                "Market %s has been pending >48h (target=%s). Gamma API may not have resolved it yet.",
-                market.id,
-                market.target_date,
-            )

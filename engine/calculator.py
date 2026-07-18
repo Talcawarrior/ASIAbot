@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import math
-import time
 from datetime import datetime, timezone
 
 import aiohttp
@@ -17,7 +16,6 @@ from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
 from utils.formulas import max_bet_cap
 from utils.kelly import kelly_fraction as _kelly_fraction
-from asi_engine.calibration_engine import CalibrationEngine
 from utils.slippage import (
     adjust_edge_for_costs,
     adjust_kelly_for_slippage,
@@ -26,64 +24,20 @@ from utils.slippage import (
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
-# BUG-3 FIX: Global 429 cooldown. When ANY city gets a 429 from Open-Meteo,
-# all other cities wait this many seconds before retrying. This prevents
-# 65 cities × 120s exponential backoff = 227 min total blocking.
-# Instead, one 429 cools down the entire batch for 30s, then all resume.
-_GLOBAL_429_COOLDOWN_S = 30.0
-_global_429_until: float = 0.0
+# ── Ensemble API 429 cooldown (global, process-wide) ────────────────────────
+# Open-Meteo free tier enforces a per-IP rate limit. When we get a 429 we back
+# off globally and let the next scan cycle retry, instead of sleeping 120s inline
+# (which blocked the whole event loop / thread).  A short per-call spacing also
+# prevents the burst that triggers the limit in the first place.
+import threading  # noqa: E402
+import time as _time  # noqa: E402
 
-
-def adjusted_edge(
-    raw_edge: float,
-    days_ahead: int,
-    market_type: str,
-    side: str | None,
-    ensemble_spread: float,
-    forecast_rmse: float | None = None,
-) -> float:
-    """
-    Adjusted edge formula incorporating time, market type, side, spread, and RMSE penalties.
-
-    score = raw_edge × time_coeff(days) × type_coeff(market) × side_coeff(side)
-            × (1 / forecast_rmse(days)²) × spread_penalty(spread)
-
-    All coefficients come from bot_config.strategy (derived from historical ROI analysis).
-    """
-    from config.settings import bot_config
-
-    s = bot_config.strategy
-
-    # Time coefficient (default: 0-1d: 0.25, 1-2d: 1.0, 2-3d: 1.1, 3+: 1.0)
-    time_coeff = s.time_coefficients.get(min(days_ahead, 3), 1.0)
-
-    # Market type coefficient (temp_max: 1.0, temp_min: 0.02)
-    type_coeff = s.market_type_coeff.get(market_type, 1.0)
-
-    # Side coefficient (NO: 1.0, YES: 0.5 — reduce but don't eliminate YES bets)
-    side_coeff = 1.0
-    if side is not None:
-        side_coeff = s.side_coeff.get(side.upper(), 1.0)
-
-    # Forecast RMSE penalty: 1 / rmse^2
-    if forecast_rmse is None:
-        rmse = s.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5)
-    else:
-        rmse = forecast_rmse
-    rmse_penalty = 1.0 / (rmse * rmse) if rmse > 0 else 1.0
-
-    # Spread penalty: high ensemble spread = low confidence
-    if ensemble_spread > s.spread_penalty_threshold:
-        spread_penalty = s.spread_penalty_factor
-    else:
-        spread_penalty = 1.0
-
-    return raw_edge * time_coeff * type_coeff * side_coeff * rmse_penalty * spread_penalty
-
-
-def _utcnow_naive() -> datetime:
-    """Return naive UTC now. All DB datetimes are naive UTC."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+_ENSEMBLE_429_UNTIL = 0.0  # epoch seconds; requests before this return None
+_ENSEMBLE_429_LOCK = threading.Lock()
+_ENSEMBLE_LAST_CALL = 0.0
+_ENSEMBLE_MIN_SPACING_S = 0.4  # min seconds between ensemble calls
+_ENSEMBLE_COOLDOWN_S = 30.0  # backoff after a 429
+_ENSEMBLE_MAX_RETRIES = 3
 
 
 class Calculator:
@@ -131,21 +85,15 @@ class Calculator:
         f_star = _kelly_fraction(prob, price)
         return f_star * fraction
 
-    def analyze_market(self, market_id: str, session=None, forecast_cache: dict | None = None) -> Analysis | None:
-        """Bir marketi analiz et. Optional session for batched cycles.
-
-        Optional forecast_cache: pre-fetched forecasts from run_analyze's
-        bulk query. Keyed by (market_id, metric) -> {source: WeatherForecast}.
-        When provided, skips the per-market forecast DB query (biggest
-        performance win for 339+ market cycles).
-        """
+    def analyze_market(self, market_id: str, session=None) -> Analysis | None:
+        """Bir marketi analiz et. Optional session for batched cycles."""
         with get_session_or(session) as session:
             market = session.query(WeatherMarket).filter_by(id=market_id).first()
             if not market:
                 logger.warning(f"Market bulunamadı: {market_id}")
                 return None
 
-            if not all([market.city, market.threshold is not None, market.target_date, market.metric]):
+            if not all([market.city, market.threshold, market.target_date, market.metric]):
                 logger.warning(f"Market eksik bilgi: {market_id}")
                 return None
 
@@ -186,37 +134,25 @@ class Calculator:
             inefficiency_min = getattr(bot_config.strategy, "inefficiency_min", -1.0)
 
             # En son tahminleri al — query by market.metric directly.
-            # If forecast_cache is provided (bulk mode), use it instead of per-market query.
-            if forecast_cache is not None:
-                cache_key = (market_id, market.metric)
-                source_forecasts = forecast_cache.get(cache_key, {})
-                # Convert to same format as DB query results
-                latest_by_source = {}
-                source_weights = {}
-                for source_name, f in source_forecasts.items():
-                    latest_by_source[source_name] = f.predicted_value
-                    source_weights[source_name] = f.model_weight or 0.0
-                forecast_values = list(latest_by_source.values())
-            else:
-                forecasts = (
-                    session.query(WeatherForecast)
-                    .filter(
-                        WeatherForecast.market_id == market_id,
-                        WeatherForecast.metric == market.metric,
-                    )
-                    .order_by(WeatherForecast.fetched_at.desc())
-                    .all()
+            forecasts = (
+                session.query(WeatherForecast)
+                .filter(
+                    WeatherForecast.market_id == market_id,
+                    WeatherForecast.metric == market.metric,
                 )
+                .order_by(WeatherForecast.fetched_at.desc())
+                .all()
+            )
 
-                # Her kaynaktan en son tahmini al + ağırlıkları topla
-                latest_by_source = {}
-                source_weights = {}
-                for f in forecasts:
-                    if f.source not in latest_by_source:
-                        latest_by_source[f.source] = f.predicted_value
-                        source_weights[f.source] = f.model_weight or 0.0
+            # Her kaynaktan en son tahmini al + ağırlıkları topla
+            latest_by_source = {}
+            source_weights = {}
+            for f in forecasts:
+                if f.source not in latest_by_source:
+                    latest_by_source[f.source] = f.predicted_value
+                    source_weights[f.source] = f.model_weight or 0.0
 
-                forecast_values = list(latest_by_source.values())
+            forecast_values = list(latest_by_source.values())
 
             if len(forecast_values) < bot_config.strategy.min_sources:
                 logger.info(
@@ -242,12 +178,9 @@ class Calculator:
                 avg = forecast_values[0] if forecast_values else 0.5
                 std_val = None
 
-            # days_ahead: use CALENDAR date difference (not timedelta) to avoid
-            # SQLite microsecond truncation causing 23h59m → days_ahead=0.
-            # Calendar arithmetic: target=2026-07-09, now=2026-07-08 → 1 day.
-            target_date_obj = market.target_date.date() if hasattr(market.target_date, "date") else market.target_date
-            now_date = datetime.now(timezone.utc).date()
-            days_ahead = (target_date_obj - now_date).days
+            # days_ahead: use calendar days (>=0) and treat "today" as 1 day
+            # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
+            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
             # Olasılık hesapla — weighted mean/std ile (market_type-aware)
@@ -290,27 +223,15 @@ class Calculator:
             )
 
             market_implied = market.yes_price or 0.5
-
-            # ── Market blend ───────────────────────────────────────────
-            # Blend model probability with market implied probability to
-            # prevent extreme edges from model overconfidence.
-            # blend_weight read from bot_config.strategy (default 0.65),
-            # auto-optimized by SIA/ASI-Evolve/Karpathy 3-layer stack.
-            bw = bot_config.strategy.blend_weight
-            if market_implied and 0.01 < market_implied < 0.99:
-                b_prob = bw * estimated_prob + (1 - bw) * market_implied
-            else:
-                b_prob = estimated_prob
-
-            raw_edge = b_prob - market_implied
+            raw_edge = estimated_prob - market_implied
 
             if raw_edge > 0:
                 # YES tarafı
-                kelly_frac = self.kelly_criterion(b_prob, market_implied, bot_config.strategy.kelly_fraction)
+                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
                 recommended_side = "YES"
             else:
                 # NO tarafı
-                no_prob = 1 - b_prob
+                no_prob = 1 - estimated_prob
                 no_implied = market.no_price or (1 - market_implied)
                 no_edge = no_prob - no_implied
 
@@ -345,15 +266,7 @@ class Calculator:
             # Preliminary bet amount for gas cost calculation (using raw edge)
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
-            # Conservative value (initial + realized PnL) for cap calculations.
-            # max_bet_cap uses this as basis: conservative × MAX_EXPOSURE_PCT × max_bet_pct
-            conservative = (portfolio.initial_value or 1000.0) + (portfolio.total_realized_pnl or 0.0)
-            # EV FIX: Dinamik max_bet_pct ve kelly_fraction kullan.
-            # Eski sabit %3 cap yüksek EV'yi sınırlıyordu.
-            from utils.kelly import dynamic_max_bet_pct
-
-            _dyn_pct = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
-            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(conservative, _dyn_pct))
+            prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
 
             net_edge = (
                 adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly)
@@ -362,27 +275,8 @@ class Calculator:
             )
             slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
-            # ── Adjusted Edge (data-driven coefficients) ─────────────────────
-            # Apply time, market type, side, RMSE, and spread penalties
-            # Used as ADDITIONAL FILTER, not replacement for net_edge
-            from engine.calculator import adjusted_edge
-
-            ensemble_spread = std_val if std_val is not None else 0.0
-            forecast_rmse = bot_config.strategy.forecast_rmse_by_horizon.get(min(days_ahead, 3), 1.5)
-
-            adj_edge = adjusted_edge(
-                raw_edge=raw_edge,
-                days_ahead=days_ahead,
-                market_type=market.metric,
-                side=recommended_side,
-                ensemble_spread=ensemble_spread,
-                forecast_rmse=forecast_rmse,
-            )
-
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
-            # EV FIX: Dinamik cap kullan — yüksek edge → yüksek cap.
-            _dyn_pct_final = dynamic_max_bet_pct(raw_edge, Config.MAX_BET_PCT)
-            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(conservative, _dyn_pct_final))
+            raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
             # Reduce Kelly size by estimated slippage cost
             recommended_amount = adjust_kelly_for_slippage(raw_kelly_amount, entry_price_for_cost)
 
@@ -416,19 +310,15 @@ class Calculator:
             # edge to be at least that large. For negative values, the gate
             # is effectively disabled (we already require min_edge > 0).
             if inefficiency_min > 0:
-                inefficiency_ok = abs(net_edge) >= inefficiency_min
+                inefficiency_ok = abs(raw_edge) >= inefficiency_min
             else:
                 inefficiency_ok = True
 
-            # Adjusted edge gate: additional filter (not replacement)
-            adjusted_edge_ok = adj_edge >= effective_min_edge * 0.5  # 50% threshold
-
             should_bet = (
-                net_edge >= effective_min_edge
+                net_edge >= effective_min_edge  # Negatif edge ile bahis AÇILMAZ
                 and inefficiency_ok
-                and adjusted_edge_ok
                 and len(forecast_values) >= bot_config.strategy.min_sources
-                and bot_config.strategy.min_days_ahead <= days_ahead <= bot_config.strategy.max_days_ahead
+                and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
                 and liquidity_ok
                 and recommended_amount > 1.0
             )
@@ -444,8 +334,6 @@ class Calculator:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
                 reason_parts.append(f"Çok uzak: {days_ahead} gün")
-            if days_ahead < bot_config.strategy.min_days_ahead:
-                reason_parts.append(f"Çok yakın: {days_ahead} gün (min={bot_config.strategy.min_days_ahead})")
             if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
                 reason_parts.append(f"Düşük likidite: ${market.liquidity}")
 
@@ -467,7 +355,6 @@ class Calculator:
                 market_implied_prob=market_implied,
                 edge=net_edge,
                 raw_edge=raw_edge,
-                adjusted_edge=adj_edge,
                 slippage_pct=slippage_est.slippage_pct,
                 avg_forecast_value=avg_val,
                 std_forecast_value=std_val,
@@ -521,98 +408,11 @@ class WeatherEngine:
     def __init__(self, db_session_factory=None, cfg=None):
         self.db_session_factory = db_session_factory
         self.config = cfg or config
-        # .copy() is required: get_normalized_weights() returns a direct
-        # reference to bot_config.model_weights (the global singleton),
-        # not a copy. Mutating it in place below would corrupt shared
-        # config state across every other WeatherEngine/consumer.
-        self.model_weights = dict(self.config.get_normalized_weights())
-
-        # NOTE: Karpathy-tuned weights are now applied in
-        # config/settings.py apply_persisted_strategy_params() at import time.
-        # We skip the SIA overlay here to avoid overwriting Karpathy weights
-        # with the flat ~12.5% SIA defaults from model_weights.json.
-        logger.info(
-            "WeatherEngine: using config weights: %s",
-            {k: round(v, 4) for k, v in self.model_weights.items()},
-        )
-
-        # Loaded once here (not per-forecast-call) since it reads
-        # data/asi_calibration.json from disk; CalibrationEngine.__init__
-        # caches the bias_map in memory for the lifetime of this instance.
-        self._calibration = CalibrationEngine()
-
+        self.model_weights = self.config.get_normalized_weights()
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
-        # PER-5 FIX: Warm-start — bot baslarken DB'deki son forecast'leri
-        # in-process cache'e yukle. Restart sonrasi ilk tarama hizlanir.
-        self._warm_started = False
 
-    def warm_start_from_db(self) -> int:
-        """PER-5 FIX: Restart sonrasi in-process cache'i DB'den yukle.
-
-        Bot baslarken cagrilmali. DB'deki son 3 gunun ensemble forecast'lerini
-        okuyup (lat, lon) → forecast_data map'ini _forecast_cache'e yazar.
-
-        Returns: yuklenen sehir sayisi.
-        """
-        if self._warm_started:
-            return 0
-        self._warm_started = True
-        try:
-            from database.db import get_session
-            from database.models import WeatherForecast
-
-            loaded = 0
-            with get_session() as session:
-                from datetime import timedelta
-
-                cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=3)
-                rows = (
-                    session.query(WeatherForecast)
-                    .filter(WeatherForecast.fetched_at >= cutoff)
-                    .filter(WeatherForecast.source.in_(self.model_weights.keys()))
-                    .all()
-                )
-                city_models: dict[tuple, dict[str, float]] = {}
-                for r in rows:
-                    key = (round(r.lat or 0, 4), round(r.lon or 0, 4))
-                    city_models.setdefault(key, {})[r.source] = float(r.predicted_value or 0)
-
-                for key, model_temps_db in city_models.items():
-                    if len(model_temps_db) < 3:
-                        continue
-                    total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps_db)
-                    if total_weight <= 0:
-                        continue
-                    weighted_mean = (
-                        sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items()) / total_weight
-                    )
-                    weighted_var = (
-                        sum(
-                            self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps_db.items()
-                        )
-                        / total_weight
-                    )
-                    weighted_std = max(weighted_var**0.5, 0.5)
-                    self._forecast_cache[key] = {
-                        "weighted_mean": weighted_mean,
-                        "weighted_std": weighted_std,
-                        "model_count": len(model_temps_db),
-                        "model_temps": model_temps_db,
-                        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
-                    }
-                    loaded += 1
-            if loaded > 0:
-                logger.info("PER-5 warm-start: %d sehir DB'den in-process cache'e yuklendi", loaded)
-            return loaded
-        except Exception as e:
-            logger.warning("PER-5 warm-start failed: %s", e)
-            return 0
-
-    @staticmethod
-    def _compute_effective_min_edge(market, std: float | None = None) -> float:
-        """Return the time-to-close-scaled min_edge. Delegates to utils.probability."""
-        return compute_effective_min_edge(market, std=std)
+    # _compute_effective_min_edge Calculator sınıfında (satır 364) tanımlı.
 
     async def get_multi_model_forecast(
         self,
@@ -623,14 +423,7 @@ class WeatherEngine:
         market_ids: list[str] = None,
         db_session=None,
         metric: str = "temperature_2m_max",
-        aiohttp_session=None,
     ) -> dict | None:
-        """Fetch multi-model ensemble forecast for a city.
-
-        Optional aiohttp_session: reuse an external session to avoid
-        creating a new TCP+TLS connection per city (big performance win
-        when fetching 65+ cities sequentially).
-        """
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
@@ -643,78 +436,13 @@ class WeatherEngine:
                 api_model_names.append(api_name)
         models_str = ",".join(api_model_names)
 
-        # Cache check: key by (lat, lon) only — the API already returns 14 days
-        # of data per call, so one call per city covers ALL open-market dates.
+        # Cache check
         target_str = target_date.strftime("%Y-%m-%d")
-        city_cache_key = (round(latitude, 4), round(longitude, 4))
-        data = self._forecast_cache.get(city_cache_key)
-        # Verify cached data covers the target_date (avoid stale if days pass)
-        if data is not None:
-            cached_times = data.get("daily", {}).get("time", [])
-            if target_str not in cached_times:
-                data = None  # date outside range — refetch
-
-        if data is not None:
-            logger.debug("Ensemble cache hit for city %s (date %s)", city_cache_key, target_str)
+        cache_key = (round(latitude, 4), round(longitude, 4), target_str)
+        if cache_key in self._forecast_cache:
+            data = self._forecast_cache[cache_key]
+            logger.debug("Ensemble cache hit for %s", cache_key)
         else:
-            # DB cache: check if we already have ensemble forecasts for this city
-            # from a previous run. This avoids re-fetching all cities on restart.
-            if db_session is not None:
-                try:
-                    from database.models import WeatherForecast
-
-                    existing = (
-                        db_session.query(WeatherForecast)
-                        .filter(
-                            WeatherForecast.lat == latitude,
-                            WeatherForecast.lon == longitude,
-                            WeatherForecast.target_date == target_date,
-                            WeatherForecast.metric == metric,
-                            WeatherForecast.source.in_(self.model_weights.keys()),
-                        )
-                        .all()
-                    )
-                    if existing and len(existing) >= 3:
-                        # Reconstruct ensemble from DB forecasts
-                        model_temps_db: dict[str, float] = {}
-                        for fe in existing:
-                            if fe.source not in model_temps_db:
-                                model_temps_db[fe.source] = fe.predicted_value
-
-                        # Verify we have enough models
-                        if len(model_temps_db) >= 3:
-                            total_weight = sum(self.model_weights.get(m, 0.0) for m in model_temps_db)
-                            if total_weight > 0:
-                                weighted_mean = (
-                                    sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps_db.items())
-                                    / total_weight
-                                )
-                                weighted_var = (
-                                    sum(
-                                        self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2
-                                        for m, t in model_temps_db.items()
-                                    )
-                                    / total_weight
-                                )
-                                weighted_std = max(weighted_var**0.5, 0.5)
-
-                                logger.info(
-                                    "DB cache hit for %s (date %s): %d models, mean=%.1f",
-                                    city_cache_key,
-                                    target_str,
-                                    len(model_temps_db),
-                                    weighted_mean,
-                                )
-                                return {
-                                    "weighted_mean": weighted_mean,
-                                    "weighted_std": weighted_std,
-                                    "model_count": len(model_temps_db),
-                                    "model_temps": model_temps_db,
-                                    "timestamp": existing[0].fetched_at,
-                                }
-                except Exception as e:
-                    logger.debug("DB cache check failed for %s: %s", city_cache_key, e)
-
             url = f"{Config.OPEN_METEO_API}/forecast"
             params = {
                 "latitude": latitude,
@@ -722,115 +450,67 @@ class WeatherEngine:
                 "daily": "temperature_2m_max,temperature_2m_min",
                 "timezone": "auto",
                 "models": models_str,
-                # Open-Meteo supports up to 16 days forecast
-                "forecast_days": 16,
+                "forecast_days": 14,
             }
 
-            try:
-                # BUG-3 FIX: Use global 429 cooldown instead of per-city
-                # exponential backoff (30s→60s→120s). One 429 cools down
-                # the entire batch for 30s, then all cities resume.
-                # Max 2 retries with 15s wait = worst case 30s per city.
-                global _global_429_until
-                max_retries = 2
-                data = None
-                for attempt in range(max_retries + 1):
-                    # Check global cooldown before making request
-                    now = time.monotonic()
-                    if now < _global_429_until:
-                        cooldown_left = _global_429_until - now
-                        logger.info(
-                            "Ensemble API: global 429 cooldown active, waiting %.0fs for %s",
-                            cooldown_left,
-                            city_cache_key,
-                        )
-                        await asyncio.sleep(cooldown_left)
-
-                    try:
-                        if aiohttp_session is not None:
-                            async with aiohttp_session.get(
-                                url,
-                                params=params,
-                                timeout=aiohttp.ClientTimeout(total=30),
-                            ) as resp:
-                                if resp.status == 429:
-                                    if attempt < max_retries:
-                                        retry_after = resp.headers.get("Retry-After")
-                                        wait = min(float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0)
-                                        logger.warning(
-                                            "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
-                                            attempt + 1,
-                                            max_retries + 1,
-                                            wait,
-                                            city_cache_key,
-                                        )
-                                        _global_429_until = time.monotonic() + wait
-                                        await asyncio.sleep(wait)
-                                        continue
-                                    logger.error(
-                                        "Ensemble API 429 after %d retries — giving up for %s",
-                                        max_retries,
-                                        city_cache_key,
-                                    )
-                                    return None
-                                if resp.status != 200:
-                                    logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
-                                    return None
-                                data = await resp.json()
-                        else:
-                            async with aiohttp.ClientSession() as session:
-                                async with session.get(
-                                    url,
-                                    params=params,
-                                    timeout=aiohttp.ClientTimeout(total=30),
-                                ) as resp:
-                                    if resp.status == 429:
-                                        if attempt < max_retries:
-                                            retry_after = resp.headers.get("Retry-After")
-                                            wait = min(
-                                                float(retry_after) if retry_after else _GLOBAL_429_COOLDOWN_S, 30.0
-                                            )
-                                            logger.warning(
-                                                "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for %s",
-                                                attempt + 1,
-                                                max_retries + 1,
-                                                wait,
-                                                city_cache_key,
-                                            )
-                                            _global_429_until = time.monotonic() + wait
-                                            await asyncio.sleep(wait)
-                                            continue
-                                        logger.error(
-                                            "Ensemble API 429 after %d retries — giving up for %s",
-                                            max_retries,
-                                            city_cache_key,
-                                        )
-                                        return None
-                                    if resp.status != 200:
-                                        logger.warning("Ensemble API status %d for %s", resp.status, city_cache_key)
-                                        return None
-                                    data = await resp.json()
-                        # Success — break out of retry loop
-                        if data is not None:
-                            break
-                    except asyncio.TimeoutError:
-                        if attempt < max_retries:
-                            logger.warning(
-                                "Ensemble API timeout (attempt %d/%d) — retrying in 15s for %s",
-                                attempt + 1,
-                                max_retries + 1,
-                                city_cache_key,
-                            )
-                            await asyncio.sleep(15)
-                            continue
-                        logger.error("Ensemble API timeout after %d retries for %s", max_retries, city_cache_key)
-                        return None
-
-                if data is None:
+            # Global 429 cooldown: if we're still backing off, skip this call.
+            with _ENSEMBLE_429_LOCK:
+                now_mono = _time.monotonic()
+                if now_mono < _ENSEMBLE_429_UNTIL:
+                    logger.info(
+                        "Ensemble API: global 429 cooldown active, waiting %.0fs for (%.4f, %.4f)",
+                        _ENSEMBLE_429_UNTIL - now_mono,
+                        latitude,
+                        longitude,
+                    )
                     return None
-                self._forecast_cache[city_cache_key] = data
-            except Exception as e:
-                logger.error("get_multi_model_forecast fetch error: %s", e)
+                # Light per-call spacing to avoid burst-triggering the limit.
+                elapsed = now_mono - _ENSEMBLE_LAST_CALL
+                if elapsed < _ENSEMBLE_MIN_SPACING_S:
+                    _time.sleep(_ENSEMBLE_MIN_SPACING_S - elapsed)
+                _ENSEMBLE_LAST_CALL = _time.monotonic()
+
+            last_err = None
+            for attempt in range(1, _ENSEMBLE_MAX_RETRIES + 1):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            url, params=params, timeout=aiohttp.ClientTimeout(total=30)
+                        ) as resp:
+                            if resp.status == 429:
+                                retry_after = resp.headers.get("Retry-After")
+                                try:
+                                    backoff = float(retry_after) if retry_after else _ENSEMBLE_COOLDOWN_S
+                                except (TypeError, ValueError):
+                                    backoff = _ENSEMBLE_COOLDOWN_S
+                                backoff = min(max(backoff, 5.0), 60.0)
+                                with _ENSEMBLE_429_LOCK:
+                                    _ENSEMBLE_429_UNTIL = _time.monotonic() + backoff
+                                logger.warning(
+                                    "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for (%.4f, %.4f)",
+                                    attempt,
+                                    _ENSEMBLE_MAX_RETRIES,
+                                    backoff,
+                                    latitude,
+                                    longitude,
+                                )
+                                return None
+                            if resp.status != 200:
+                                last_err = f"HTTP {resp.status}"
+                                # Non-429 transient — small backoff, retry
+                                await asyncio.sleep(2 * attempt)
+                                continue
+                            data = await resp.json()
+                            self._forecast_cache[cache_key] = data
+                            break
+                except Exception as e:
+                    last_err = str(e)
+                    logger.error("get_multi_model_forecast fetch error (attempt %d): %s", attempt, e)
+                    await asyncio.sleep(2 * attempt)
+                    continue
+            else:
+                logger.warning("Ensemble API: all %d attempts failed (%s) for (%.4f, %.4f)",
+                               _ENSEMBLE_MAX_RETRIES, last_err, latitude, longitude)
                 return None
 
         try:
@@ -893,39 +573,19 @@ class WeatherEngine:
                 )
                 return None
 
-            # FIX (S6): Fetch BOTH max and min metrics in one API call.
-            # Previously, this code only extracted the *requested* metric, so a
-            # city with both temperature_max and temperature_min markets would
-            # trigger two API calls (double the rate-limit pressure). Now we
-            # extract both, save both to DB, but only return the requested one
-            # in model_temps (so the consensus calculation stays correct).
-            model_temps: dict[str, float] = {}  # requested metric only
-            # {"temperature_max": {model: temp}, "temperature_min": {...}}
-            side_metrics: dict[str, dict[str, float]] = {}
-
             for internal_name in self.model_weights.keys():
                 api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
-                for api_metric, metric_label in [
-                    ("temperature_2m_max", "temperature_max"),
-                    ("temperature_2m_min", "temperature_min"),
-                ]:
-                    key = f"{api_metric}_{api_name}"
-                    if key not in daily_data:
-                        continue
+                # Use the metric requested to pick the right daily data key
+                # although we fetch both max and min.
+                api_metric = "temperature_2m_max"
+                if "min" in metric.lower():
+                    api_metric = "temperature_2m_min"
+
+                key = f"{api_metric}_{api_name}"
+                if key in daily_data:
                     temps = daily_data[key]
-                    if target_idx >= len(temps) or temps[target_idx] is None:
-                        continue
-                    raw_temp = temps[target_idx]
-                    # Apply the systematic per-model bias correction (MBE)
-                    # computed by CalibrationEngine from historical settled markets.
-                    calibrated_temp = self._calibration.get_calibrated_temperature(
-                        city_code, metric_label, internal_name, raw_temp
-                    )
-                    side_metrics.setdefault(metric_label, {})[internal_name] = calibrated_temp
-                    # Only populate model_temps with the REQUESTED metric so the
-                    # consensus/return value is for the right metric.
-                    if metric_label == metric:
-                        model_temps[internal_name] = calibrated_temp
+                    if target_idx < len(temps) and temps[target_idx] is not None:
+                        model_temps[internal_name] = temps[target_idx]
 
             if not model_temps:
                 return None
@@ -944,37 +604,28 @@ class WeatherEngine:
             if db_session is not None and market_ids:
                 from database.models import WeatherForecast
 
-                # FIX (S6): Persist BOTH metrics to DB so the next market for
-                # the same (city, date) but different metric gets a cache hit
-                # instead of triggering another API call.
                 for mid in market_ids:
-                    for metric_label, per_model_temps in side_metrics.items():
-                        # Skip if this metric isn't requested by any of the
-                        # passed market_ids — but we don't know per-market
-                        # metric here, so persist both. The DB row's `metric`
-                        # column ensures analyzer queries the right one.
-                        for mn, tmp in per_model_temps.items():
-                            db_session.add(
-                                WeatherForecast(
-                                    market_id=mid,
-                                    city=city_code,
-                                    lat=latitude,
-                                    lon=longitude,
-                                    target_date=target_date,
-                                    metric=metric_label,  # FIX: was `metric` (only requested), now both
-                                    source=mn,
-                                    predicted_value=float(tmp),
-                                    model_weight=self.model_weights.get(mn, 0.0),
-                                    fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
-                                    raw_data=str({"model": mn, "temp": tmp, "ensemble": True, "metric": metric_label}),
-                                )
+                    for mn, tmp in model_temps.items():
+                        db_session.add(
+                            WeatherForecast(
+                                market_id=mid,
+                                city=city_code,
+                                lat=latitude,
+                                lon=longitude,
+                                target_date=target_date,
+                                metric=metric,
+                                source=mn,
+                                predicted_value=float(tmp),
+                                model_weight=self.model_weights.get(mn, 0.0),
+                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
                             )
+                        )
                 try:
                     db_session.commit()
                     logger.info(
-                        "Ensemble persisted for %d markets × %d metrics, coords=(%s, %s)",
+                        "Ensemble persisted for %d markets, coords=(%s, %s)",
                         len(market_ids),
-                        len(side_metrics),
                         latitude,
                         longitude,
                     )
@@ -992,77 +643,6 @@ class WeatherEngine:
         except Exception as e:
             logger.error("get_multi_model_forecast error: %s", e)
             return None
-
-    def _db_consensus(self, market_id: str, metric: str = None) -> dict | None:
-        if not market_id or not self.db_session_factory:
-            return None
-        db = self.db_session_factory()
-        try:
-            from database.models import WeatherForecast
-
-            query = db.query(WeatherForecast).filter(WeatherForecast.market_id == market_id)
-            if metric:
-                query = query.filter(WeatherForecast.metric == metric)
-            fcs = query.order_by(WeatherForecast.fetched_at.desc()).limit(30).all()
-            if not fcs:
-                return None
-            lat = {}
-            for f in fcs:
-                if f.source not in lat:
-                    lat[f.source] = (
-                        f.predicted_value,
-                        self.model_weights.get(f.source, 0.0),
-                    )
-            tw = sum(w for _, w in lat.values())
-            if tw <= 0:
-                vs = [v for v, _ in lat.values()]
-                m = sum(vs) / len(vs)
-                s = max((sum((v - m) ** 2 for v in vs) / len(vs)) ** 0.5, 0.5) if len(vs) > 1 else 1.0
-                return {"weighted_mean": m, "weighted_std": s}
-            wm = sum(v * w for v, w in lat.values()) / tw
-            wv = sum(w * (v - wm) ** 2 for v, w in lat.values()) / tw
-            return {"weighted_mean": wm, "weighted_std": max(wv**0.5, 0.5)}
-        except Exception:
-            return None
-        finally:
-            db.close()
-
-    def calculate_probability_above(self, strike_temp: float, consensus=None, market_id=""):
-        """P(YES) for a HIGH market — delegates to shared estimate_probability."""
-        if not consensus:
-            consensus = self._db_consensus(market_id)
-        if not consensus:
-            return 0.5
-        return _estimate_probability(
-            mean=consensus["weighted_mean"],
-            std=consensus["weighted_std"],
-            threshold=strike_temp,
-            days_ahead=0,
-            market_type="HIGH",
-        )
-
-    def calculate_probability_below(self, strike_temp: float, consensus=None, market_id=""):
-        """P(YES) for a LOW market — delegates to shared estimate_probability."""
-        if not consensus:
-            consensus = self._db_consensus(market_id)
-        if not consensus:
-            return 0.5
-        return _estimate_probability(
-            mean=consensus["weighted_mean"],
-            std=consensus["weighted_std"],
-            threshold=strike_temp,
-            days_ahead=0,
-            market_type="LOW",
-        )
-
-    async def get_forecast(
-        self,
-        city_code: str,
-        latitude: float,
-        longitude: float,
-        target_date: datetime | None = None,
-    ) -> dict | None:
-        return await self.get_multi_model_forecast(city_code, latitude, longitude, target_date)
 
     def update_model_weights(self, new_weights: dict):
         self.model_weights = new_weights

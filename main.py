@@ -15,7 +15,6 @@ import signal
 import subprocess
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 
 
 from config.logging_config import setup_logging
@@ -31,54 +30,6 @@ from api import app, scan_and_bet_loop, settlement_loop, state  # noqa: E402
 logger = __import__("logging").getLogger(__name__)
 
 
-async def karpathy_weekly_loop(state):
-    """Layer 1: Karpathy weekly optimization (Sunday 03:00 UTC)."""
-    from asi_engine.karpathy_weekly import run_karpathy_weekly
-
-    logger.info("KARPATHY WEEKLY: Starting weekly optimization")
-    while state.is_running:
-        try:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            if now.weekday() == 6 and now.hour == 3 and now.minute < 10:
-                logger.info("KARPATHY WEEKLY: Running weekly optimization")
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(run_karpathy_weekly, rounds=6, use_llm=False, seed=42),
-                    timeout=3600,
-                )
-                logger.info(f"KARPATHY WEEKLY: Completed - {result}")
-            await asyncio.sleep(600)
-        except asyncio.TimeoutError:
-            logger.error("KARPATHY WEEKLY: Timeout")
-        except Exception as e:
-            logger.error(f"KARPATHY WEEKLY: Error - {e}")
-            await asyncio.sleep(600)
-
-
-async def asi_evolve_daily_loop(state):
-    """Layer 2: ASI-Evolve daily optimization (02:00 UTC daily)."""
-    from asi_engine.asi_evolve import run_asi_evolve_daily
-
-    logger.info("ASI-EVOLVE DAILY: Starting daily optimization")
-    last_run_date = None
-    while state.is_running:
-        try:
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            if now.hour == 2 and now.minute < 10 and last_run_date != now.date():
-                logger.info("ASI-EVOLVE DAILY: Running daily optimization")
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(run_asi_evolve_daily, generations=50, population_size=20),
-                    timeout=1800,
-                )
-                logger.info(f"ASI-EVOLVE DAILY: Completed - {result}")
-                last_run_date = now.date()
-            await asyncio.sleep(600)
-        except asyncio.TimeoutError:
-            logger.error("ASI-EVOLVE DAILY: Timeout")
-        except Exception as e:
-            logger.error(f"ASI-EVOLVE DAILY: Error - {e}")
-            await asyncio.sleep(600)
-
-
 # ── Port conflict prevention ───────────────────────────────────────────────
 def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
     """Kill any process listening on *port* so we can bind to it.
@@ -87,33 +38,65 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
     and macOS (lsof + kill).  Returns True if a process was killed.
     """
     is_windows = platform.system() == "Windows"
-    my_pid = os.getpid()
 
     try:
         if is_windows:
+            # netstat -ano | findstr LISTENING | findstr :PORT
             raw = subprocess.check_output(
                 ["netstat", "-ano"],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
-            pids = {
-                int(line.split()[-1]) for line in raw.splitlines() if f":{port}" in line and "LISTENING" in line
-            } - {my_pid}
+            pids = set()
+            for line in raw.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    if parts:
+                        try:
+                            pids.add(int(parts[-1]))
+                        except ValueError:
+                            pass
+            # Exclude our own PID
+            my_pid = os.getpid()
+            pids.discard(my_pid)
             if not pids:
                 return False
             for pid in pids:
                 logger.warning("PORT CONFLICT: killing PID %d that owns port %d", pid, port)
-                subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True)
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    text=True,
+                )
+            # Wait until port is free
             for _ in range(10):
                 time.sleep(0.5)
-                check = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
+                check = subprocess.check_output(
+                    ["netstat", "-ano"],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                )
                 if not any(f":{port}" in line and "LISTENING" in line for line in check.splitlines()):
                     return True
             logger.error("Port %d still occupied after killing processes", port)
             return False
         else:
-            raw = subprocess.check_output(["lsof", "-ti", f":{port}"], text=True, stderr=subprocess.DEVNULL)
-            pids = {int(line.strip()) for line in raw.splitlines() if line.strip()} - {my_pid}
+            # Linux / macOS — lsof -ti :PORT
+            raw = subprocess.check_output(
+                ["lsof", "-ti", f":{port}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            pids = set()
+            for line in raw.splitlines():
+                line = line.strip()
+                if line:
+                    try:
+                        pids.add(int(line))
+                    except ValueError:
+                        pass
+            my_pid = os.getpid()
+            pids.discard(my_pid)
             if not pids:
                 return False
             for pid in pids:
@@ -125,6 +108,7 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
             time.sleep(1)
             return True
     except (subprocess.CalledProcessError, FileNotFoundError):
+        # netstat/lsof not available or returned error — assume no conflict
         return False
 
 
@@ -136,38 +120,17 @@ def _ensure_port_free(port: int, host: str = "127.0.0.1") -> None:
 
 def run_cli():
     """CLI entry point: run, reset, fetch, parse, weather, analyze."""
-    parser = argparse.ArgumentParser(
-        description="ASIAbot — Polymarket weather trading bot.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python main.py bot       # Run bot + API + dashboard + background loops
-  python main.py run       # API + dashboard only (no background loops)
-  python main.py fetch     # One-shot: fetch markets from Polymarket
-  python main.py analyze   # One-shot: analyze pending markets
-  python main.py bet       # One-shot: place bets on analyzed markets
-  python main.py settle    # One-shot: settle resolved markets
-  python main.py report    # One-shot: print portfolio report
-  python main.py reset     # Cancel all bets, reset portfolio (DESTRUCTIVE)
-""",
-    )
-    parser.add_argument(
-        "command",
-        choices=[
-            "bot",
-            "run",
-            "reset",
-            "fetch",
-            "parse",
-            "weather",
-            "analyze",
-            "bet",
-            "settle",
-            "report",
-        ],
-        help="Command to run. Use --help for details.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("command")
     args = parser.parse_args()
+
+    # Bot başlamadan önce DB backup al
+    try:
+        from db_backup import create_backup
+        create_backup("startup")
+    except Exception:
+        pass
+
     init_db()
     ensure_initial_portfolio()
     from jobs.scheduler import (
@@ -190,82 +153,20 @@ Examples:
         "report": run_report,
     }
     if args.command == "bot":
-        # ── Auto-build dashboard if source is newer than build ──────────────
+        # ── Start bot: API + Dashboard + Background loops ────────────────────
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
-        _src = os.path.join(_base, "src")
-        _pkg = os.path.join(_base, "package.json")
-
-        def _needs_build() -> bool:
-            """Check if src/ is newer than out/ or out/ doesn't exist."""
-            if not os.path.isdir(_out):
-                return True
-            if not os.path.isfile(_pkg):
-                return False
-            out_mtime = os.path.getmtime(_out)
-            pkg_mtime = os.path.getmtime(_pkg)
-            # Check src/ modification time
-            src_mtime = 0.0
-            for root, _dirs, files in os.walk(_src):
-                for f in files:
-                    src_mtime = max(src_mtime, os.path.getmtime(os.path.join(root, f)))
-            return max(pkg_mtime, src_mtime) > out_mtime
-
-        if _needs_build() and os.path.isfile(_pkg):
-            # HIZ OPTIMIZASYONU: SKIP_DASHBOARD_BUILD=true ise build'i tamamen atla.
-            # Production'da out/ commit'liyse veya CI'da build yapildiysa kullan.
-            # Bot aninda acilir (npm install + next build atlanir).
-            if os.getenv("SKIP_DASHBOARD_BUILD", "false").lower() == "true":
-                logger.info("SKIP_DASHBOARD_BUILD=true — dashboard build atlandi")
-            else:
-                # FIX: node_modules yoksa once npm install calistir.
-                # HIZ: npm ci kullan (package-lock varsa 2-3x daha hizli).
-                _node_modules = os.path.join(_base, "node_modules")
-                _lock = os.path.join(_base, "package-lock.json")
-                if not os.path.isdir(_node_modules):
-                    install_cmd = ["npm", "ci"] if os.path.isfile(_lock) else ["npm", "install"]
-                    logger.info("node_modules not found — running '%s' first...", " ".join(install_cmd))
-                    try:
-                        install_result = subprocess.run(
-                            install_cmd,
-                            cwd=_base,
-                            capture_output=True,
-                            text=True,
-                            timeout=300,
-                        )
-                        if install_result.returncode == 0:
-                            logger.info("%s SUCCESS", " ".join(install_cmd))
-                        else:
-                            logger.warning("%s failed: %s", " ".join(install_cmd), install_result.stderr[:500])
-                    except Exception as e:
-                        logger.warning("npm install error: %s", e)
-
-                logger.info("Dashboard source changed — auto-building...")
-                try:
-                    result = subprocess.run(
-                        ["npx", "next", "build"],
-                        cwd=_base,
-                        capture_output=True,
-                        text=True,
-                        timeout=120,
-                    )
-                    if result.returncode == 0:
-                        logger.info("Dashboard auto-build SUCCESS")
-                    else:
-                        logger.warning("Dashboard auto-build failed: %s", result.stderr[:500])
-                except Exception as e:
-                    logger.warning("Dashboard auto-build error: %s", e)
-
-        # ── Start bot: API + Dashboard + Background loops ────────────────────
-        if os.path.isdir(_out):
+        _dash = os.path.join(_base, "dashboard", "out")
+        _dashboard_out = _out if os.path.isdir(_out) else _dash
+        if os.path.isdir(_dashboard_out):
             from fastapi.staticfiles import StaticFiles
 
             app.mount(
                 "/_next",
-                StaticFiles(directory=os.path.join(_out, "_next")),
+                StaticFiles(directory=os.path.join(_dashboard_out, "_next")),
                 name="next-static",
             )
-            app.mount("/", StaticFiles(directory=_out, html=True), name="dashboard")
+            app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
 
         # Start background loops on FastAPI startup (lifespan handler)
         @asynccontextmanager
@@ -280,25 +181,11 @@ Examples:
             except Exception as e:
                 logger.warning("Portfolio init warning: %s", e)
 
-            # PER-5 FIX: Warm-start WeatherEngine in-process cache from DB
-            # Loads last 3 days of ensemble forecasts so first scan is fast.
-            try:
-                from engine.calculator import WeatherEngine
-
-                we = WeatherEngine(db_session_factory=get_db_session)
-                loaded = we.warm_start_from_db()
-                if loaded > 0:
-                    logger.info("WeatherEngine warm-start: %d cities loaded from DB", loaded)
-            except Exception as e:
-                logger.warning("WeatherEngine warm-start failed: %s", e)
-
             state.is_running = True
             state.locked = False
             state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop(state))
             state.tasks["settlement"] = asyncio.create_task(settlement_loop(state))
-            state.tasks["karpathy_weekly"] = asyncio.create_task(karpathy_weekly_loop(state))
-            state.tasks["asi_evolve_daily"] = asyncio.create_task(asi_evolve_daily_loop(state))
-            logger.info("Bot loops started (scan_and_bet + settlement + karpathy_weekly + asi_evolve_daily)")
+            logger.info("Bot loops started (scan_and_bet + settlement)")
             yield
             # Shutdown
             logger.info("LIFESPAN SHUTDOWN - Stopping bot loops")
@@ -318,45 +205,42 @@ Examples:
         # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
-        if os.path.isdir(_out):
+        _dash = os.path.join(_base, "dashboard", "out")
+        _dashboard_out = _out if os.path.isdir(_out) else _dash
+        if os.path.isdir(_dashboard_out):
             from fastapi.staticfiles import StaticFiles
 
             app.mount(
                 "/_next",
-                StaticFiles(directory=os.path.join(_out, "_next")),
+                StaticFiles(directory=os.path.join(_dashboard_out, "_next")),
                 name="next-static",
             )
-            app.mount("/", StaticFiles(directory=_out, html=True), name="dashboard")
+            app.mount("/", StaticFiles(directory=_dashboard_out, html=True), name="dashboard")
 
         import uvicorn  # noqa: I001
 
         _ensure_port_free(config.PORT, config.HOST)
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "reset":
-        db = get_db_session()
+        # Silmeden ÖNCE backup al
         try:
-            db.query(Bet).update({"status": "cancelled"})
-            db.query(Analysis).delete()
-            pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
-            if pf is None:
-                # No portfolio row yet — create fresh.
-                pf = Portfolio(id=1, cash_balance=config.INITIAL_PORTFOLIO)
-                db.add(pf)
-            else:
-                # FIX: Reset ALL portfolio fields, not just cash_balance.
-                # Previously total_won / total_lost / total_realized_pnl /
-                # total_value / current_value / daily_pnl were left stale.
-                pf.cash_balance = config.INITIAL_PORTFOLIO
-                pf.total_value = config.INITIAL_PORTFOLIO
-                pf.current_value = config.INITIAL_PORTFOLIO
-                pf.initial_value = config.INITIAL_PORTFOLIO
-                pf.total_realized_pnl = 0.0
-                pf.total_won = 0
-                pf.total_lost = 0
-                pf.daily_pnl = 0.0
-            db.commit()
-        finally:
-            db.close()
+            from db_backup import create_backup
+            create_backup("pre_reset_cli")
+        except Exception:
+            pass
+        # Bets ve portfolio'yu parquet'a arşivle
+        try:
+            from database.db_cleanup import archive_bets_and_portfolio
+            archive_bets_and_portfolio()
+        except Exception:
+            pass
+        db = get_db_session()
+        db.query(Bet).update({"status": "cancelled"})
+        db.query(Analysis).delete()
+        pf = db.query(Portfolio).filter(Portfolio.id == 1).first()
+        pf.cash_balance = config.INITIAL_PORTFOLIO
+        db.commit()
+        db.close()
     elif args.command in cmds:
         print(cmds[args.command]())
 

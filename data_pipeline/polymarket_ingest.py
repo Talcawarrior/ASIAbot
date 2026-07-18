@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -107,7 +108,9 @@ class PolymarketIngest:
                     backoff = 0.5 * (2**attempt)
                     logger.debug("Gamma retry %d on %s: %s", attempt + 1, path, exc)
                     time.sleep(backoff)
-        raise RuntimeError(f"Gamma GET {path} failed after {self.cfg.max_retries + 1} attempts: {last_exc}")
+        raise RuntimeError(
+            f"Gamma GET {path} failed after {self.cfg.max_retries + 1} attempts: {last_exc}"
+        )
 
     # -- Public: bulk market fetch ---------------------------------------
 
@@ -241,11 +244,24 @@ class PolymarketIngest:
             ascending=False,
         )
         os.makedirs(self.cfg.cache_dir, exist_ok=True)
-        df.to_csv(CLOSED_MARKETS_CACHE, index=False)
+        # L11: Atomic CSV write — temp file then os.replace()
+        tmp_fd, tmp_path = tempfile.mkstemp(suffix=".csv", dir=self.cfg.cache_dir)
+        try:
+            with os.fdopen(tmp_fd, "w") as tmp_f:
+                df.to_csv(tmp_f, index=False)
+            os.replace(tmp_path, CLOSED_MARKETS_CACHE)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info("Cached %d closed markets to %s", len(df), CLOSED_MARKETS_CACHE)
         return df
 
-    def fetch_active_markets(self, *, category: str | None = None, limit: int | None = None) -> pd.DataFrame:
+    def fetch_active_markets(
+        self, *, category: str | None = None, limit: int | None = None
+    ) -> pd.DataFrame:
         """Fetch all currently active (not yet resolved) markets."""
         df = self.fetch_markets(
             closed=False,
@@ -333,7 +349,9 @@ class PolymarketIngest:
             )
         )
         weather_df: pd.DataFrame = df[mask].copy()  # type: ignore[assignment]
-        logger.info("Filtered %d weather markets out of %d closed", len(weather_df), len(df))
+        logger.info(
+            "Filtered %d weather markets out of %d closed", len(weather_df), len(df)
+        )
         return weather_df
 
 
@@ -343,31 +361,16 @@ class PolymarketIngest:
 
 
 def _safe_json_loads(val: Any) -> Any:
-    """Parse a JSON-encoded string; return original if not parseable.
-
-    Handles both JSON format (["0", "1"]) and Python repr format (['0', '1']).
-    CSV serialization often converts JSON lists to Python repr with single quotes.
-    """
-    import ast
-
+    """Parse a JSON-encoded string; return original if not parseable."""
     if val is None or val == "":
         return None
     if isinstance(val, (list, dict)):
         return val
     if isinstance(val, str):
-        # Try JSON first (double quotes)
         try:
             return json.loads(val)
         except (json.JSONDecodeError, ValueError):
-            pass
-        # Fallback: try Python repr (single quotes) — CSV serialization artifact
-        try:
-            parsed = ast.literal_eval(val)
-            if isinstance(parsed, (list, dict)):
-                return parsed
-        except (ValueError, SyntaxError):
-            pass
-        return val
+            return val
     return val
 
 
@@ -406,23 +409,14 @@ def _extract_outcome_price(row: pd.Series, side: str) -> float | None:
 
 
 def _extract_resolved_outcome(row: pd.Series) -> str | None:
-    """Return 'Yes' / 'No' / None based on outcomePrices for a closed market.
-
-    Handles both float (1.0) and string ("1.0") price values from CSV/parsing.
-    """
+    """Return 'Yes' / 'No' / None based on outcomePrices for a closed market."""
     yes_p = row.get("yes_price")
     no_p = row.get("no_price")
     if yes_p is None or no_p is None:
         return None
-    # Coerce to float for comparison (handles "1.0" strings from CSV)
-    try:
-        yes_f = float(yes_p)
-        no_f = float(no_p)
-    except (TypeError, ValueError):
-        return None
-    if yes_f == 1.0 and no_f == 0.0:
+    if yes_p == 1.0 and no_p == 0.0:
         return "Yes"
-    if no_f == 1.0 and yes_f == 0.0:
+    if no_p == 1.0 and yes_p == 0.0:
         return "No"
     return None  # ambiguous — not cleanly resolved
 
@@ -433,7 +427,9 @@ def _extract_resolved_outcome(row: pd.Series) -> str | None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
     ingest = PolymarketIngest()
 
     print("\n=== Recent closed markets (last 50) ===")
