@@ -1,10 +1,10 @@
-"""ASIAbot entry point — CLI and bot launcher.
+﻿"""asiabot entry point â€” CLI and bot launcher.
 
 Thin wrapper that imports the FastAPI app, BotState, and bot loops
 from their dedicated modules:
 
-  api.py      — FastAPI routes, BotState, app definition
-  bot_loop.py — scan_and_bet_loop, settlement_loop
+  api.py      â€” FastAPI routes, BotState, app definition
+  bot_loop.py â€” scan_and_bet_loop, settlement_loop
 """
 
 import argparse
@@ -30,7 +30,7 @@ from api import app, scan_and_bet_loop, settlement_loop, state  # noqa: E402
 logger = __import__("logging").getLogger(__name__)
 
 
-# ── Port conflict prevention ───────────────────────────────────────────────
+# â”€â”€ Port conflict prevention â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
     """Kill any process listening on *port* so we can bind to it.
 
@@ -81,7 +81,7 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
             logger.error("Port %d still occupied after killing processes", port)
             return False
         else:
-            # Linux / macOS — lsof -ti :PORT
+            # Linux / macOS â€” lsof -ti :PORT
             raw = subprocess.check_output(
                 ["lsof", "-ti", f":{port}"],
                 text=True,
@@ -108,14 +108,14 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
             time.sleep(1)
             return True
     except (subprocess.CalledProcessError, FileNotFoundError):
-        # netstat/lsof not available or returned error — assume no conflict
+        # netstat/lsof not available or returned error â€” assume no conflict
         return False
 
 
 def _ensure_port_free(port: int, host: str = "127.0.0.1") -> None:
     """Ensure *port* is free before starting uvicorn. Kill stale processes."""
     if _kill_port_owner(port, host):
-        logger.info("Port %d cleared — stale process removed", port)
+        logger.info("Port %d cleared â€” stale process removed", port)
 
 
 def run_cli():
@@ -124,10 +124,9 @@ def run_cli():
     parser.add_argument("command")
     args = parser.parse_args()
 
-    # Bot başlamadan önce DB backup al
+    # Bot baÅŸlamadan Ã¶nce DB backup al
     try:
         from db_backup import create_backup
-
         create_backup("startup")
     except Exception:
         pass
@@ -154,7 +153,7 @@ def run_cli():
         "report": run_report,
     }
     if args.command == "bot":
-        # ── Start bot: API + Dashboard + Background loops ────────────────────
+        # â”€â”€ Start bot: API + Dashboard + Background loops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
         _dash = os.path.join(_base, "dashboard", "out")
@@ -203,7 +202,7 @@ def run_cli():
         _ensure_port_free(config.PORT, config.HOST)
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "run":
-        # ── Mount Next.js static dashboard (must be LAST — catch-all) ──────
+        # â”€â”€ Mount Next.js static dashboard (must be LAST â€” catch-all) â”€â”€â”€â”€â”€â”€
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
         _dash = os.path.join(_base, "dashboard", "out")
@@ -223,17 +222,15 @@ def run_cli():
         _ensure_port_free(config.PORT, config.HOST)
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "reset":
-        # Silmeden ÖNCE backup al
+        # Silmeden Ã–NCE backup al
         try:
             from db_backup import create_backup
-
             create_backup("pre_reset_cli")
         except Exception:
             pass
-        # Bets ve portfolio'yu parquet'a arşivle
+        # Bets ve portfolio'yu parquet'a arÅŸivle
         try:
             from database.db_cleanup import archive_bets_and_portfolio
-
             archive_bets_and_portfolio()
         except Exception:
             pass
@@ -250,3 +247,4 @@ def run_cli():
 
 if __name__ == "__main__":
     run_cli()
+

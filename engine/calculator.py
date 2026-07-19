@@ -24,20 +24,9 @@ from utils.slippage import (
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
-# ── Ensemble API 429 cooldown (global, process-wide) ────────────────────────
-# Open-Meteo free tier enforces a per-IP rate limit. When we get a 429 we back
-# off globally and let the next scan cycle retry, instead of sleeping 120s inline
-# (which blocked the whole event loop / thread).  A short per-call spacing also
-# prevents the burst that triggers the limit in the first place.
-import threading  # noqa: E402
-import time as _time  # noqa: E402
-
-_ENSEMBLE_429_UNTIL = 0.0  # epoch seconds; requests before this return None
-_ENSEMBLE_429_LOCK = threading.Lock()
-_ENSEMBLE_LAST_CALL = 0.0
-_ENSEMBLE_MIN_SPACING_S = 0.4  # min seconds between ensemble calls
-_ENSEMBLE_COOLDOWN_S = 30.0  # backoff after a 429
-_ENSEMBLE_MAX_RETRIES = 3
+# Global rate-limit flag: ilk 429'te 5dk boyunca tüm Open-Meteo isteklerini durdur
+import time as _time
+_RATE_LIMITED_UNTIL = 0.0  # monotonic timestamp
 
 
 class Calculator:
@@ -412,57 +401,7 @@ class WeatherEngine:
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
-    @staticmethod
-    def _compute_effective_min_edge(market, std: float | None = None) -> float:
-        """Time-to-close-scaled min_edge for a market.
-
-        Delegates to utils.probability.compute_effective_min_edge.
-        """
-        from utils.probability import compute_effective_min_edge
-
-        return compute_effective_min_edge(market, std=std)
-
-    def calculate_probability_above(self, threshold: float, consensus: dict, market_id: str = None) -> float:
-        """Calculate P(T >= threshold) using consensus mean/std.
-
-        Thin wrapper around utils.probability.estimate_probability for
-        backward compatibility with tests.
-        """
-        if not consensus:
-            return 0.5
-        mean = consensus.get("weighted_mean") or consensus.get("mean")
-        std = consensus.get("weighted_std") or consensus.get("std", 1.0)
-        if mean is None:
-            return 0.5
-        from utils.probability import estimate_probability
-
-        return estimate_probability(
-            mean=mean,
-            std=std,
-            threshold=threshold,
-            market_type="HIGH",
-        )
-
-    def calculate_probability_below(self, threshold: float, consensus: dict, market_id: str = None) -> float:
-        """Calculate P(T <= threshold) using consensus mean/std.
-
-        Thin wrapper around utils.probability.estimate_probability for
-        backward compatibility with tests.
-        """
-        if not consensus:
-            return 0.5
-        mean = consensus.get("weighted_mean") or consensus.get("mean")
-        std = consensus.get("weighted_std") or consensus.get("std", 1.0)
-        if mean is None:
-            return 0.5
-        from utils.probability import estimate_probability
-
-        return estimate_probability(
-            mean=mean,
-            std=std,
-            threshold=threshold,
-            market_type="LOW",
-        )
+    # _compute_effective_min_edge Calculator sınıfında (satır 364) tanımlı.
 
     async def get_multi_model_forecast(
         self,
@@ -478,6 +417,11 @@ class WeatherEngine:
             return None
         if target_date is None:
             target_date = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # Global rate-limit kontrolü
+        if _time.monotonic() < _RATE_LIMITED_UNTIL:
+            logger.debug("Rate-limited, skipping API call for %s", city_code)
+            return None
 
         api_model_names = []
         for internal_name in self.model_weights.keys():
@@ -503,67 +447,55 @@ class WeatherEngine:
                 "forecast_days": 14,
             }
 
-            # Global 429 cooldown: if we're still backing off, skip this call.
-            with _ENSEMBLE_429_LOCK:
-                now_mono = _time.monotonic()
-                if now_mono < _ENSEMBLE_429_UNTIL:
-                    logger.info(
-                        "Ensemble API: global 429 cooldown active, waiting %.0fs for (%.4f, %.4f)",
-                        _ENSEMBLE_429_UNTIL - now_mono,
-                        latitude,
-                        longitude,
-                    )
-                    return None
-                # Light per-call spacing to avoid burst-triggering the limit.
-                elapsed = now_mono - _ENSEMBLE_LAST_CALL
-                if elapsed < _ENSEMBLE_MIN_SPACING_S:
-                    _time.sleep(_ENSEMBLE_MIN_SPACING_S - elapsed)
-                _ENSEMBLE_LAST_CALL = _time.monotonic()
-
-            last_err = None
-            for attempt in range(1, _ENSEMBLE_MAX_RETRIES + 1):
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                            if resp.status == 429:
-                                retry_after = resp.headers.get("Retry-After")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status == 429:
+                            # Retry with exponential backoff for 429 rate limits
+                            max_retries = 3
+                            base_delay = 5.0
+                            for attempt in range(1, max_retries + 1):
                                 try:
-                                    backoff = float(retry_after) if retry_after else _ENSEMBLE_COOLDOWN_S
-                                except (TypeError, ValueError):
-                                    backoff = _ENSEMBLE_COOLDOWN_S
-                                backoff = min(max(backoff, 5.0), 60.0)
-                                with _ENSEMBLE_429_LOCK:
-                                    _ENSEMBLE_429_UNTIL = _time.monotonic() + backoff
-                                logger.warning(
-                                    "Ensemble API 429 (attempt %d/%d) — global cooldown %.0fs for (%.4f, %.4f)",
-                                    attempt,
-                                    _ENSEMBLE_MAX_RETRIES,
-                                    backoff,
-                                    latitude,
-                                    longitude,
-                                )
+                                    async with aiohttp.ClientSession() as session:
+                                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                                            if resp.status == 429:
+                                                if attempt < max_retries:
+                                                    retry_after = resp.headers.get("Retry-After")
+                                                    try:
+                                                        delay = float(retry_after) if retry_after else 5.0 * (2 ** (attempt - 1))
+                                                    except (TypeError, ValueError):
+                                                        delay = 5.0 * (2 ** (attempt - 1))
+                                                    delay = min(max(delay, 5.0), 60.0)
+                                                    logger.warning(
+                                                        "Ensemble 429 for (%.4f, %.4f) attempt %d/%d - retrying in %.1fs",
+                                                        latitude, longitude, attempt, max_retries, delay
+                                                    )
+                                                    await asyncio.sleep(delay)
+                                                    continue
+                                                else:
+                                                    logger.error(
+                                                        "Ensemble 429 for (%.4f, %.4f) - max retries exceeded",
+                                                        latitude, longitude
+                                                    )
+                                                    return None
+                                            if resp.status != 200:
+                                                return None
+                                            data = await resp.json()
+                                            self._forecast_cache[cache_key] = data
+                                            break  # Success
+                                except Exception as e:
+                                    logger.error("get_multi_model_forecast fetch error (attempt %d): %s", attempt, e)
+                                    if attempt == max_retries:
+                                        return None
+                                    await asyncio.sleep(5.0 * attempt)
+                                    continue
+                            else:
+                                # All retries exhausted
                                 return None
-                            if resp.status != 200:
-                                last_err = f"HTTP {resp.status}"
-                                # Non-429 transient — small backoff, retry
-                                await asyncio.sleep(2 * attempt)
-                                continue
-                            data = await resp.json()
-                            self._forecast_cache[cache_key] = data
-                            break
-                except Exception as e:
-                    last_err = str(e)
-                    logger.error("get_multi_model_forecast fetch error (attempt %d): %s", attempt, e)
-                    await asyncio.sleep(2 * attempt)
-                    continue
-            else:
-                logger.warning(
-                    "Ensemble API: all %d attempts failed (%s) for (%.4f, %.4f)",
-                    _ENSEMBLE_MAX_RETRIES,
-                    last_err,
-                    latitude,
-                    longitude,
-                )
+                        data = await resp.json()
+                        self._forecast_cache[cache_key] = data
+            except Exception as e:
+                logger.error("get_multi_model_forecast fetch error: %s", e)
                 return None
 
         try:

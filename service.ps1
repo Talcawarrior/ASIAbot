@@ -1,11 +1,11 @@
-# ASIAbot BOT - PowerShell Service (İyileştirilmiş)
-# Bot'un tam olarak başlamasını bekler
+﻿# asiabot BOT - PowerShell Service (Ä°yileÅŸtirilmiÅŸ)
+# Bot'un tam olarak baÅŸlamasÄ±nÄ± bekler
 
-$BotDir = "C:\Users\fdemir\Documents\New project\ASIAbot"
+$BotDir = "C:\Users\fdemir\Documents\New project\asiabot"
 $LogFile = "$BotDir\logs\service.log"
 $MaxRestarts = 1000
 $RestartDelay = 10
-$StartupWait = 30  # Bot'un başlaması için bekleme süresi
+$StartupWait = 30  # Bot'un baÅŸlamasÄ± iÃ§in bekleme sÃ¼resi
 
 function Write-Log {
     param($Message)
@@ -35,13 +35,13 @@ function Test-BotRunning {
 }
 
 # Main loop
-Write-Log "=== ASIAbot Bot Service Started ==="
+Write-Log "=== asiabot Bot Service Started ==="
 $restartCount = 0
 
 while ($restartCount -lt $MaxRestarts) {
     $proc = Start-Bot
     
-    # Bot'un tam olarak başlaması için bekle
+    # Bot'un tam olarak baÅŸlamasÄ± iÃ§in bekle
     Write-Log "Waiting ${StartupWait}s for bot to initialize..."
     Start-Sleep -Seconds $StartupWait
     
@@ -72,7 +72,7 @@ while ($restartCount -lt $MaxRestarts) {
         }
     } else {
         Write-Log "Bot failed to start after ${StartupWait}s"
-        # Bot'u öldür ve yeniden dene
+        # Bot'u Ã¶ldÃ¼r ve yeniden dene
         try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
     }
     
@@ -82,3 +82,5 @@ while ($restartCount -lt $MaxRestarts) {
 }
 
 Write-Log "=== Service stopped (max restarts reached) ==="
+
+

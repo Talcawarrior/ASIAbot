@@ -1,17 +1,17 @@
-"""Researcher Agent for ASIAbot.
+﻿"""Researcher Agent for asiabot.
 
 Responsible for generating new strategy hypotheses and parameter proposals
 by reviewing historical successes and failures stored in the Cognition Base.
 
 The previous version of this file hardcoded `gfs_seamless` as the model to
 boost and `meteofrance_seamless` as the model to trim. That defeated the
-entire point of an "evolutionary" loop — the result was deterministic and
+entire point of an "evolutionary" loop â€” the result was deterministic and
 called itself "self-evolving" while doing no such thing.
 
 This version reads the per-model Brier scores from the `model_performance`
 DB table (populated by `SIALoop.analyze_model_performance`) and shifts
 weight from high-Brier (worse) to low-Brier (better) models. If no DB
-data is available, it falls back to a *random* pair of models — never a
+data is available, it falls back to a *random* pair of models â€” never a
 hardcoded pair.
 """
 
@@ -75,9 +75,9 @@ class ResearcherAgent:
         base_weights = best_params["model_weights"].copy()
         models = list(base_weights.keys())
 
-        # ── Brier-driven boost/trim selection ──────────────────────────────
+        # â”€â”€ Brier-driven boost/trim selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # The previous implementation hardcoded GFS as boost and MeteoFrance
-        # as trim, which is not "evolution" — it's a fixed prior dressed up
+        # as trim, which is not "evolution" â€” it's a fixed prior dressed up
         # as learning. We now read real per-model Brier scores from the DB
         # (when available) and shift weight from the worst to the best.
         brier_scores = _load_model_brier_scores()
@@ -96,7 +96,7 @@ class ResearcherAgent:
                 f"'{trim_model}' (Brier={known_briers[trim_model]:.4f}) is the least."
             )
         else:
-            # Fallback: random pair — never a hardcoded "GFS good / MF bad" pair.
+            # Fallback: random pair â€” never a hardcoded "GFS good / MF bad" pair.
             if len(models) < 2:
                 # Degenerate case: nothing to evolve.
                 return (
@@ -131,8 +131,12 @@ class ResearcherAgent:
         best_kelly = best_params.get("kelly_fraction", 0.15)
 
         # Ramped change
-        new_min_edge = round(max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3)
-        new_kelly = round(max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3)
+        new_min_edge = round(
+            max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3
+        )
+        new_kelly = round(
+            max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3
+        )
 
         new_params = {
             "model_weights": adjusted_weights,
@@ -149,3 +153,4 @@ class ResearcherAgent:
 
         logger.info("ASI Researcher: Proposed Hypothesis -> %s", hypothesis)
         return hypothesis, new_params
+

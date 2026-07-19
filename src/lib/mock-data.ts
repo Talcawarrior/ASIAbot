@@ -1,5 +1,5 @@
 // ==========================================
-// ASIAbot Dashboard — Mock Data & Types
+// Junbo Dashboard — Mock Data & Types
 // ==========================================
 
 // ---- Common Types ----

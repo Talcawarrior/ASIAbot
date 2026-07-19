@@ -20,15 +20,15 @@ _FETCH_TIMEOUT = 180
 _CYCLE_TIMEOUT = 600
 _CLEANUP_TIMEOUT = 60
 
-# Akıllı tarama ayarları
-_FAST_MODE_MINUTES = 30
-_FAST_SCAN_INTERVAL = 60
-_NORMAL_SCAN_INTERVAL = 900
+# Scan intervals (seconds)
+_FAST_SCAN_INTERVAL = 60          # 1 MINUTE - FAST MODE
+_NORMAL_SCAN_INTERVAL = 300       # 5 MINUTES - NORMAL MONITORING
+_WEATHER_FETCH_INTERVAL = 3600    # 1 HOUR for Open-Meteo
 
 # Watchdog thresholds (seconds)
-_WATCHDOG_WARNING = 900  # 15 dakika — warning
-_WATCHDOG_DEAD = 1800  # 30 dakika — dead
-_WATCHDOG_RESTART = 3600  # 1 saat — restart
+_WATCHDOG_WARNING = 120     # 2 minutes - warning
+_WATCHDOG_DEAD = 300        # 5 minutes - dead
+_WATCHDOG_RESTART = 600     # 10 minutes - restart
 
 
 def _get_market_count() -> int:
@@ -38,26 +38,83 @@ def _get_market_count() -> int:
 
 def _is_midnight_window(now: datetime) -> bool:
     from config.settings import bot_config
-
     window_minutes = bot_config.midnight_scan_window
     return now.hour == 0 and now.minute < window_minutes
 
 
-def _get_scan_interval(now: datetime, fast_mode_until: datetime | None) -> int:
-    if fast_mode_until and now < fast_mode_until:
-        return _FAST_SCAN_INTERVAL
-    from config.settings import bot_config
+def _get_open_target_dates() -> set:
+    """Return set of open market calendar dates (date objects)."""
+    from database.db import get_session
+    from database.models import WeatherMarket
 
+    with get_session() as session:
+        rows = session.query(WeatherMarket.target_date).filter(
+            WeatherMarket.status == "open",
+            WeatherMarket.latitude != 0,
+            WeatherMarket.longitude != 0,
+        ).all()
+        dates = set()
+        for (td,) in rows:
+            if td:
+                dates.add(td.date())
+        return dates
+
+
+def _get_open_market_count_for_date(target_date) -> int:
+    """Return count of open markets for a specific calendar date."""
+    start = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+
+    with get_session() as session:
+        return session.query(WeatherMarket).filter(
+            WeatherMarket.status == "open",
+            WeatherMarket.target_date >= target_date,
+            WeatherMarket.target_date < target_date + timedelta(days=1),
+            WeatherMarket.latitude != 0,
+            WeatherMarket.longitude != 0,
+        ).count()
+
+
+def _next_two_day_target(last_max_date, open_dates):
+    """Pure function: returns the next 2-day-ahead target date if it just opened.
+    
+    Returns the date if max(open_dates) > last_max_date (meaning a new 2-day-ahead
+    date just opened), otherwise returns None. Only triggers once per date.
+    """
+    if not open_dates:
+        return None
+    max_open = max(open_dates)
+    if last_max_date is None or max_open > last_max_date:
+        return max_open
+    return None
+
+
+def _get_scan_interval(now: datetime, fast_mode_until: datetime | None) -> int:
+    """Return scan interval in seconds based on mode."""
+    if fast_mode_until and now < fast_mode_until:
+        return 60  # 1 minute fast mode
+    from config.settings import bot_config
     if _is_midnight_window(now):
-        return bot_config.midnight_scan_interval
-    return _NORMAL_SCAN_INTERVAL
+        return 60  # 1 minute at midnight
+    return 300  # 5 minutes normal
+
+
+def _is_midnight_window(now: datetime) -> bool:
+    from config.settings import bot_config
+    window_minutes = bot_config.midnight_scan_window
+    return now.hour == 0 and now.minute < window_minutes
 
 
 async def scan_and_bet_loop(state):
-    """Scan loop — akıllı tarama ile.
-
-    TEK try/except ile tüm while body'si korunuyor.
-    Hata durumunda loop çökmez, 60sn recovery ile devam eder.
+    """Scan loop with date-based fast-mode trigger.
+    
+    Logic:
+    - Baseline: max open target date at startup
+    - Every 5 min: fetch Polymarket, check if max open date advanced (meaning 2-day-ahead markets opened)
+    - If max open date advanced -> FAST MODE for 30 min (1 min intervals)
+    - Normal: 5 min interval
+    - Fast mode: 30 min duration, 1 min intervals
+    - Weather fetch: hourly (cached)
     """
     from jobs.scheduler import (
         run_cycle,
@@ -66,19 +123,17 @@ async def scan_and_bet_loop(state):
         run_parse_markets,
     )
 
+    # Initialize baseline: max open target date at startup
+    open_dates = _get_open_target_dates()
+    baseline_max_date = max(open_dates) if open_dates else None
+    logger.info("Baseline max open date: %s", baseline_max_date)
+
     stale_check_counter = 0
-    last_day = None
-    previous_market_count = 0
+    last_weather_fetch = None
     fast_mode_until = None
 
-    try:
-        previous_market_count = _get_market_count()
-        logger.info("Initial market count: %d", previous_market_count)
-    except Exception as e:
-        logger.warning("Could not get initial market count: %s", e)
-
     while state.is_running:
-        try:  # ← TEK TRY — her şey içeride
+        try:
             state.last_scan = datetime.now(timezone.utc).replace(tzinfo=None)
             scan_start = datetime.now(timezone.utc)
 
@@ -88,79 +143,69 @@ async def scan_and_bet_loop(state):
             last_day = today
 
             if is_new_day:
-                logger.info("Midnight detected — running immediate scan")
+                logger.info("Midnight detected - running immediate scan")
 
-            # STEP 1: Fetch markets
-            await asyncio.wait_for(asyncio.to_thread(run_fetch_markets), timeout=_FETCH_TIMEOUT)
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
 
-            # STEP 2: Parse + Weather PARALEL
-            parse_and_weather = await asyncio.gather(
-                asyncio.wait_for(asyncio.to_thread(run_parse_markets), timeout=_FETCH_TIMEOUT),
-                asyncio.wait_for(asyncio.to_thread(run_fetch_weather), timeout=_FETCH_TIMEOUT),
-                return_exceptions=True,
-            )
-            for result in parse_and_weather:
-                if isinstance(result, Exception):
-                    logger.error("Parallel step error: %s", result)
+            # STEP 1: Fetch Polymarket markets (EVERY CYCLE)
+            from jobs.scheduler import run_fetch_markets
+            await asyncio.wait_for(asyncio.to_thread(run_fetch_markets), timeout=180)
 
-            # STEP 3: Run cycle
-            await asyncio.wait_for(asyncio.to_thread(run_cycle), timeout=_CYCLE_TIMEOUT)
+            # Check if 2-day-ahead markets just opened
+            open_dates = _get_open_target_dates()
+            current_max = max(open_dates) if open_dates else None
 
-            # Yeni market algılama
-            try:
-                current_count = _get_market_count()
-                if current_count > previous_market_count:
-                    new_markets = current_count - previous_market_count
-                    fast_mode_until = (datetime.now(timezone.utc) + timedelta(minutes=_FAST_MODE_MINUTES)).replace(
-                        tzinfo=None
-                    )
-                    logger.info(
-                        "NEW MARKETS DETECTED: +%d (total: %d) — FAST MODE for %d min",
-                        new_markets,
-                        current_count,
-                        _FAST_MODE_MINUTES,
-                    )
-                previous_market_count = current_count
-            except Exception as e:
-                logger.warning("Market count check failed: %s", e)
+            if current_max and current_max > baseline_max_date:
+                # New 2-day-ahead markets just opened!
+                baseline_max_date = current_max
+                fast_mode_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=30)
+                logger.info(
+                    "2-day-ahead date %s opened (%d markets) — price poller FAST (1min) for 30 min",
+                    current_max, _get_open_market_count_for_date(current_max)
+                )
 
-            # Stale cleanup her 10 döngüde
-            stale_check_counter += 1
-            if stale_check_counter >= 10:
-                stale_check_counter = 0
-                try:
-                    await asyncio.wait_for(asyncio.to_thread(_cleanup_stale_bets), timeout=_CLEANUP_TIMEOUT)
-                except Exception as e:
-                    logger.warning("Stale cleanup failed: %s", e)
+            # Weather fetch (hourly)
+            if last_weather_fetch is None or (datetime.now(timezone.utc) - last_weather_fetch).total_seconds() >= 3600:
+                logger.info("Weather fetch triggered")
+                from jobs.scheduler import run_fetch_weather, run_parse_markets
+                await asyncio.gather(
+                    asyncio.to_thread(run_parse_markets),
+                    asyncio.to_thread(run_fetch_weather),
+                )
+            else:
+                # Parse only
+                from jobs.scheduler import run_parse_markets
+                await asyncio.to_thread(run_parse_markets)
 
-            # Scan duration log
-            scan_duration = (datetime.now(timezone.utc) - scan_start).total_seconds()
-            now = datetime.now(timezone.utc).replace(tzinfo=None)
-            interval = _get_scan_interval(now, fast_mode_until)
-            mode = "FAST" if fast_mode_until and now < fast_mode_until else "NORMAL"
-            logger.info("Scan completed in %.1fs [%s mode], next in %ds", scan_duration, mode, interval)
+            # Analyze + bet + risk
+            from jobs.scheduler import run_cycle
+            await asyncio.to_thread(run_cycle)
 
-            await asyncio.sleep(interval)
+            # Determine next interval
+            now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+            in_fast_mode = fast_mode_until and now_utc < fast_mode_until
+            interval = 60 if in_fast_mode else 300
+            mode = "FAST" if in_fast_mode else "NORMAL"
+            logger.info("Scan completed in %.1fs [%s mode], next in %ds", 
+                        (datetime.now(timezone.utc) - datetime.fromisoformat(str(scan_start))).total_seconds(), mode, interval)
+
+            await asyncio.sleep(60 if in_fast_mode else 300)
 
         except asyncio.CancelledError:
-            logger.info("Scan loop cancelled — shutting down")
+            logger.info("Scan loop cancelled - shutting down")
             break
         except asyncio.TimeoutError:
-            logger.error("Scan step timed out — retry in 60s")
+            logger.error("Scan step timed out - retry in 60s")
             await asyncio.sleep(60)
         except Exception as e:
-            logger.error("Scan error: %s — retry in 60s", e, exc_info=True)
+            logger.error("Scan error: %s - retry in 60s", e, exc_info=True)
             await asyncio.sleep(60)
 
     logger.info("Scan loop exited (is_running=%s)", state.is_running)
 
 
 async def settlement_loop(state):
-    """Settlement loop + scan loop watchdog.
-
-    Scan loop 30dk+ süredir çalışmıyorsa log yazıyor.
-    1 saati aşkın süredir çalışmıyorsa bot'u durduruyor.
-    """
+    """Settlement loop + scan loop watchdog."""
     from jobs.scheduler import run_settle
 
     last_cleanup_date = None
@@ -168,39 +213,36 @@ async def settlement_loop(state):
 
     while state.is_running:
         try:
-            # ── Watchdog: scan loop sağlık kontrolü ──
+            # Watchdog: scan loop health check
             now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
             if state.last_scan:
                 elapsed = (now_utc - state.last_scan).total_seconds()
-                if elapsed > _WATCHDOG_DEAD:
+                if elapsed > 120:  # 2 minutes - warning
                     if scan_healthy:
                         logger.error(
-                            "SCAN LOOP WATCHDOG: No scan for %.1f minutes! last_scan=%s", elapsed / 60, state.last_scan
+                            "SCAN LOOP WATCHDOG: No scan for %.1f minutes! last_scan=%s",
+                            elapsed / 60, state.last_scan
                         )
-                        scan_healthy = False
-                    # 1 saatten fazlaysa bot'u durdur
-                    if elapsed > _WATCHDOG_RESTART:
-                        logger.critical("SCAN LOOP DEAD for >%.0f min — stopping bot for restart", elapsed / 60)
+                    scan_healthy = False
+                    if elapsed > 300:  # 5 minutes - restart
+                        logger.critical(
+                            "SCAN LOOP DEAD for >5 min - stopping bot for restart"
+                        )
                         state.is_running = False
                         break
-                elif elapsed > _WATCHDOG_WARNING:
-                    logger.warning("SCAN LOOP WATCHDOG: Last scan %.1f min ago (warning)", elapsed / 60)
                 else:
                     if not scan_healthy:
-                        logger.info("Scan loop recovered — healthy again")
+                        logger.info("Scan loop recovered - healthy again")
                     scan_healthy = True
             else:
-                if scan_healthy:
-                    logger.warning("SCAN LOOP WATCHDOG: last_scan is None (never ran?)")
-                    scan_healthy = False
+                scan_healthy = False
 
-            # ── Normal settlement işlemi ──
+            # Normal settlement
             await asyncio.to_thread(run_settle)
 
             today = datetime.now(timezone.utc).date()
             if last_cleanup_date != today:
                 from database.db_cleanup import auto_cleanup
-
                 await asyncio.to_thread(auto_cleanup, hot_days=10, cold_days=120)
                 last_cleanup_date = today
 
@@ -217,7 +259,7 @@ async def settlement_loop(state):
         except Exception as e:
             logger.error("Settle error: %s", e, exc_info=True)
 
-        await asyncio.sleep(state.config.SETTLEMENT_INTERVAL)
+        await asyncio.sleep(60)
 
     logger.info("Settlement loop exited (is_running=%s)", state.is_running)
 
@@ -245,7 +287,6 @@ def _cleanup_stale_bets():
 
             if should_cancel:
                 from utils.accounting import credit_sale
-
                 bet.status = "cancelled"
                 bet.settled_at = now
                 bet.close_reason = "stale_cleanup"

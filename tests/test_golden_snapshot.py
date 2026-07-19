@@ -50,20 +50,25 @@ def compute_hash(data: dict) -> str:
 # 1. HISTORICAL CALIBRATIONS SNAPSHOT
 # ============================================================================
 
-
 class TestHistoricalCalibrations:
     """Historical calibrations snapshot testleri."""
 
     def test_calibration_data_structure(self):
         """Kalibrasyon veri yapısı değişmemeli."""
         # Beklenen yapı
-        expected_keys = {"city_code", "city", "date", "metric", "model", "predicted_value", "actual_value", "bias"}
+        expected_keys = {
+            "city_code", "city", "date", "metric",
+            "model", "predicted_value", "actual_value", "bias"
+        }
 
         # Bu yapı değişirse test fail eder
         snapshot = load_snapshot("calibration_structure")
         if not snapshot:
             # İlk çalıştırma: kaydet
-            save_snapshot("calibration_structure", {"required_keys": list(expected_keys), "version": "1.0"})
+            save_snapshot("calibration_structure", {
+                "required_keys": list(expected_keys),
+                "version": "1.0"
+            })
             return
 
         # Sonraki çalıştırmalarda karşılaştır
@@ -84,32 +89,27 @@ class TestHistoricalCalibrations:
         # Karşılaştır
         for model, weight in snapshot.items():
             assert model in current_weights, f"Model {model} missing"
-            assert abs(current_weights[model] - weight) < 0.01, (
+            assert abs(current_weights[model] - weight) < 0.01, \
                 f"Weight changed for {model}: {weight} -> {current_weights[model]}"
-            )
 
 
 # ============================================================================
 # 2. FEE CALCULATION SNAPSHOT
 # ============================================================================
 
-
 class TestFeeCalculationSnapshot:
     """Fee hesaplama snapshot testleri."""
 
-    @pytest.mark.parametrize(
-        "shares,price,fee_rate,expected_fee",
-        [
-            (100, 0.50, 0.05, 1.25),
-            (100, 0.25, 0.05, 0.9375),
-            (100, 0.75, 0.05, 0.9375),
-            (100, 0.10, 0.05, 0.45),
-            (100, 0.90, 0.05, 0.45),
-            (50, 0.50, 0.05, 0.625),
-            (200, 0.50, 0.05, 2.5),
-            (100, 0.50, 0.07, 1.75),
-        ],
-    )
+    @pytest.mark.parametrize("shares,price,fee_rate,expected_fee", [
+        (100, 0.50, 0.05, 1.25),
+        (100, 0.25, 0.05, 0.9375),
+        (100, 0.75, 0.05, 0.9375),
+        (100, 0.10, 0.05, 0.45),
+        (100, 0.90, 0.05, 0.45),
+        (50, 0.50, 0.05, 0.625),
+        (200, 0.50, 0.05, 2.5),
+        (100, 0.50, 0.07, 1.75),
+    ])
     def test_fee_values_snapshot(self, shares, price, fee_rate, expected_fee):
         """Fee değerleri snapshot'ı - refactor sonrası değişmemeli."""
         from utils.formulas import polymarket_fee
@@ -126,7 +126,8 @@ class TestFeeCalculationSnapshot:
             return
 
         if snapshot_key in snapshot:
-            assert abs(fee - snapshot[snapshot_key]) < 0.01, f"Fee changed: {fee} -> {snapshot[snapshot_key]}"
+            assert abs(fee - snapshot[snapshot_key]) < 0.01, \
+                f"Fee changed: {fee} -> {snapshot[snapshot_key]}"
         else:
             # Yeni test case, kaydet
             snapshot[snapshot_key] = fee
@@ -136,7 +137,6 @@ class TestFeeCalculationSnapshot:
 # ============================================================================
 # 3. PORTFOLIO VALUE SNAPSHOT
 # ============================================================================
-
 
 class TestPortfolioValueSnapshot:
     """Portfolio değer snapshot testleri."""
@@ -152,7 +152,8 @@ class TestPortfolioValueSnapshot:
             save_snapshot("portfolio_values", {"initial": initial})
             return
 
-        assert initial == snapshot["initial"], f"Initial portfolio changed: {initial} -> {snapshot['initial']}"
+        assert initial == snapshot["initial"], \
+            f"Initial portfolio changed: {initial} -> {snapshot['initial']}"
 
     def test_max_bet_cap_snapshot(self):
         """Max bet cap değişmemeli."""
@@ -175,21 +176,17 @@ class TestPortfolioValueSnapshot:
 # 4. SETTLEMENT PNL SNAPSHOT
 # ============================================================================
 
-
 class TestSettlementPnLSnapshot:
     """Settlement PnL snapshot testleri."""
 
-    @pytest.mark.parametrize(
-        "stake,entry_price,entry_fee,won,expected_pnl",
-        [
-            (100, 0.60, 1.50, True, 65.17),  # Won
-            (100, 0.60, 1.50, False, -101.50),  # Lost
-            (50, 0.50, 1.0, True, 99.0),  # Won
-            (50, 0.50, 1.0, False, -51.0),  # Lost
-            (100, 0.25, 1.0, True, 299.0),  # Won (low price)
-            (100, 0.75, 1.0, True, 32.33),  # Won (high price)
-        ],
-    )
+    @pytest.mark.parametrize("stake,entry_price,entry_fee,won,expected_pnl", [
+        (100, 0.60, 1.50, True, 65.17),    # Won
+        (100, 0.60, 1.50, False, -101.50),  # Lost
+        (50, 0.50, 1.0, True, 99.0),        # Won
+        (50, 0.50, 1.0, False, -51.0),      # Lost
+        (100, 0.25, 1.0, True, 299.0),      # Won (low price)
+        (100, 0.75, 1.0, True, 32.33),      # Won (high price)
+    ])
     def test_settlement_pnl_snapshot(self, stake, entry_price, entry_fee, won, expected_pnl):
         """Settlement PnL snapshot'ı - refactor sonrası değişmemeli."""
         from utils.formulas import settlement_pnl
@@ -205,7 +202,8 @@ class TestSettlementPnLSnapshot:
             return
 
         if snapshot_key in snapshot:
-            assert abs(pnl - snapshot[snapshot_key]) < 0.1, f"PnL changed: {pnl} -> {snapshot[snapshot_key]}"
+            assert abs(pnl - snapshot[snapshot_key]) < 0.1, \
+                f"PnL changed: {pnl} -> {snapshot[snapshot_key]}"
         else:
             snapshot[snapshot_key] = round(pnl, 2)
             save_snapshot("settlement_pnl", snapshot)
@@ -214,7 +212,6 @@ class TestSettlementPnLSnapshot:
 # ============================================================================
 # 5. WALK-FORWARD SPLIT SNAPSHOT
 # ============================================================================
-
 
 class TestWalkForwardSplit:
     """Walk-forward split snapshot testleri."""
@@ -233,7 +230,10 @@ class TestWalkForwardSplit:
 
         snapshot = load_snapshot("walk_forward_properties")
         if not snapshot:
-            save_snapshot("walk_forward_properties", {"properties": expected_properties, "version": "1.0"})
+            save_snapshot("walk_forward_properties", {
+                "properties": expected_properties,
+                "version": "1.0"
+            })
             return
 
         assert set(snapshot["properties"]) == set(expected_properties)

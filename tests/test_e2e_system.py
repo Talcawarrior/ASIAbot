@@ -1,9 +1,9 @@
-"""End-to-End System Tests - Tüm sistemi adım adım test eder.
+﻿"""End-to-End System Tests - TÃ¼m sistemi adÄ±m adÄ±m test eder.
 
-Her bir adım bir öncekinin sonucuna bağlıdır.
-Test sırası gerçek bot akışını takip eder.
+Her bir adÄ±m bir Ã¶ncekinin sonucuna baÄŸlÄ±dÄ±r.
+Test sÄ±rasÄ± gerÃ§ek bot akÄ±ÅŸÄ±nÄ± takip eder.
 
-Kullanım:
+KullanÄ±m:
     pytest tests/test_e2e_system.py -v
     pytest tests/test_e2e_system.py -v -k "step1"
 """
@@ -16,28 +16,26 @@ from datetime import datetime, timezone, timedelta
 # STEP 1: BOT STARTUP & CONFIGURATION
 # ============================================================================
 
-
 class TestStep1_BotStartup:
-    """Adım 1: Bot başlatma ve yapılandırma."""
+    """AdÄ±m 1: Bot baÅŸlatma ve yapÄ±landÄ±rma."""
 
     def test_config_loads(self):
-        """Config doğru yükleniyor."""
+        """Config doÄŸru yÃ¼kleniyor."""
         from config.settings import config, bot_config
 
-        assert config.PORT == 8093
+        assert config.PORT == 8091
         assert config.DRY_RUN is True
         assert bot_config.strategy.min_edge > 0
         assert bot_config.strategy.kelly_fraction > 0
 
     def test_database_initializes(self):
-        """Veritabanı başlatılıyor."""
+        """VeritabanÄ± baÅŸlatÄ±lÄ±yor."""
         from database.db import init_db
-
         init_db()
-        # Başarılıysa hata fırlatmaz
+        # BaÅŸarÄ±lÄ±ysa hata fÄ±rlatmaz
 
     def test_portfolio_exists(self):
-        """Portföy kaydı mevcut."""
+        """PortfÃ¶y kaydÄ± mevcut."""
         from database.db import get_session
         from database.models import Portfolio
 
@@ -47,7 +45,7 @@ class TestStep1_BotStartup:
             assert pf.cash_balance > 0
 
     def test_models_import(self):
-        """Tüm modüller import edilebiliyor."""
+        """TÃ¼m modÃ¼ller import edilebiliyor."""
         from engine.calculator import Calculator, WeatherEngine
 
         assert Calculator is not None
@@ -58,26 +56,25 @@ class TestStep1_BotStartup:
 # STEP 2: MARKET FETCHING
 # ============================================================================
 
-
 class TestStep2_MarketFetching:
-    """Adım 2: Market verilerinin çekilmesi."""
+    """AdÄ±m 2: Market verilerinin Ã§ekilmesi."""
 
     def test_polymarket_scraper_initializes(self):
-        """Polymarket scraper başlatılıyor."""
+        """Polymarket scraper baÅŸlatÄ±lÄ±yor."""
         from scrapers.polymarket import PolymarketScraper
 
         scraper = PolymarketScraper()
         assert scraper is not None
 
     def test_market_parser_works(self):
-        """Market parser çalışıyor."""
+        """Market parser Ã§alÄ±ÅŸÄ±yor."""
         from engine.market_parser import MarketParser
 
         parser = MarketParser()
         assert parser is not None
 
     def test_weather_fetcher_initializes(self):
-        """Hava durumu fetcher başlatılıyor."""
+        """Hava durumu fetcher baÅŸlatÄ±lÄ±yor."""
         from scrapers.meteo import MeteoFetcher
 
         fetcher = MeteoFetcher()
@@ -88,19 +85,18 @@ class TestStep2_MarketFetching:
 # STEP 3: PROBABILITY CALCULATION
 # ============================================================================
 
-
 class TestStep3_ProbabilityCalculation:
-    """Adım 3: Olasılık hesaplama."""
+    """AdÄ±m 3: OlasÄ±lÄ±k hesaplama."""
 
     def test_calculator_initializes(self):
-        """Calculator başlatılıyor."""
+        """Calculator baÅŸlatÄ±lÄ±yor."""
         from engine.calculator import Calculator
 
         calc = Calculator()
         assert calc is not None
 
     def test_probability_range(self):
-        """Olasılık 0-1 arasında."""
+        """OlasÄ±lÄ±k 0-1 arasÄ±nda."""
         from engine.calculator import Calculator
 
         calc = Calculator()
@@ -120,7 +116,7 @@ class TestStep3_ProbabilityCalculation:
         assert kelly > 0
 
     def test_kelly_zero_for_negative_edge(self):
-        """Negatif edge'de Kelly sıfır."""
+        """Negatif edge'de Kelly sÄ±fÄ±r."""
         from engine.calculator import Calculator
 
         calc = Calculator()
@@ -129,23 +125,22 @@ class TestStep3_ProbabilityCalculation:
 
 
 # ============================================================================
-# STEP 4: EDGE CALCULATION (KRİTİK)
+# STEP 4: EDGE CALCULATION (KRÄ°TÄ°K)
 # ============================================================================
 
-
 class TestStep4_EdgeCalculation:
-    """Adım 4: Edge hesaplama - negatif edge engeli."""
+    """AdÄ±m 4: Edge hesaplama - negatif edge engeli."""
 
     def test_no_negative_edge_bet(self):
-        """Negatif edge ile bahis AÇILMAZ."""
-        # should_bet mantığı
+        """Negatif edge ile bahis AÃ‡ILMAZ."""
+        # should_bet mantÄ±ÄŸÄ±
         test_cases = [
-            (-0.018, 0.01, False),  # -1.8% edge → False
-            (-0.05, 0.01, False),  # -5% → False
-            (0.0, 0.01, False),  # 0% → False
-            (0.005, 0.01, False),  # 0.5% < 1% → False
-            (0.01, 0.01, True),  # 1% = 1% → True
-            (0.02, 0.01, True),  # 2% > 1% → True
+            (-0.018, 0.01, False),   # -1.8% edge â†' False
+            (-0.05, 0.01, False),    # -5% â†' False
+            (0.0, 0.01, False),      # 0% â†' False
+            (0.005, 0.01, False),    # 0.5% < 1% â†' False
+            (0.01, 0.01, True),      # 1% = 1% â†' True
+            (0.02, 0.01, True),      # 2% > 1% â†' True
         ]
 
         for net_edge, min_edge, expected in test_cases:
@@ -153,7 +148,7 @@ class TestStep4_EdgeCalculation:
             assert should_bet == expected
 
     def test_slippage_can_make_edge_negative(self):
-        """Slippage negatif edge yapabilir - bahis açılmamalı."""
+        """Slippage negatif edge yapabilir - bahis aÃ§Ä±lmamalÄ±."""
         raw_edge = 0.0063
         slippage = 0.025
         net_edge = raw_edge - slippage  # -0.0187
@@ -163,20 +158,20 @@ class TestStep4_EdgeCalculation:
         assert should_bet is False
 
     def test_no_abs_in_should_bet(self):
-        """should_bet koşulunda abs() kullanılmamalı."""
+        """should_bet koÅŸulunda abs() kullanÄ±lmamalÄ±."""
         import inspect
         from engine.calculator import Calculator
 
         source = inspect.getsource(Calculator.analyze_market)
-        lines = source.split("\n")
+        lines = source.split('\n')
 
         in_should_bet = False
         for line in lines:
-            if "should_bet = (" in line:
+            if 'should_bet = (' in line:
                 in_should_bet = True
-            if in_should_bet and "abs(" in line:
+            if in_should_bet and 'abs(' in line:
                 pytest.fail("should_bet'te abs() var!")
-            if in_should_bet and ")" in line and "and" not in line:
+            if in_should_bet and ')' in line and 'and' not in line:
                 in_should_bet = False
 
 
@@ -184,9 +179,8 @@ class TestStep4_EdgeCalculation:
 # STEP 5: RISK MANAGEMENT
 # ============================================================================
 
-
 class TestStep5_RiskManagement:
-    """Adım 5: Risk yönetimi mekanizmaları."""
+    """AdÄ±m 5: Risk yÃ¶netimi mekanizmalarÄ±."""
 
     def test_stop_loss_triggers(self):
         """Stop-loss tetiklenmeli."""
@@ -204,28 +198,28 @@ class TestStep5_RiskManagement:
         from config.settings import bot_config
 
         entry = 0.25
-        current = 0.55  # %120 kâr
+        current = 0.55  # %120 kÃ¢r
         take_profit_pct = bot_config.risk.take_profit_pct  # 1.0
 
         profit_pct = (current - entry) / entry
         assert profit_pct >= take_profit_pct
 
     def test_near_certain_win_triggers(self):
-        """%98+ fiyat → otomatik kapat."""
+        """%98+ fiyat â†' otomatik kapat."""
         current_price = 0.99
-        assert current_price >= 0.98  # near_certain_win eşiği
+        assert current_price >= 0.98  # near_certain_win eÅŸiÄŸi
 
     def test_trailing_stop_logic(self):
-        """Trailing stop mantığı."""
-        peak = 0.60  # Tırmanış
-        current = 0.50  # Tepeden %16.7 düşüş
+        """Trailing stop mantÄ±ÄŸÄ±."""
+        peak = 0.60  # TÄ±rmanÄ±ÅŸ
+        current = 0.50  # Tepeden %16.7 dÃ¼ÅŸÃ¼ÅŸ
         trailing_stop_pct = 0.15
 
         drop_pct = (peak - current) / peak
         assert drop_pct >= trailing_stop_pct  # Tetiklenmeli
 
     def test_time_decay_logic(self):
-        """Time decay mantığı."""
+        """Time decay mantÄ±ÄŸÄ±."""
         hours_left = 12  # 24 saatten az
         loss_pct = -0.15  # %15 zararda
         time_decay_hours = 24
@@ -239,25 +233,23 @@ class TestStep5_RiskManagement:
 # STEP 6: BET PLACEMENT
 # ============================================================================
 
-
 class TestStep6_BetPlacement:
-    """Adım 6: Bahis yerleştirme."""
+    """AdÄ±m 6: Bahis yerleÅŸtirme."""
 
     def test_bet_placer_initializes(self):
-        """BetPlacer başlatılıyor."""
+        """BetPlacer baÅŸlatÄ±lÄ±yor."""
         from executor.bet_placer import BetPlacer
 
         placer = BetPlacer()
         assert placer is not None
 
     def test_dry_run_mode(self):
-        """DRY_RUN modunda gerçek bahis yapılmaz."""
+        """DRY_RUN modunda gerÃ§ek bahis yapÄ±lmaz."""
         from config.settings import config
-
         assert config.DRY_RUN is True
 
     def test_max_bet_cap(self):
-        """Max bet cap doğru hesaplanıyor."""
+        """Max bet cap doÄŸru hesaplanÄ±yor."""
         from utils.formulas import max_bet_cap
 
         portfolio = 1000.0
@@ -266,18 +258,18 @@ class TestStep6_BetPlacement:
         assert cap == 3.0
 
     def test_kelly_bet_size(self):
-        """Kelly bet boyutu max cap'i aşmaz."""
+        """Kelly bet boyutu max cap'i aÅŸmaz."""
         from utils.kelly import kelly_fraction
         from utils.formulas import max_bet_cap
 
         portfolio = 1000.0
         kelly = kelly_fraction(prob=0.65, price=0.55)
-        # Kelly fraction uygula (varsayılan 0.15)
+        # Kelly fraction uygula (varsayÄ±lan 0.15)
         bet_amount = kelly * 0.15 * portfolio
         max_bet_cap(portfolio, 0.003)
 
-        # Kelly bet cap'i aşabilir (bu normal - risk yönetimi devreye girer)
-        # Sadece pozitif olduğunu doğrula
+        # Kelly bet cap'i aÅŸabilir (bu normal - risk yÃ¶netimi devreye girer)
+        # Sadece pozitif olduÄŸunu doÄŸrula
         assert bet_amount > 0
 
 
@@ -285,12 +277,11 @@ class TestStep6_BetPlacement:
 # STEP 7: FEE CALCULATION
 # ============================================================================
 
-
 class TestStep7_FeeCalculation:
-    """Adım 7: Fee hesaplama."""
+    """AdÄ±m 7: Fee hesaplama."""
 
     def test_fee_never_negative(self):
-        """Fee hiçbir zaman negatif olmamalı."""
+        """Fee hiÃ§bir zaman negatif olmamalÄ±."""
         from utils.formulas import polymarket_fee
 
         test_prices = [0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99]
@@ -299,7 +290,7 @@ class TestStep7_FeeCalculation:
             assert fee >= 0
 
     def test_fee_highest_at_midpoint(self):
-        """Fee midpoint'te en yüksek."""
+        """Fee midpoint'te en yÃ¼ksek."""
         from utils.formulas import polymarket_fee
 
         fee_low = polymarket_fee(shares=100, price=0.10, fee_rate=0.05)
@@ -310,7 +301,7 @@ class TestStep7_FeeCalculation:
         assert fee_mid > fee_high
 
     def test_fee_from_stake_matches(self):
-        """Fee from stake formülü tutarlı."""
+        """Fee from stake formÃ¼lÃ¼ tutarlÄ±."""
         from utils.formulas import polymarket_fee, polymarket_fee_from_stake
 
         stake = 100.0
@@ -327,9 +318,8 @@ class TestStep7_FeeCalculation:
 # STEP 8: SETTLEMENT
 # ============================================================================
 
-
 class TestStep8_Settlement:
-    """Adım 8: Settlement hesaplama."""
+    """AdÄ±m 8: Settlement hesaplama."""
 
     def test_won_bet_pnl(self):
         """Kazanan bahiste PnL pozitif."""
@@ -346,7 +336,7 @@ class TestStep8_Settlement:
         assert pnl < 0
 
     def test_settler_initializes(self):
-        """SettlementEngine başlatılıyor."""
+        """SettlementEngine baÅŸlatÄ±lÄ±yor."""
         from executor.settler import SettlementEngine
 
         settler = SettlementEngine()
@@ -357,9 +347,8 @@ class TestStep8_Settlement:
 # STEP 9: PORTFOLIO CALCULATIONS
 # ============================================================================
 
-
 class TestStep9_PortfolioCalculations:
-    """Adım 9: Portföy hesaplamaları."""
+    """AdÄ±m 9: PortfÃ¶y hesaplamalarÄ±."""
 
     def test_portfolio_current_value(self):
         """Portfolio market value."""
@@ -395,18 +384,16 @@ class TestStep9_PortfolioCalculations:
 # STEP 10: API ENDPOINTS
 # ============================================================================
 
-
 class TestStep10_APIEndpoints:
-    """Adım 10: API endpoint'leri."""
+    """AdÄ±m 10: API endpoint'leri."""
 
     def test_api_imports(self):
-        """API modülü import edilebiliyor."""
+        """API modÃ¼lÃ¼ import edilebiliyor."""
         from api import app
-
         assert app is not None
 
     def test_status_endpoint(self):
-        """Status endpoint çalışıyor."""
+        """Status endpoint Ã§alÄ±ÅŸÄ±yor."""
         from fastapi.testclient import TestClient
         from api import app
 
@@ -415,7 +402,7 @@ class TestStep10_APIEndpoints:
         assert response.status_code == 200
 
     def test_markets_endpoint(self):
-        """Markets endpoint çalışıyor."""
+        """Markets endpoint Ã§alÄ±ÅŸÄ±yor."""
         from fastapi.testclient import TestClient
         from api import app
 
@@ -424,7 +411,7 @@ class TestStep10_APIEndpoints:
         assert response.status_code == 200
 
     def test_signals_endpoint(self):
-        """Signals endpoint çalışıyor."""
+        """Signals endpoint Ã§alÄ±ÅŸÄ±yor."""
         from fastapi.testclient import TestClient
         from api import app
 
@@ -433,7 +420,7 @@ class TestStep10_APIEndpoints:
         assert response.status_code == 200
 
     def test_history_endpoint(self):
-        """History endpoint çalışıyor."""
+        """History endpoint Ã§alÄ±ÅŸÄ±yor."""
         from fastapi.testclient import TestClient
         from api import app
 
@@ -446,27 +433,23 @@ class TestStep10_APIEndpoints:
 # STEP 11: SCAN LOOP INTEGRITY
 # ============================================================================
 
-
 class TestStep11_ScanLoopIntegrity:
-    """Adım 11: Scan loop bütünlüğü."""
+    """AdÄ±m 11: Scan loop bÃ¼tÃ¼nlÃ¼ÄŸÃ¼."""
 
     def test_scan_loop_imports(self):
         """Scan loop import edilebiliyor."""
         from bot_loop import scan_and_bet_loop, settlement_loop
-
         assert scan_and_bet_loop is not None
         assert settlement_loop is not None
 
     def test_scan_interval_configured(self):
-        """Scan interval yapılandırılmış."""
+        """Scan interval yapÄ±landÄ±rÄ±lmÄ±ÅŸ."""
         from config.settings import config
-
         assert config.SCAN_INTERVAL > 0
 
     def test_settlement_interval_configured(self):
-        """Settlement interval yapılandırılmış."""
+        """Settlement interval yapÄ±landÄ±rÄ±lmÄ±ÅŸ."""
         from config.settings import config
-
         assert config.SETTLEMENT_INTERVAL > 0
 
 
@@ -474,12 +457,11 @@ class TestStep11_ScanLoopIntegrity:
 # STEP 12: COMPLETE FLOW (MOCK)
 # ============================================================================
 
-
 class TestStep12_CompleteFlow:
-    """Adım 12: Tam akış (mock ile)."""
+    """AdÄ±m 12: Tam akÄ±ÅŸ (mock ile)."""
 
     def test_full_analysis_flow(self):
-        """Tam analiz akışı - mock ile."""
+        """Tam analiz akÄ±ÅŸÄ± - mock ile."""
         from engine.calculator import Calculator
 
         calc = Calculator()
@@ -498,12 +480,11 @@ class TestStep12_CompleteFlow:
 
         # Fee hesapla
         from utils.formulas import polymarket_fee
-
         fee = polymarket_fee(shares=100, price=0.55, fee_rate=0.05)
         assert fee >= 0
 
     def test_risk_check_flow(self):
-        """Risk kontrol akışı."""
+        """Risk kontrol akÄ±ÅŸÄ±."""
         from config.settings import bot_config
 
         # Mock bet
@@ -511,13 +492,13 @@ class TestStep12_CompleteFlow:
         current = 0.35
         loss_pct = (current - entry) / entry  # -0.30 = %30 zarar
 
-        # Stop-loss kontrolü (%30 zararda kapat)
+        # Stop-loss kontrolÃ¼ (%30 zararda kapat)
         if loss_pct <= -bot_config.risk.stop_loss_pct:
             should_close = True
         else:
             should_close = False
 
-        # %30 zarar = %30 stop-loss threshold → tetiklenmeli
+        # %30 zarar = %30 stop-loss threshold â†' tetiklenmeli
         assert should_close is True
 
 
@@ -525,54 +506,54 @@ class TestStep12_CompleteFlow:
 # STEP 13: SMART SCAN DETECTION
 # ============================================================================
 
-
 class TestStep13_SmartScan:
-    """Adım 13: Akıllı tarama algılama."""
+    """AdÄ±m 13: AkÄ±llÄ± tarama algÄ±lama."""
 
     def test_get_market_count(self):
-        """Market sayısı alınıyor."""
+        """Market sayÄ±sÄ± alÄ±nÄ±yor."""
         from bot_loop import _get_market_count
 
         count = _get_market_count()
         assert count >= 0
 
     def test_fast_mode_detection(self):
-        """Yeni market algılarsa hızlı mod tetiklenmeli."""
+        """Yeni market algÄ±larsa hÄ±zlÄ± mod tetiklenmeli."""
 
         now = datetime.now(timezone.utc)
         previous_count = 100
         current_count = 120  # 20 yeni market
 
-        # Yeni market varsa hızlı mod
+        # Yeni market varsa hÄ±zlÄ± mod
         if current_count > previous_count:
             fast_mode_until = now + timedelta(minutes=30)
             assert fast_mode_until > now
 
     def test_scan_interval_selection(self):
-        """Doğru scan interval seçilmeli."""
+        """DoÄŸru scan interval seÃ§ilmeli."""
         from bot_loop import _get_scan_interval
 
         now = datetime.now(timezone.utc)
 
-        # Midnight window kontrolü - şu an aktif olabilir
+        # Midnight window kontrolÃ¼ - ÅŸu an aktif olabilir
         is_midnight = now.hour == 0 and now.minute < 60
 
-        # Normal mod (midnight değilse)
+        # Normal mod (midnight deÄŸilse)
         if not is_midnight:
             interval = _get_scan_interval(now, None)
-            assert interval == 900  # 15 dakika
+            assert interval == 300  # 5 dakika
 
-        # Hızlı mod
+        # HÄ±zlÄ± mod
         fast_mode_until = now + timedelta(minutes=10)
         interval = _get_scan_interval(now, fast_mode_until)
         assert interval == 60  # 60 saniye
 
-        # Hızlı mod süresi doldu
+        # HÄ±zlÄ± mod sÃ¼resi doldu
         fast_mode_until = now - timedelta(minutes=5)
         interval = _get_scan_interval(now, fast_mode_until)
         if not is_midnight:
-            assert interval == 900  # Normal moda döndü
+            assert interval == 300  # Normal mod - 5 dakika
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+

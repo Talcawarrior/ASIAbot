@@ -67,11 +67,12 @@ def init_db():
     _migrate_add_column("historical_calibrations", "bias", "FLOAT")
     # Migration: add entry_fee to bets (Polymarket taker fee at entry time)
     _migrate_add_column("bets", "entry_fee", "FLOAT")
-    # Migration: add fee_rate to weather_markets (Polymarket dynamic fee rate)
-    _migrate_add_column("weather_markets", "fee_rate", "FLOAT")
 
     _DB_INITIALIZED = True
     logger.info("Database initialized at %s with WAL mode", DB_PATH)
+
+    # Ensure initial portfolio exists
+    ensure_initial_portfolio()
 
 
 def _ensure_db_init():

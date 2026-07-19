@@ -1126,7 +1126,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
               <div className="py-1 px-2 rounded" style={{ backgroundColor: `${TEAL_LIGHT}80` }}>
                 <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Son Tarama</p>
                 <p className="text-xs font-mono tabular-nums" style={{ color: TEAL }}>
-                  {h.activity_24h.pass_reasons[0]?.time ? new Date(h.activity_24h.pass_reasons[0].time).toLocaleString("tr-TR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }) : "—"}
+                  {h.activity_24h.pass_reasons[0]?.time ? new Date(h.activity_24h.pass_reasons[0].time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "—"}
                 </p>
               </div>
             )}
@@ -1350,7 +1350,7 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-50 bg-white dark:bg-gray-900 border-b" style={{ borderColor: BORDER }}>
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14">
           <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">ASIAbot</h1>
+            <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">Junbo</h1>
             <div className="flex items-center gap-1.5">
               {data.isLoading && !data.status ? (
                 <>
@@ -1388,7 +1388,7 @@ export default function DashboardPage() {
             )}
             {data.health?.activity_24h?.pass_reasons?.[0]?.time && (
               <span className="text-[10px] tabular-nums" style={{ color: TEAL }}>
-                Son Tarama: {new Date(data.health.activity_24h.pass_reasons[0].time).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                Son Tarama: {new Date(data.health.activity_24h.pass_reasons[0].time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}
               </span>
             )}
             <button
@@ -1447,7 +1447,7 @@ export default function DashboardPage() {
       {/* ---- FOOTER ---- */}
       <footer className="mt-auto py-4 text-center">
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          ASIAbot — Polymarket Hava Ticaret Botu - SIA Modeli ile Otomatik İşlem
+          Junbo — Polymarket Hava Ticaret Botu - SIA Modeli ile Otomatik İşlem
         </p>
       </footer>
     </div>

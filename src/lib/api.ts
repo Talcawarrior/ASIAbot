@@ -1,5 +1,5 @@
 // ==========================================
-// ASIAbot Dashboard — Real API Client
+// Junbo Dashboard — Real API Client
 // ==========================================
 "use client";
 

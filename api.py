@@ -1,4 +1,4 @@
-"""FastAPI application for ASIAbot - Polymarket weather betting bot.
+﻿"""FastAPI application for asiabot - Polymarket weather betting bot.
 
 Provides REST API endpoints for status, markets, signals, history, cleanup,
 and WebSocket push. The bot runs fetch -> parse -> forecast -> analyze ->
@@ -22,7 +22,7 @@ from asi_engine.calibration_engine import CalibrationEngine
 from asi_engine.data_backfiller import DataBackfiller
 
 # ASI Engine imports (for ASI-Evolve dashboard endpoints)
-from asi_engine.orchestrator import ASIAbotOrchestrator
+from asi_engine.orchestrator import asiabotOrchestrator
 from config.logging_config import setup_logging
 
 # Package Imports
@@ -46,20 +46,36 @@ from utils.weights_store import load_weights
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Turkish month name mapping for equity curve DD/MM display
+TR_MONTHS = {
+    1: "Oca",
+    2: "Sub",
+    3: "Mar",
+    4: "Nis",
+    5: "May",
+    6: "Haz",
+    7: "Tem",
+    8: "Agu",
+    9: "Eyl",
+    10: "Eki",
+    11: "Kas",
+    12: "Ara",
+}
 
-# ── API Key Authentication ──────────────────────────────────────────────────
+
+# â”€â”€ API Key Authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Protects sensitive POST endpoints (reset, asi/*, start, stop, cleanup).
-# ASIAbot_API_KEY MUST be set. If not set, a random key is generated at startup
+# asiabot_API_KEY MUST be set. If not set, a random key is generated at startup
 # and printed to console. Destructive endpoints are NEVER open.
 
-API_KEY = os.getenv("ASIAbot_API_KEY", "")
+API_KEY = os.getenv("asiabot_API_KEY", "")
 if not API_KEY:
     API_KEY = secrets.token_urlsafe(32)
-    print(f"\n{'=' * 60}")
-    print("WARNING: ASIAbot_API_KEY not set. Generated random key:")
+    print(f"\n{'='*60}")
+    print("WARNING: asiabot_API_KEY not set. Generated random key:")
     print(f"  {API_KEY}")
-    print(f"Add to .env: ASIAbot_API_KEY={API_KEY}")
-    print(f"{'=' * 60}\n")
+    print(f"Add to .env: asiabot_API_KEY={API_KEY}")
+    print(f"{'='*60}\n")
 
 
 async def verify_api_key(x_api_key: str = Header(default="")):
@@ -73,7 +89,7 @@ async def verify_api_key(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-# ── Global State tracking for FastAPI Web App ───────────────────────────────
+# â”€â”€ Global State tracking for FastAPI Web App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class BotState:
     """Global bot state tracking running status, modules, and tasks."""
 
@@ -116,7 +132,7 @@ class BotState:
         self.sia_loop = SIALoop(self.db_session_factory, self.config)
 
         # ASI-Evolve engines
-        self.orchestrator = ASIAbotOrchestrator()
+        self.orchestrator = asiabotOrchestrator()
         self.backfiller = DataBackfiller()
         self.calibration_engine = CalibrationEngine()
 
@@ -127,9 +143,9 @@ state = BotState()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Lifespan context manager for startup and shutdown."""
-    logger.info("ASIAbot Weather Prediction Bot starting...")
+    logger.info("asiabot Weather Prediction Bot starting...")
 
-    # Startup'ta DB backup al (API ile başlatılsa bile)
+    # Startup'ta DB backup al (API ile baÅŸlatÄ±lsa bile)
     try:
         from db_backup import create_backup
 
@@ -147,7 +163,7 @@ async def lifespan(_app: FastAPI):
         logger.warning("Portfolio init warning: %s", e)
 
     logger.info("Database and all modules ready.")
-    logger.info("ASIAbot Weather Prediction Bot v1.0")
+    logger.info("asiabot Weather Prediction Bot v1.0")
     yield
 
     # Shutdown
@@ -160,11 +176,11 @@ async def lifespan(_app: FastAPI):
         state.tasks.clear()
 
 
-app = FastAPI(title="âš¡ ASIAbot - Self-Evolving Predictor", lifespan=lifespan)
+app = FastAPI(title="Ã¢Å¡Â¡ asiabot - Self-Evolving Predictor", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8093", "http://127.0.0.1:8093"],
+    allow_origins=["http://localhost:8091", "http://127.0.0.1:8091"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -256,7 +272,7 @@ def get_status():
             db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
         ) or 0.0
 
-        # 3. Counts â€” win/loss based on PnL (includes closed_early)
+        # 3. Counts Ã¢â‚¬â€ win/loss based on PnL (includes closed_early)
         _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
         win_count = sum(1 for b in _all_closed if (b.pnl or 0) > 0)
         loss_count = sum(1 for b in _all_closed if (b.pnl or 0) <= 0)
@@ -358,7 +374,7 @@ def get_status():
                 if dd > max_drawdown_pct:
                     max_drawdown_pct = round(dd, 2)
 
-        # Scan loop sağlık kontrolü
+        # Scan loop saÄŸlÄ±k kontrolÃ¼
         scan_health = "unknown"
         minutes_since_scan = None
         if state.last_scan:
@@ -375,7 +391,7 @@ def get_status():
             "is_running": state.is_running,
             "locked": state.locked,
             "scan_health": scan_health,
-            "last_scan": (state.last_scan.isoformat() + "Z") if state.last_scan else None,
+            "last_scan": state.last_scan.isoformat() + "Z" if state.last_scan else None,
             "minutes_since_last_scan": minutes_since_scan,
             "portfolio": {
                 "initial": initial_capital,
@@ -402,7 +418,7 @@ def get_status():
                 "win_count": win_count,
                 "loss_count": loss_count,
                 "total_closed": win_count + loss_count,
-                "last_scan": (state.last_scan.isoformat() + "Z") if state.last_scan else None,
+                "last_scan": state.last_scan.isoformat() + "Z" if state.last_scan else None,
             },
             "limits": {
                 "max_bet_pct": state.config.MAX_BET_PCT * 100,
@@ -471,7 +487,7 @@ def get_asi_weights():
             "brier_score": perf.brier_score if perf else None,
             "accuracy": perf.accuracy if perf else None,
             "num_predictions": perf.num_predictions if perf else 0,
-            "last_updated": perf.recorded_at.isoformat() + "Z" if perf and perf.recorded_at else None,
+            "last_updated": perf.recorded_at.isoformat() if perf and perf.recorded_at else None,
         }
     return result
 
@@ -480,7 +496,7 @@ def get_asi_weights():
 def get_asi_cognition():
     """Retrieve ASI Cognition Base insights."""
     if not state.orchestrator:
-        state.orchestrator = ASIAbotOrchestrator()
+        state.orchestrator = asiabotOrchestrator()
     return state.orchestrator.cognition_base.get_all_insights()
 
 
@@ -488,7 +504,7 @@ def get_asi_cognition():
 async def run_asi_evolve(_key: str = Depends(verify_api_key)):
     """Run an autonomous evolution pipeline round (5 rounds)."""
     if not state.orchestrator:
-        state.orchestrator = ASIAbotOrchestrator()
+        state.orchestrator = asiabotOrchestrator()
     loop = asyncio.get_running_loop()
     result = await loop.run_in_executor(None, state.orchestrator.run_evolution_pipeline, 5)
     return result
@@ -556,7 +572,7 @@ def get_markets():
                     "id": m.id,
                     "city": m.city,
                     "city_code": "SIGNAL",
-                    "date": m.target_date.isoformat() + "Z" if m.target_date else None,
+                    "date": m.target_date.isoformat() if m.target_date else None,
                     "outcome_type": m.metric or "YES",
                     "strike_temp": float(m.threshold) if m.threshold else 0,
                     "current_yes_bid": float(m.yes_price) if m.yes_price else 0,
@@ -605,7 +621,7 @@ def get_markets():
                     "id": m.id,
                     "city": m.city,
                     "city_code": "",
-                    "date": m.target_date.isoformat() + "Z" if m.target_date else None,
+                    "date": m.target_date.isoformat() if m.target_date else None,
                     "outcome_type": m.metric or "YES",
                     "strike_temp": float(m.threshold),
                     "current_yes_bid": current_price,
@@ -657,8 +673,8 @@ def get_bets(status: str = "", limit: int = 100, offset: int = 0):
                     "status": b.status,
                     "realized_pnl": float(b.realized_pnl or 0),
                     "unrealized_pnl": float(b.unrealized_pnl or 0),
-                    "placed_at": b.placed_at.isoformat() + "Z" if b.placed_at else None,
-                    "settled_at": b.settled_at.isoformat() + "Z" if b.settled_at else None,
+                    "placed_at": b.placed_at.isoformat() if b.placed_at else None,
+                    "settled_at": b.settled_at.isoformat() if b.settled_at else None,
                 }
             )
         return {"bets": bets, "count": len(bets), "total": total}
@@ -773,8 +789,8 @@ def get_signals():
                     "live_edge": live_edge,
                     "move_pct": move_pct,
                     "ladder_orders": _safe_parse_ladder(bet.ladder_data),
-                    "placed_at": bet.placed_at.isoformat() + "Z" if bet.placed_at else None,
-                    "resolution_date": res_date.isoformat() + "Z" if res_date else None,
+                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                    "resolution_date": res_date.isoformat() if res_date else None,
                     "status": bet.status,
                     "market_type": market.market_type if market else None,
                     "threshold": float(market.threshold) if market and market.threshold else None,
@@ -795,7 +811,7 @@ def get_history():
         from sqlalchemy import case, func
 
         # True settlement stats: won+lost+settled+closed_early
-        # closed_early bets are real exits â€” their PnL is realized cash.
+        # closed_early bets are real exits Ã¢â‚¬â€ their PnL is realized cash.
         # Excluding them from stats gives a misleadingly small picture.
         real_settled_statuses = ["settled", "won", "lost", "closed_early"]
 
@@ -841,7 +857,7 @@ def get_history():
         )
         avg_edge = float(avg_edge_q or 0.0)
 
-        # Partial TP: open betlerde partial_tp_done=True olanlar (işlem geçmişinde göster)
+        # Partial TP: open betlerde partial_tp_done=True olanlar (iÅŸlem geÃ§miÅŸinde gÃ¶ster)
         partial_tp_bets = (
             db.query(Bet)
             .filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.partial_tp_done.is_(True))
@@ -904,9 +920,9 @@ def get_history():
                     "roi": round(roi, 2),
                     "edge": edge_pct,
                     "result": "WIN" if pnl > 0 else "LOSS",
-                    "placed_at": bet.placed_at.isoformat() + "Z" if bet.placed_at else None,
-                    "settled_at": (bet.settled_at.isoformat() + "Z" if bet.settled_at else None),
-                    "closed_at": (bet.closed_at.isoformat() + "Z" if bet.closed_at else None),
+                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
+                    "settled_at": (bet.settled_at.isoformat() if bet.settled_at else None),
+                    "closed_at": (bet.closed_at.isoformat() if bet.closed_at else None),
                     "exit_type": exit_type,
                 }
             )
@@ -930,7 +946,7 @@ def get_history():
                     "roi": round(roi, 2),
                     "edge": None,
                     "result": "PARTIAL_TP",
-                    "placed_at": bet.placed_at.isoformat() + "Z" if bet.placed_at else None,
+                    "placed_at": bet.placed_at.isoformat() if bet.placed_at else None,
                     "settled_at": None,
                     "closed_at": None,
                     "exit_type": "PT",
@@ -1002,7 +1018,7 @@ def get_equity_curve():
             running += pnl
             # Format: "24 Haz"
             d = datetime.strptime(day_str, "%Y-%m-%d")
-            label = f"{d.day} {d.strftime('%b')}"
+            label = f"{d.day} {TR_MONTHS[d.month]}"
             points.append(
                 {
                     "date": label,
@@ -1021,7 +1037,7 @@ def get_equity_curve():
         realized_now = running - initial  # all realized PnL accumulated
         today_val = initial + realized_now + float(unrealized)
         today = datetime.now(timezone.utc).replace(tzinfo=None)
-        label = f"{today.day} {today.strftime('%b')}"
+        label = f"{today.day} {TR_MONTHS[today.month]}"
         if points and points[-1]["date"] == label:
             points[-1]["value"] = round(today_val, 2)
         else:
@@ -1071,7 +1087,7 @@ def get_slippage():
         for analysis, city, _bet_side, entry_price, bet_pnl, _bet_status in rows:
             # Use Analysis fields for expected values, Bet fields for actuals
             expected_price = round(float(analysis.market_implied_prob or 0), 4)
-            side = analysis.recommended_side or "â€”"
+            side = analysis.recommended_side or "Ã¢â‚¬â€"
             # entry_price: 0 if no bet placed (frontend expects number)
             entry_price_val = round(float(entry_price), 4) if entry_price is not None else 0.0
             # result: PENDING if no bet, WIN/LOSS if bet settled
@@ -1082,13 +1098,13 @@ def get_slippage():
             entries.append(
                 {
                     "id": str(analysis.id),
-                    "city": city or "â€”",
+                    "city": city or "Ã¢â‚¬â€",
                     "side": side,
                     "expected_price": expected_price,
                     "entry_price": entry_price_val,
                     "slippage_pct": round(float(analysis.slippage_pct), 6),  # as decimal (0.005)
                     "result": result,
-                    "analyzed_at": (analysis.analyzed_at.isoformat() + "Z" if analysis.analyzed_at else None),
+                    "analyzed_at": (analysis.analyzed_at.isoformat() if analysis.analyzed_at else None),
                 }
             )
         return {"slippage": entries}
@@ -1116,7 +1132,7 @@ def cleanup_old_data(_key: str = Depends(verify_api_key)):
             bet.status = "cancelled"
             bet.settled_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-            # Calculate the actual debited amount â€” for ladder bets only
+            # Calculate the actual debited amount Ã¢â‚¬â€ for ladder bets only
             # filled rungs were debited; for flat bets the full amount.
             from utils.accounting import credit_sale
 
@@ -1167,7 +1183,7 @@ async def stop_bot(_key: str = Depends(verify_api_key)):
 @app.post("/api/reset")
 async def reset_bot(_key: str = Depends(verify_api_key)):
     """Reset the bot state and clear in-flight DB rows WITHOUT auto-restart."""
-    # Silmeden ÖNCE backup al — asla veri kaybı olmasın
+    # Silmeden Ã–NCE backup al â€” asla veri kaybÄ± olmasÄ±n
     try:
         from db_backup import create_backup
 
@@ -1175,7 +1191,7 @@ async def reset_bot(_key: str = Depends(verify_api_key)):
     except Exception as e:
         logger.warning("Pre-reset backup failed: %s", e)
 
-    # Bets ve portfolio'yu parquet'a arşivle (reset sonrası kurtarma için)
+    # Bets ve portfolio'yu parquet'a arÅŸivle (reset sonrasÄ± kurtarma iÃ§in)
     try:
         from database.db_cleanup import archive_bets_and_portfolio
 
@@ -1279,7 +1295,7 @@ def get_health_check():
                     "market_id": a.market_id,
                     "edge_pct": round((a.edge or 0) * 100, 2),
                     "reason": a.reason or "Bilinmeyen neden",
-                    "time": (a.analyzed_at.isoformat() + "Z") if a.analyzed_at else None,
+                    "time": a.analyzed_at.isoformat() + "Z" if a.analyzed_at else None,
                 }
             )
 
@@ -1364,10 +1380,10 @@ def get_health_check():
             else:
                 losses_by_exit[code] = losses_by_exit.get(code, 0) + 1
 
-        # 5. Red Flags â€” son 48 saatlik verilere gÃ¶re
+        # 5. Red Flags Ã¢â‚¬â€ son 48 saatlik verilere gÃƒÂ¶re
         red_flags = []
 
-        # Son 48 saatteki kayÄ±plarÄ± say
+        # Son 48 saatteki kayÃ„Â±plarÃ„Â± say
         recent_losses = sum(
             1
             for b in settled_all
@@ -1392,8 +1408,8 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"Son 48 saatte {recent_losses} kayÄ±p "
-                        f"(toplam {recent_total} sonuÃ§lanan). "
+                        f"Son 48 saatte {recent_losses} kayÃ„Â±p "
+                        f"(toplam {recent_total} sonuÃƒÂ§lanan). "
                         f"Calibration bozuk olabilir."
                     ),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
@@ -1407,19 +1423,19 @@ def get_health_check():
                     {
                         "severity": "warning",
                         "message": (
-                            f"Son 24 saatte {any_analyses} analiz yapÄ±ldÄ±"
-                            f" ama hiÃ§ bet aÃ§Ä±lmadÄ±."
-                            f" Edge threshold Ã§ok yÃ¼ksek olabilir."
+                            f"Son 24 saatte {any_analyses} analiz yapÃ„Â±ldÃ„Â±"
+                            f" ama hiÃƒÂ§ bet aÃƒÂ§Ã„Â±lmadÃ„Â±."
+                            f" Edge threshold ÃƒÂ§ok yÃƒÂ¼ksek olabilir."
                         ),
-                        "action": "min_edge'i dÃ¼ÅŸÃ¼r veya marketleri kontrol et.",
+                        "action": "min_edge'i dÃƒÂ¼Ã…Å¸ÃƒÂ¼r veya marketleri kontrol et.",
                     }
                 )
             else:
                 red_flags.append(
                     {
                         "severity": "info",
-                        "message": ("Son 24 saatte hiÃ§ analiz yapÄ±lmadÄ±. Market taramasÄ± Ã§alÄ±ÅŸÄ±yor mu?"),
-                        "action": "Market taramasÄ±nÄ± kontrol et.",
+                        "message": ("Son 24 saatte hiÃƒÂ§ analiz yapÃ„Â±lmadÃ„Â±. Market taramasÃ„Â± ÃƒÂ§alÃ„Â±Ã…Å¸Ã„Â±yor mu?"),
+                        "action": "Market taramasÃ„Â±nÃ„Â± kontrol et.",
                     }
                 )
 
@@ -1428,9 +1444,9 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"TÃ¼m net edge'ler %2.5 altÄ±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÅŸÄ±lamÄ±yor."
+                        f"TÃƒÂ¼m net edge'ler %2.5 altÃ„Â±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÃ…Å¸Ã„Â±lamÃ„Â±yor."
                     ),
-                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarÄ±nÄ± gÃ¶zden geÃ§ir."),
+                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarÃ„Â±nÃ„Â± gÃƒÂ¶zden geÃƒÂ§ir."),
                 }
             )
 
@@ -1438,8 +1454,8 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuÃ§lanmÄ±ÅŸ bet). Model tahminleri gÃ¼venilmez."),
-                    "action": "Kalibrasyon verisini kontrol et, evrim Ã§alÄ±ÅŸtÄ±r.",
+                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuÃƒÂ§lanmÃ„Â±Ã…Å¸ bet). Model tahminleri gÃƒÂ¼venilmez."),
+                    "action": "Kalibrasyon verisini kontrol et, evrim ÃƒÂ§alÃ„Â±Ã…Å¸tÃ„Â±r.",
                 }
             )
 
@@ -1449,10 +1465,10 @@ def get_health_check():
                 {
                     "severity": "warning",
                     "message": (
-                        f"AÅŸÄ±rÄ± bahis: 24s'de {bets_opened_24h} aÃ§Ä±lan, "
-                        f"{open_total} aÃ§Ä±k. Risk yÃ¶netimi aÅŸÄ±lÄ±yor."
+                        f"AÃ…Å¸Ã„Â±rÃ„Â± bahis: 24s'de {bets_opened_24h} aÃƒÂ§Ã„Â±lan, "
+                        f"{open_total} aÃƒÂ§Ã„Â±k. Risk yÃƒÂ¶netimi aÃ…Å¸Ã„Â±lÃ„Â±yor."
                     ),
-                    "action": "min_edge'i yÃ¼kselt, Kelly fraction'Ä± dÃ¼ÅŸÃ¼r.",
+                    "action": "min_edge'i yÃƒÂ¼kselt, Kelly fraction'Ã„Â± dÃƒÂ¼Ã…Å¸ÃƒÂ¼r.",
                 }
             )
 
@@ -1466,17 +1482,17 @@ def get_health_check():
                 {
                     "severity": "warning",
                     "message": (f"Son 48 saatte PnL negatif: ${recent_pnl:.2f}. Zarar trendi devam ediyor."),
-                    "action": "Botu izlemeye devam et. 3 gÃ¼n sonunda karar ver.",
+                    "action": "Botu izlemeye devam et. 3 gÃƒÂ¼n sonunda karar ver.",
                 }
             )
 
-        # 6. Daily PnL Timeline — forward from today (17/07, 18/07, 19/07, ...)
-        # Shows next 30 days. Past days with no data are not shown; today is
-        # the first (leftmost) bar. Future days show $0 until bets close.
+        # 6. Daily PnL Timeline â€” forward from today (17/07, 18/07, 19/07, ...)
+        # Shows 31 days: yesterday through 29 days ahead.
+        # Past days with data get real PnL bars; future days show $0.
         from sqlalchemy import or_
 
         daily_pnl = []
-        for i in range(30):
+        for i in range(-1, 29):
             day_start = (now + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = (now + timedelta(days=i + 1)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_bets = (
@@ -1501,7 +1517,7 @@ def get_health_check():
             day_total = day_wins + day_losses
             daily_pnl.append(
                 {
-                    "date": day_start.strftime("%m/%d"),
+                    "date": f"{day_start.day}/{day_start.month}",
                     "pnl": round(day_pnl, 2),
                     "stake": round(day_stake, 2),
                     "wins": day_wins,
@@ -1576,3 +1592,5 @@ async def websocket_endpoint(websocket: WebSocket, api_key: str = ""):
 # Re-export loop functions from bot_loop module so existing
 # callers (e.g. bot_lifespan in main.py) can import from here.
 from bot_loop import scan_and_bet_loop, settlement_loop  # noqa: E402, F401
+
+

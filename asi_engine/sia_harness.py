@@ -38,7 +38,12 @@ def predict_yes_probability(
         return 0.5
 
     weighted_mean = sum(weights.get(m, 0.0) * f for m, f in forecasts.items()) / wsum
-    variance = sum(weights.get(m, 0.0) * (f - weighted_mean) ** 2 for m, f in forecasts.items()) / wsum
+    variance = (
+        sum(
+            weights.get(m, 0.0) * (f - weighted_mean) ** 2 for m, f in forecasts.items()
+        )
+        / wsum
+    )
     std = math.sqrt(variance) if variance > 0 else 1.0
     effective_std = std * math.sqrt(max(days_ahead, 1))
 

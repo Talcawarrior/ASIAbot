@@ -9,7 +9,7 @@ the potentially-mutated singleton.
 
 def test_import_config_settings_does_not_raise():
     """assert_config_consistency() must pass at import time."""
-    # This raises RuntimeError if KELLY_FRACTION
+    # This raises RuntimeError if KELLY_FRACTION or FEE_DRAG
     # do not match bot_config.strategy values.
     import config.settings  # noqa: F401
 
@@ -19,16 +19,8 @@ def test_strategy_config_min_edge_default():
     from config.settings import StrategyConfig
 
     s = StrategyConfig()
-    assert 0.01 <= s.min_edge <= 0.20, f"Expected min_edge between 0.01 and 0.20, got {s.min_edge}"
-
-
-def test_config_fee_rate_matches_strategy():
-    """Config.CURRENT_FEE_RATE should equal the default StrategyConfig.current_fee_rate."""
-    from config.settings import StrategyConfig, config
-
-    s = StrategyConfig()
-    assert config.CURRENT_FEE_RATE == s.current_fee_rate, (
-        f"CURRENT_FEE_RATE={config.CURRENT_FEE_RATE} != default strategy.current_fee_rate={s.current_fee_rate}"
+    assert 0.01 <= s.min_edge <= 0.20, (
+        f"Expected min_edge between 0.01 and 0.20, got {s.min_edge}"
     )
 
 

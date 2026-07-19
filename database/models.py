@@ -1,4 +1,4 @@
-"""Database models for ASIAbot based on state machine architecture."""
+﻿"""Database models for asiabot based on state machine architecture."""
 
 import enum
 from datetime import datetime, timezone
@@ -34,37 +34,41 @@ class BetStatus(enum.Enum):
     LOST = "lost"
 
 
-# ── Open bet statuses ────────────────────────────────────────────────────
+# â”€â”€ Open bet statuses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # These status values all mean "bet is still active / not yet settled":
-#   "active"  — being monitored by risk management
-#   "open"    — initial state when a bet is created (default)
-#   "placed"  — successfully submitted to exchange
-#   "pending" — submitted but not yet confirmed
+#   "active"  â€” being monitored by risk management
+#   "open"    â€” initial state when a bet is created (default)
+#   "placed"  â€” successfully submitted to exchange
+#   "pending" â€” submitted but not yet confirmed
 OPEN_BET_STATUSES = ("active", "open", "placed", "pending")
 
 
 class WeatherMarket(Base):
-    """Polymarket'ten çekilen açık hava betleri."""
+    """Polymarket'ten Ã§ekilen aÃ§Ä±k hava betleri."""
 
     __tablename__ = "weather_markets"
 
     id = Column(String, primary_key=True)
     question = Column(String, nullable=False)
 
-    # Parse edilmiş bilgiler
+    # Parse edilmiÅŸ bilgiler
     city = Column(String)  # "New York"
     city_code = Column(String, default="")  # ICAO/city code
     metric = Column(String)  # "temperature_max"
     threshold = Column(Float)  # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)  # "fahrenheit" or "celsius"
-    threshold_low = Column(Float, nullable=True)  # range lower bound (°C), e.g. "88-89°F" → 31.1
-    threshold_high = Column(Float, nullable=True)  # range upper bound (°C), e.g. "88-89°F" → 31.7
+    threshold_low = Column(
+        Float, nullable=True
+    )  # range lower bound (°C), e.g. "88-89°F" ' 31.1
+    threshold_high = Column(
+        Float, nullable=True
+    )  # range upper bound (°C), e.g. "88-89°F" ' 31.7
     target_date = Column(DateTime)  # 2025-07-04
     latitude = Column(Float)  # Latitude
     longitude = Column(Float)  # Longitude
     market_type = Column(String, nullable=True)  # "HIGH", "LOW", or "RANGE"
 
-    # Polymarket fiyatları
+    # Polymarket fiyatlarÄ±
     yes_price = Column(Float)  # 0.35
     no_price = Column(Float)  # 0.65
     volume = Column(Float)  # $50,000
@@ -72,9 +76,6 @@ class WeatherMarket(Base):
 
     # Durum
     status = Column(String, default=MarketStatus.OPEN.value)
-
-    # Polymarket dinamik fee oranı (feeSchedule.rate), 0.05 default
-    fee_rate = Column(Float, default=0.05)
 
     # Meta
     first_seen = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -87,12 +88,12 @@ class WeatherMarket(Base):
 
 
 class WeatherForecast(Base):
-    """Meteoroloji API'lerinden çekilen tahminler."""
+    """Meteoroloji API'lerinden Ã§ekilen tahminler."""
 
     __tablename__ = "weather_forecasts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    market_id = Column(String)  # Hangi market için
+    market_id = Column(String)  # Hangi market iÃ§in
 
     # Konum
     city = Column(String)
@@ -103,7 +104,7 @@ class WeatherForecast(Base):
     target_date = Column(DateTime)
     metric = Column(String)  # "temperature_max"
 
-    # Farklı kaynaklardan gelen değerler
+    # FarklÄ± kaynaklardan gelen deÄŸerler
     source = Column(String)  # "openmeteo", "weatherapi", "accuweather"
     predicted_value = Column(Float)  # 92.5
     confidence = Column(Float)  # Varsa
@@ -114,32 +115,32 @@ class WeatherForecast(Base):
 
 
 class Analysis(Base):
-    """Analiz sonuçları."""
+    """Analiz sonuÃ§larÄ±."""
 
     __tablename__ = "analyses"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     market_id = Column(String)
 
-    # Hesaplanan değerler
-    estimated_probability = Column(Float)  # 0.72 (gerçek olasılık tahmini)
-    market_implied_prob = Column(Float)  # 0.35 (Polymarket'in fiyatı)
-    edge = Column(Float)  # 0.37 (fark) — now net edge after slippage+fee
+    # Hesaplanan deÄŸerler
+    estimated_probability = Column(Float)  # 0.72 (gerÃ§ek olasÄ±lÄ±k tahmini)
+    market_implied_prob = Column(Float)  # 0.35 (Polymarket'in fiyatÄ±)
+    edge = Column(Float)  # 0.37 (fark) â€” now net edge after slippage+fee
     raw_edge = Column(Float, nullable=True)  # pre-cost raw edge
     slippage_pct = Column(Float, nullable=True)  # estimated slippage at fill
 
-    # Kaynak detayları
+    # Kaynak detaylarÄ±
     avg_forecast_value = Column(Float)  # Ortalama tahmin: 92.5°F
     std_forecast_value = Column(Float)  # Standart sapma
-    num_sources = Column(Integer)  # Kaç kaynakta veri var
+    num_sources = Column(Integer)  # KaÃ§ kaynakta veri var
 
     # Karar
     recommended_side = Column(String)  # "YES" veya "NO"
     recommended_amount = Column(Float)  # Kelly criterion sonucu
     confidence_score = Column(Float)  # 0-1
 
-    should_bet = Column(Boolean, default=False)  # Bet açılmalı mı?
-    reason = Column(String)  # Neden evet/hayır
+    should_bet = Column(Boolean, default=False)  # Bet aÃ§Ä±lmalÄ± mÄ±?
+    reason = Column(String)  # Neden evet/hayÄ±r
 
     # Per-model predictions for SIA weight optimization.
     # JSON: {"model_temps": {"gfs_seamless": 32.5, ...},
@@ -150,7 +151,7 @@ class Analysis(Base):
 
 
 class Bet(Base):
-    """Açılan betler."""
+    """AÃ§Ä±lan betler."""
 
     __tablename__ = "bets"
 
@@ -185,12 +186,14 @@ class Bet(Base):
     order_id = Column(String)
     tx_hash = Column(String)
     error_message = Column(String)  # Hata varsa
-    entry_fee = Column(Float, default=0.0)  # Polymarket taker fee at entry (feeRate × stake × (1-p))
+    entry_fee = Column(
+        Float, default=0.0
+    )  # Polymarket taker fee at entry (feeRate Ã— stake Ã— (1-p))
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
     close_reason = Column(String, nullable=True)
-    closed_at = Column(DateTime, nullable=True)  # Early exit zamanı
+    closed_at = Column(DateTime, nullable=True)  # Early exit zamanÄ±
 
     # Partial take-profit state (principal recovery without full closure)
     partial_tp_done = Column(Boolean, default=False, nullable=False)
@@ -198,7 +201,7 @@ class Bet(Base):
 
 
 class Portfolio(Base):
-    """Portfolio state for tracking balances (integrated to match existing ASIAbot frontend)."""
+    """Portfolio state for tracking balances (integrated to match existing asiabot frontend)."""
 
     __tablename__ = "portfolio"
 
@@ -261,3 +264,4 @@ class HistoricalCalibration(Base):
         DateTime,
         default=lambda: datetime.now(timezone.utc),
     )
+

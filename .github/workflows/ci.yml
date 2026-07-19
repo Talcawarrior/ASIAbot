@@ -1,5 +1,5 @@
-# ASIAbot CI Pipeline
-# Her push/PR'da testler otomatik koşsun
+﻿# asiabot CI Pipeline
+# Her push/PR'da testler otomatik koÅŸsun
 
 name: CI
 
@@ -70,3 +70,4 @@ jobs:
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+

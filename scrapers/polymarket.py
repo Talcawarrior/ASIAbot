@@ -12,55 +12,10 @@ from database.db import get_session
 from database.models import WeatherMarket
 from engine.market_parser import MarketParser
 from scrapers.async_client import AsyncHttpClient
-from utils.errors import ScraperError
+
 from utils.retry import retry
 
 logger = logging.getLogger("SCRAPER_POLYMARKET")
-
-
-def get_market_fee_rate(market_data: dict) -> float:
-    """Extract fee rate from feeSchedule (new) or takerBaseFee (legacy).
-
-    Polymarket docs (March 2026): "Fees should now be calculated using the
-    feeSchedule object within a market." The feeSchedule contains:
-      - rate: taker fee rate (e.g. "0.05" for weather)
-      - exponent: fee curve exponent (typically 1)
-      - taker_only: whether only takers pay
-      - rebate_rate: maker rebate percentage
-
-    Falls back to weather category default (0.05) if no feeSchedule found.
-    """
-    from config.settings import bot_config
-
-    default_rate = bot_config.weather_fee_rate  # 0.05
-
-    # New: feeSchedule object (Polymarket March 2026+)
-    fee_schedule = market_data.get("feeSchedule")
-    if fee_schedule and isinstance(fee_schedule, dict):
-        rate = fee_schedule.get("rate")
-        if rate is not None:
-            try:
-                return float(rate)
-            except (TypeError, ValueError):
-                pass
-
-    # Legacy: takerBaseFee in basis points
-    taker_base_fee = market_data.get("takerBaseFee")
-    if taker_base_fee is not None:
-        try:
-            return float(taker_base_fee) / 10000  # bps to decimal
-        except (TypeError, ValueError):
-            pass
-
-    # Legacy: flat taker_fee field
-    taker_fee = market_data.get("taker_fee")
-    if taker_fee is not None:
-        try:
-            return float(taker_fee)
-        except (TypeError, ValueError):
-            pass
-
-    return default_rate
 
 
 class PolymarketScraper:
@@ -121,18 +76,10 @@ class PolymarketScraper:
             "temperature",
             "weather temperature",
         ]
-        # Add date-specific queries so Gamma API returns upcoming markets
-        # instead of old/popular ones. E.g. "temperature July 3".
-        for i in range(3):
-            d = today + timedelta(days=i)
-            month_name = calendar.month_name[d.month]
-            day_no_pad = str(d.day)
-            queries.append(f"temperature {month_name} {day_no_pad}")
-            queries.append(f"highest temperature {month_name} {day_no_pad}")
-        # Add city-specific queries to cover ALL markets on Polymarket.
-        # Each query returns up to limit_per_type results from Gamma API.
+        # Also add 5 city-specific queries to broaden coverage beyond
+        # the public-search top results.
         queries += [
-            # US cities (high volume on Polymarket)
+            # Top US markets (highest volume on Polymarket)
             "dallas temperature",
             "miami temperature",
             "new york temperature",
@@ -140,63 +87,12 @@ class PolymarketScraper:
             "houston temperature",
             "los angeles temperature",
             "phoenix temperature",
-            "san francisco temperature",
-            "atlanta temperature",
-            "boston temperature",
-            "seattle temperature",
-            "denver temperature",
-            "washington temperature",
-            "las vegas temperature",
-            "orlando temperature",
-            # International — Asia (very active on Polymarket)
+            # International (frequent on Polymarket)
             "london temperature",
             "paris temperature",
             "tokyo temperature",
             "seoul temperature",
             "istanbul temperature",
-            "taipei temperature",
-            "shanghai temperature",
-            "beijing temperature",
-            "hong kong temperature",
-            "singapore temperature",
-            "bangkok temperature",
-            "mumbai temperature",
-            "delhi temperature",
-            "shenzhen temperature",
-            "osaka temperature",
-            "jakarta temperature",
-            # Middle East
-            "dubai temperature",
-            "doha temperature",
-            "tel aviv temperature",
-            "cairo temperature",
-            # Europe
-            "berlin temperature",
-            "madrid temperature",
-            "rome temperature",
-            "amsterdam temperature",
-            "munich temperature",
-            "moscow temperature",
-            "vienna temperature",
-            "stockholm temperature",
-            "lisbon temperature",
-            "zurich temperature",
-            "barcelona temperature",
-            "athens temperature",
-            # South America
-            "sao paulo temperature",
-            "buenos aires temperature",
-            "mexico city temperature",
-            "santiago temperature",
-            "lima temperature",
-            "rio de janeiro temperature",
-            # Oceania & Africa
-            "sydney temperature",
-            "melbourne temperature",
-            "cape town temperature",
-            "ankara temperature",
-            "toronto temperature",
-            "vancouver temperature",
         ]
 
         gamma_host = urlparse(self.gamma_url).netloc
@@ -242,7 +138,9 @@ class PolymarketScraper:
                     m.setdefault("event_slug", slug)
                     all_events.append(m)
 
-        logger.info(f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)")
+        logger.info(
+            f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)"
+        )
         return all_events
 
     async def fetch_polymarket_events(self, limit: int = 100) -> list[dict]:
@@ -260,10 +158,16 @@ class PolymarketScraper:
         and humidity markets are explicitly rejected.
         """
         question = (
-            market.get("question", "") + " " + market.get("description", "") + " " + market.get("title", "")
+            market.get("question", "")
+            + " "
+            + market.get("description", "")
+            + " "
+            + market.get("title", "")
         ).lower()
         # 1) Must mention a known city (any key from CITY_ICAO_MAP)
-        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP)
+        city_match = any(
+            city_key in question for city_key in config.CITY_ICAO_MAP.keys()
+        )
         if not city_match:
             return False
         # 2) Must contain a strong weather term (reject sports/politics that
@@ -282,11 +186,7 @@ class PolymarketScraper:
         )
         if not any(term in question for term in strong_terms):
             return False
-        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.).
-        # HIGH FIX: removed "wind" from reject list — the bot's market parser
-        # supports `wind_speed_kmh` as a metric and the data pipeline ingests
-        # `wind_speed_10m_max` forecasts. Previously valid wind-speed markets
-        # were silently dropped.
+        # 3) Explicitly reject non-temperature weather markets (rain, snow, storm, etc.)
         reject_terms = (
             "rain",
             "snow",
@@ -295,17 +195,18 @@ class PolymarketScraper:
             "tornado",
             "precipitation",
             "humidity",
+            "wind",
             "snowfall",
             "rainfall",
         )
-        return not any(term in question for term in reject_terms)
+        if any(term in question for term in reject_terms):
+            return False
+        return True
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
-        # 1) YES/NO price — handle multiple Polymarket data formats:
-        #    - tokens[] array (full market data)
-        #    - outcomePrices array (["0.32", "0.68"])
-        #    - public-search fields (lastTradePrice / bestBid / bestAsk)
+        # 1) YES/NO price — handle both /markets (tokens[]) and
+        #    /public-search (lastTradePrice / bestBid / bestAsk) formats.
         yes_price = None
         no_price = None
         for token in raw.get("tokens", []) or []:
@@ -318,56 +219,17 @@ class PolymarketScraper:
                 yes_price = p
             elif outcome == "NO" and p is not None:
                 no_price = p
-        # Fallback 1: outcomePrices array (e.g. ["0.32", "0.68"])
-        # Outcomes order matches the `outcomes` field: ["Yes", "No"]
-        # NOTE: Both fields may arrive as JSON strings (not parsed lists)
-        # from the Gamma API, so we must json.loads() them first.
-        if yes_price is None:
-            outcome_prices_raw = raw.get("outcomePrices")
-            outcomes_raw = raw.get("outcomes")
-            try:
-                op_raw = outcome_prices_raw
-                outcome_prices = json.loads(op_raw) if isinstance(op_raw, str) else op_raw
-                outcomes = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
-            except (json.JSONDecodeError, TypeError):
-                outcome_prices, outcomes = None, None
-            if outcome_prices and outcomes and len(outcome_prices) == len(outcomes):
-                for i, outcome_name in enumerate(outcomes):
-                    name_upper = (outcome_name or "").upper()
-                    try:
-                        p = float(outcome_prices[i])
-                    except (TypeError, ValueError, IndexError):
-                        continue
-                    if name_upper == "YES" and yes_price is None:
-                        yes_price = p
-                    elif name_upper == "NO" and no_price is None:
-                        no_price = p
-            # Fallback 1b: outcomePrices without outcomes but with clobTokenIds
-            # Assume first token is YES, second is NO (Polymarket convention)
-            if yes_price is None and outcome_prices and not outcomes:
-                clob_ids = raw.get("clobTokenIds") or raw.get("clob_token_ids") or []
-                if isinstance(clob_ids, list) and len(clob_ids) >= 2 and len(outcome_prices) >= 2:
-                    try:
-                        yes_price = float(outcome_prices[0])
-                        no_price = float(outcome_prices[1])
-                    except (TypeError, ValueError, IndexError):
-                        pass
-            # Fallback 1c: outcomePrices alone, assume first=YES, second=NO (Polymarket standard)
-            if yes_price is None and outcome_prices and not outcomes and not clob_ids:
-                if isinstance(outcome_prices, list) and len(outcome_prices) >= 2:
-                    try:
-                        yes_price = float(outcome_prices[0])
-                        no_price = float(outcome_prices[1])
-                    except (TypeError, ValueError, IndexError):
-                        pass
-        # Fallback 2: public-search fields
+        # Fallback: public-search fields
         if yes_price is None:
             for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):
                 v = raw.get(key)
                 if v is not None:
                     try:
-                        yes_price = float(v)
-                        break
+                        p = float(v)
+                        # bestBid=0 means "no orderbook", not actual price
+                        if p > 0:
+                            yes_price = p
+                            break
                     except (TypeError, ValueError):
                         pass
         if no_price is None:
@@ -375,12 +237,27 @@ class PolymarketScraper:
                 v = raw.get(key)
                 if v is not None:
                     try:
-                        no_price = float(v)
-                        break
+                        p = float(v)
+                        # bestAsk=1 means "no orderbook", not actual price
+                        if p < 1:
+                            no_price = p
+                            break
                     except (TypeError, ValueError):
                         pass
         if no_price is None and yes_price is not None:
             no_price = max(0.0, min(1.0, 1.0 - yes_price))
+        # Fallback: outcomePrices (Gamma API v2 format — tokens empty)
+        if yes_price is None:
+            op = raw.get("outcomePrices", "")
+            if op:
+                try:
+                    parsed_op = json.loads(op) if isinstance(op, str) else op
+                    if isinstance(parsed_op, list) and len(parsed_op) >= 2:
+                        yes_price = float(parsed_op[0]) if parsed_op[0] else None
+                        if no_price is None:
+                            no_price = float(parsed_op[1]) if parsed_op[1] else None
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
         if yes_price is None:
             yes_price = 0.5
         if no_price is None:
@@ -389,10 +266,14 @@ class PolymarketScraper:
         # Extract city name dynamically from ICAO map keys
         city_name = "Unknown"
         title = raw.get("title", "") or raw.get("question", "")
-        question = raw.get("question", "") or raw.get("description", "") or raw.get("title", "")
+        question = (
+            raw.get("question", "")
+            or raw.get("description", "")
+            or raw.get("title", "")
+        )
         title_lower = (title or "").lower()
         question_lower = (question or "").lower()
-        for k in config.CITY_ICAO_MAP:
+        for k in config.CITY_ICAO_MAP.keys():
             if k in title_lower or k in question_lower:
                 city_name = k.title()
                 break
@@ -412,7 +293,11 @@ class PolymarketScraper:
         threshold, threshold_unit, threshold_low, threshold_high = (
             threshold_result if threshold_result else (0.0, "celsius", None, None)
         )
-        metric = "temperature_max" if "highest" in question_lower or "above" in question_lower else "temperature_min"
+        metric = (
+            "temperature_max"
+            if "highest" in question_lower or "above" in question_lower
+            else "temperature_min"
+        )
         city_code = self._extract_city(question)
         market_type = self._determine_market_type(question)
         coords = self.get_city_coords(city_code) if city_code else None
@@ -442,7 +327,6 @@ class PolymarketScraper:
             "market_type": market_type,
             "latitude": coords[0] if coords else 0.0,
             "longitude": coords[1] if coords else 0.0,
-            "fee_rate": get_market_fee_rate(raw),
         }
 
     def fetch_and_save(self) -> int:
@@ -450,24 +334,10 @@ class PolymarketScraper:
         try:
             raw_markets = self._fetch_raw_markets()
         except Exception as e:
-            # FIX (raise-missing-from): chain the exception so the original
-            # traceback is preserved. `raise ... from e` is the correct idiom.
-            raise ScraperError(f"Polymarket API hatası: {e}") from e
+            raise Exception(f"Polymarket API hatası: {e}")
 
         weather_markets = [m for m in raw_markets if self._is_weather_market(m)]
         logger.info(f"{len(weather_markets)} hava durumu marketi bulundu")
-
-        # Filter out closed/resolved markets — no point analyzing or betting
-        # on markets that Polymarket has already settled.
-        open_markets = []
-        for m in weather_markets:
-            if m.get("closed") is True:
-                continue
-            open_markets.append(m)
-        skipped_closed = len(weather_markets) - len(open_markets)
-        if skipped_closed:
-            logger.info(f"{skipped_closed} kapalı/cozulmuş market atlandı")
-        weather_markets = open_markets
 
         saved = 0
         with get_session() as session:
@@ -487,15 +357,21 @@ class PolymarketScraper:
                         )
 
                     # Upsert
-                    existing = session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
+                    existing = (
+                        session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
+                    )
 
                     # Skip markets with missing target_date or zero threshold
                     if parsed["target_date"] is None:
-                        logger.warning(f"Skipping market {parsed['id']}: no target_date parsed")
+                        logger.warning(
+                            f"Skipping market {parsed['id']}: no target_date parsed"
+                        )
                         continue
                     threshold_c = parsed["threshold"]
                     if threshold_c == 0.0:
-                        logger.warning(f"Skipping market {parsed['id']}: threshold is 0.0")
+                        logger.warning(
+                            f"Skipping market {parsed['id']}: threshold is 0.0"
+                        )
                         continue
                     # Sanity guard: Celsius değer -40..55 aralığında değilse atla
                     if threshold_c < -40 or threshold_c > 55:
@@ -504,19 +380,6 @@ class PolymarketScraper:
                             parsed["id"],
                             threshold_c,
                             (parsed.get("question") or "")[:80],
-                        )
-                        continue
-
-                    # Skip resolved/extreme-price markets (YES=1.0 or YES=0.0)
-                    # These are already settled on Polymarket — no edge to capture.
-                    yp = parsed["yes_price"]
-                    np_ = parsed["no_price"]
-                    if yp <= 0.01 or yp >= 0.99 or np_ <= 0.01 or np_ >= 0.99:
-                        logger.debug(
-                            "Skipping market %s: extreme prices YES=%.3f NO=%.3f (resolved?)",
-                            parsed["id"],
-                            yp,
-                            np_,
                         )
                         continue
 
@@ -539,7 +402,6 @@ class PolymarketScraper:
                         existing.status = status
                         existing.threshold_low = parsed.get("threshold_low")
                         existing.threshold_high = parsed.get("threshold_high")
-                        existing.fee_rate = parsed.get("fee_rate", 0.05)
                     else:
                         market = WeatherMarket(
                             id=parsed["id"],
@@ -562,7 +424,6 @@ class PolymarketScraper:
                             market_type=parsed["market_type"],
                             latitude=parsed["latitude"],
                             longitude=parsed["longitude"],
-                            fee_rate=parsed.get("fee_rate", 0.05),
                         )
                         session.add(market)
                     saved += 1
@@ -667,9 +528,17 @@ class PolymarketScraper:
 
     def _determine_market_type(self, question: str) -> str:
         question_lower = question.lower()
-        if "above" in question_lower or "higher" in question_lower or "over" in question_lower:
+        if (
+            "above" in question_lower
+            or "higher" in question_lower
+            or "over" in question_lower
+        ):
             return "HIGH"
-        if "below" in question_lower or "lower" in question_lower or "under" in question_lower:
+        if (
+            "below" in question_lower
+            or "lower" in question_lower
+            or "under" in question_lower
+        ):
             return "LOW"
         if "or below" in question_lower or "or higher" in question_lower:
             if "or below" in question_lower:

@@ -76,7 +76,9 @@ class TestAdjustEdgeForCosts:
     def test_fee_only(self):
         net = adjust_edge_for_costs(0.05, 0.50, include_fee=True, bet_amount_usd=30.0)
         assert net < 0.05
-        net_no_fee = adjust_edge_for_costs(0.05, 0.50, include_fee=False, bet_amount_usd=30.0)
+        net_no_fee = adjust_edge_for_costs(
+            0.05, 0.50, include_fee=False, bet_amount_usd=30.0
+        )
         gas_pct = (0.10 / 30.0) * 0.50
         assert net_no_fee == pytest.approx(0.05 - 0.005 - gas_pct)
 

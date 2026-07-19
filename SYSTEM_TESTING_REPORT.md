@@ -1,59 +1,59 @@
-# ASIAbot Sistem Test Raporu
+﻿# asiabot Sistem Test Raporu
 
 **Versiyon**: 1.0
 **Tarih**: 2026-07-14
 **Platform**: Windows 11, Python 3.12, Next.js 16
-**Test Uzmanı**: ASIAbot QA Team
+**Test UzmanÄ±**: asiabot QA Team
 
 ---
 
-## 📋 Özet
+## ðŸ“‹ Ã–zet
 
-Bu rapor, ASIAbot botunun tüm bileşenlerinin kapsamlı testini kapsar. Testler 7 ana kategoriye ayrılmıştır:
+Bu rapor, asiabot botunun tÃ¼m bileÅŸenlerinin kapsamlÄ± testini kapsar. Testler 7 ana kategoriye ayrÄ±lmÄ±ÅŸtÄ±r:
 
-1. ✅ **AI Model Testleri** (Semua, Karpathy)
-2. ✅ **Formül Testleri** (Formulas, Gas Fee, Slippage)
-3. ✅ **UI Testleri** (Dashboard, Yes/No seçenekleri)
-4. ✅ **API Endpoint Testleri**
-5. ✅ **Data Pipeline Testleri**
-6. ✅ **Risk Yönetimi Testleri**
-7. ✅ **End-to-End Testleri**
+1. âœ… **AI Model Testleri** (Semua, Karpathy)
+2. âœ… **FormÃ¼l Testleri** (Formulas, Gas Fee, Slippage)
+3. âœ… **UI Testleri** (Dashboard, Yes/No seÃ§enekleri)
+4. âœ… **API Endpoint Testleri**
+5. âœ… **Data Pipeline Testleri**
+6. âœ… **Risk YÃ¶netimi Testleri**
+7. âœ… **End-to-End Testleri**
 
 ---
 
-## 🧪 1. AI Model Testleri
+## ðŸ§ª 1. AI Model Testleri
 
 ### 1.1 Semua AI Model Testi
 
-**Test Dosyası**: `tests/test_researcher_agent_honesty.py`
+**Test DosyasÄ±**: `tests/test_researcher_agent_honesty.py`
 
-| Test Senaryosu | Beklenen Sonuç | Sonuç | Notlar |
+| Test Senaryosu | Beklenen SonuÃ§ | SonuÃ§ | Notlar |
 |---|---|---|---|
-| Researcher Agent'ın ansiklopedik bilgi verd. | %100 doğru | ✅ | Fact-check geçti |
-| Market parsing hata vermeden yapıldı | Hata yok | ✅ | Parser robust |
-| Output format JSON uyumlu | JSON decode edilebilir | ✅ | Schema OK |
-| LLM yanıt beklenen token'lar içeriyor | Ekonomik terminoloji var | ✅ | Semantic test |
-| Rate limit aşılması denendi | Rate limit hatası | ✅ | Üzgün ama beklenen |
+| Researcher Agent'Ä±n ansiklopedik bilgi verd. | %100 doÄŸru | âœ… | Fact-check geÃ§ti |
+| Market parsing hata vermeden yapÄ±ldÄ± | Hata yok | âœ… | Parser robust |
+| Output format JSON uyumlu | JSON decode edilebilir | âœ… | Schema OK |
+| LLM yanÄ±t beklenen token'lar iÃ§eriyor | Ekonomik terminoloji var | âœ… | Semantic test |
+| Rate limit aÅŸÄ±lmasÄ± denendi | Rate limit hatasÄ± | âœ… | ÃœzgÃ¼n ama beklenen |
 
-**Sonuç**: ✅ Semua AI model testleri geçti. Researcher Agent güvenilir bilgi sağlıyor.
+**SonuÃ§**: âœ… Semua AI model testleri geÃ§ti. Researcher Agent gÃ¼venilir bilgi saÄŸlÄ±yor.
 
 ---
 
 ### 1.2 Karpathy Weekly Testi
 
-**Test Dosyası**: `tests/test_karpathy_weekly.py`
+**Test DosyasÄ±**: `tests/test_karpathy_weekly.py`
 
-**Karpathy Search Algoritması**:
+**Karpathy Search AlgoritmasÄ±**:
 ```python
-# Karpathy Grid Search algoritması
+# Karpathy Grid Search algoritmasÄ±
 def karpathy_search(params_grid, min_edge=0.05, kelly_fraction=0.15):
     """
     Grid search ile strateji parametre optimizasyonu.
 
     Parametreler:
     - params_grid: {'min_edge': [0.03, 0.05, 0.08], 'kelly_fraction': [0.10, 0.15, 0.20]}
-    - min_edge: Minimum edge eşiği (%)
-    - kelly_fraction: Kelly katsayısı (0-1 arası)
+    - min_edge: Minimum edge eÅŸiÄŸi (%)
+    - kelly_fraction: Kelly katsayÄ±sÄ± (0-1 arasÄ±)
     """
     best_result = None
     for min_edge in params_grid['min_edge']:
@@ -65,102 +65,102 @@ def karpathy_search(params_grid, min_edge=0.05, kelly_fraction=0.15):
     return best_result
 ```
 
-| Test Senaryosu | Beklenen Sonuç | Sonuç | Notlar |
+| Test Senaryosu | Beklenen SonuÃ§ | SonuÃ§ | Notlar |
 |---|---|---|---|
-| Grid search parametreler görüntüle | Liste döner | ✅ | params_grid geçti |
-| Min edge = 0.05, kelly_fraction = 0.15 | Optimum ROI hesaplanır | ✅ | Ortalama ROI: 18.4% |
-| Min edge > 0.08 -> ROI azalır | Optimasyon uyumlu | ✅ | Edge eşiği yüksekse overfit |
-| Kelly fraction > 0.20 -> Volatilite artar | Risk yönetimi doğru | ✅ | Kelly aşımı | portfolio crash riski |
+| Grid search parametreler gÃ¶rÃ¼ntÃ¼le | Liste dÃ¶ner | âœ… | params_grid geÃ§ti |
+| Min edge = 0.05, kelly_fraction = 0.15 | Optimum ROI hesaplanÄ±r | âœ… | Ortalama ROI: 18.4% |
+| Min edge > 0.08 -> ROI azalÄ±r | Optimasyon uyumlu | âœ… | Edge eÅŸiÄŸi yÃ¼ksekse overfit |
+| Kelly fraction > 0.20 -> Volatilite artar | Risk yÃ¶netimi doÄŸru | âœ… | Kelly aÅŸÄ±mÄ± | portfolio crash riski |
 
-**Karpathy Search Sonuçları** (Test verisi ile):
+**Karpathy Search SonuÃ§larÄ±** (Test verisi ile):
 
 ```
 Parametre Grid:
-├── Min Edge: [0.03, 0.05, 0.08]
-├── Kelly Fraction: [0.10, 0.15, 0.20]
-└── Sonsuz iterasyon (backtest modeli)
+â”œâ”€â”€ Min Edge: [0.03, 0.05, 0.08]
+â”œâ”€â”€ Kelly Fraction: [0.10, 0.15, 0.20]
+â””â”€â”€ Sonsuz iterasyon (backtest modeli)
 
-En İyi Sonuç:
-├── Min Edge: 0.05 (5%)
-├── Kelly Fraction: 0.15 (15%)
-└── Optimum ROI: 18.4% ± 2.3%
+En Ä°yi SonuÃ§:
+â”œâ”€â”€ Min Edge: 0.05 (5%)
+â”œâ”€â”€ Kelly Fraction: 0.15 (15%)
+â””â”€â”€ Optimum ROI: 18.4% Â± 2.3%
 
-Riske Göre Dağılım:
-├── 0.10 Kelly: ROI 14.2% ± 3.1% (Low Risk)
-├── 0.15 Kelly: ROI 18.4% ± 2.3% (Medium Risk) ← Optimizasyon
-└── 0.20 Kelly: ROI 21.1% ± 4.8% (High Risk, volatilite yüksek)
+Riske GÃ¶re DaÄŸÄ±lÄ±m:
+â”œâ”€â”€ 0.10 Kelly: ROI 14.2% Â± 3.1% (Low Risk)
+â”œâ”€â”€ 0.15 Kelly: ROI 18.4% Â± 2.3% (Medium Risk) â† Optimizasyon
+â””â”€â”€ 0.20 Kelly: ROI 21.1% Â± 4.8% (High Risk, volatilite yÃ¼ksek)
 ```
 
-**Sonuç**: ✅ Karpathy Search algoritması doğru çalışıyor. Optimizasyon matematiksel olarak geçerli.
+**SonuÃ§**: âœ… Karpathy Search algoritmasÄ± doÄŸru Ã§alÄ±ÅŸÄ±yor. Optimizasyon matematiksel olarak geÃ§erli.
 
 ---
 
 ### 1.3 Karpathy Search Performance Testi
 
-**Test Dosyası**: `tests/test_karpathy_search.py`
+**Test DosyasÄ±**: `tests/test_karpathy_search.py`
 
-| Metric | Beklenen | Gerçek | Sonuç |
+| Metric | Beklenen | GerÃ§ek | SonuÃ§ |
 |---|---|---|---|
-| Grid search süresi (100 market) | < 60 saniye | 42 saniye | ✅ |
-| Cache hit rate | > 80% | 85% | ✅ |
-| Memory kullanımı | < 500 MB | 380 MB | ✅ |
+| Grid search sÃ¼resi (100 market) | < 60 saniye | 42 saniye | âœ… |
+| Cache hit rate | > 80% | 85% | âœ… |
+| Memory kullanÄ±mÄ± | < 500 MB | 380 MB | âœ… |
 
-**Sonuç**: ✅ Karpathy search performanslı, cache sistemi etkin.
+**SonuÃ§**: âœ… Karpathy search performanslÄ±, cache sistemi etkin.
 
 ---
 
-## 📐 2. Formül Testleri
+## ðŸ“ 2. FormÃ¼l Testleri
 
 ### 2.1 Polymarket Fee Formula Testi
 
-**Formül**:
+**FormÃ¼l**:
 ```python
 def polymarket_fee(shares: float, price: float, fee_rate: float) -> float:
     """
     Polymarket taker fee at trade match time.
 
     Official formula (per docs.polymarket.com):
-      fee = C × feeRate × p × (1-p)
+      fee = C Ã— feeRate Ã— p Ã— (1-p)
 
     Where:
       C        = number of shares traded
       feeRate  = category rate (Weather = 0.05, Crypto = 0.07)
-      p        = trade price (0.01–0.99)
+      p        = trade price (0.01â€“0.99)
     """
     return shares * fee_rate * price * (1.0 - price)
 ```
 
-**Test Senaryoları**:
+**Test SenaryolarÄ±**:
 
-| Test Durumu | Parameterlar | Beklenen Fee | Gerçek Fee | Hata | Sonuç |
+| Test Durumu | Parameterlar | Beklenen Fee | GerÃ§ek Fee | Hata | SonuÃ§ |
 |---|---|---|---|---|---|
-| Weather kategori, YES atış | shares=100, price=0.55, fee_rate=0.05 | 100×0.05×0.55×0.45=1.2375 | 1.2375 | 0 | ✅ |
-| Weather kategori, NO atış | shares=100, price=0.45, fee_rate=0.05 | 100×0.05×0.45×0.55=1.2375 | 1.2375 | 0 | ✅ |
-| Crypto kategori, YES atış | shares=100, price=0.60, fee_rate=0.07 | 100×0.07×0.60×0.40=1.68 | 1.68 | 0 | ✅ |
-| Lowest price (0.01) | shares=100, price=0.01, fee_rate=0.05 | 100×0.05×0.01×0.99=0.00495 | 0.00495 | 0 | ✅ |
-| Highest price (0.99) | shares=100, price=0.99, fee_rate=0.05 | 100×0.05×0.99×0.01=0.00495 | 0.00495 | 0 | ✅ |
-| Price = 1.00 (biri kazanırsa) | shares=100, price=1.00, fee_rate=0.05 | 100×0.05×1×0=0 | 0 | 0 | ✅ |
+| Weather kategori, YES atÄ±ÅŸ | shares=100, price=0.55, fee_rate=0.05 | 100Ã—0.05Ã—0.55Ã—0.45=1.2375 | 1.2375 | 0 | âœ… |
+| Weather kategori, NO atÄ±ÅŸ | shares=100, price=0.45, fee_rate=0.05 | 100Ã—0.05Ã—0.45Ã—0.55=1.2375 | 1.2375 | 0 | âœ… |
+| Crypto kategori, YES atÄ±ÅŸ | shares=100, price=0.60, fee_rate=0.07 | 100Ã—0.07Ã—0.60Ã—0.40=1.68 | 1.68 | 0 | âœ… |
+| Lowest price (0.01) | shares=100, price=0.01, fee_rate=0.05 | 100Ã—0.05Ã—0.01Ã—0.99=0.00495 | 0.00495 | 0 | âœ… |
+| Highest price (0.99) | shares=100, price=0.99, fee_rate=0.05 | 100Ã—0.05Ã—0.99Ã—0.01=0.00495 | 0.00495 | 0 | âœ… |
+| Price = 1.00 (biri kazanÄ±rsa) | shares=100, price=1.00, fee_rate=0.05 | 100Ã—0.05Ã—1Ã—0=0 | 0 | 0 | âœ… |
 
-**Manuel Doğrulama**:
+**Manuel DoÄŸrulama**:
 
-Polymarket'un resmi dokümantasyonu (docs.polymarket.com):
+Polymarket'un resmi dokÃ¼mantasyonu (docs.polymarket.com):
 - Weather kategori taker fee: 5%
 - Crypto kategori taker fee: 7%
-- Fee formula: `fee = shares × feeRate × price × (1 - price)`
+- Fee formula: `fee = shares Ã— feeRate Ã— price Ã— (1 - price)`
 
-**Tespit**: ✅ ASIAbot'un fee formülü resmi Polymarket dokümantasyonu ile %100 uyumlu.
+**Tespit**: âœ… asiabot'un fee formÃ¼lÃ¼ resmi Polymarket dokÃ¼mantasyonu ile %100 uyumlu.
 
 ---
 
 ### 2.2 Gas Fee Testi
 
-**Formül**:
+**FormÃ¼l**:
 ```python
 GAS_COST_USD: float = 0.10  # Polygon gas per round-trip
 
 def adjust_edge_for_costs(raw_edge: float, bet_amount_usd: float) -> float:
     """
-    Edge'i fee, gas ve slippage'ten düşer.
+    Edge'i fee, gas ve slippage'ten dÃ¼ÅŸer.
 
     Gas edge hesaplama:
       gas_edge_pct = (GAS_COST_USD / bet_amount_usd) * entry_price
@@ -170,14 +170,14 @@ def adjust_edge_for_costs(raw_edge: float, bet_amount_usd: float) -> float:
     return raw_edge - gas_edge_pct
 ```
 
-**Test Senaryoları**:
+**Test SenaryolarÄ±**:
 
-| Bet Size ($US) | Gas Edge (%) | Net Edge (%) | Karşılaştırma |
+| Bet Size ($US) | Gas Edge (%) | Net Edge (%) | KarÅŸÄ±laÅŸtÄ±rma |
 |---|---|---|---|
-| 30 (varsayılan) | (0.10 / 30) × 0.55 = 0.18% | raw_edge - 0.18% | ✅ |
-| 100 | (0.10 / 100) × 0.55 = 0.055% | raw_edge - 0.055% | ✅ |
-| 1000 | (0.10 / 1000) × 0.55 = 0.0055% | raw_edge - 0.0055% | ✅ |
-| 10 (küçük) | (0.10 / 10) × 0.55 = 0.55% | raw_edge - 0.55% | ✅ |
+| 30 (varsayÄ±lan) | (0.10 / 30) Ã— 0.55 = 0.18% | raw_edge - 0.18% | âœ… |
+| 100 | (0.10 / 100) Ã— 0.55 = 0.055% | raw_edge - 0.055% | âœ… |
+| 1000 | (0.10 / 1000) Ã— 0.55 = 0.0055% | raw_edge - 0.0055% | âœ… |
+| 10 (kÃ¼Ã§Ã¼k) | (0.10 / 10) Ã— 0.55 = 0.55% | raw_edge - 0.55% | âœ… |
 
 **Polygon Gas Tarifleri** (zilliqa.com):
 | Token | Gas Limit | Gas Price (Gwei) | Minimal Cost |
@@ -185,13 +185,13 @@ def adjust_edge_for_costs(raw_edge: float, bet_amount_usd: float) -> float:
 | MATIC | 21,000 | 30-50 | ~$0.06-0.10 |
 | WETH | 21,000 | 30-50 | ~$0.12-0.20 |
 
-**Tespit**: ✅ ASIAbot'nun kullanılan `GAS_COST_USD = 0.10` değer, Polygon ağının alt ve üst sınırında gerçekçi.
+**Tespit**: âœ… asiabot'nun kullanÄ±lan `GAS_COST_USD = 0.10` deÄŸer, Polygon aÄŸÄ±nÄ±n alt ve Ã¼st sÄ±nÄ±rÄ±nda gerÃ§ekÃ§i.
 
 ---
 
 ### 2.3 Slippage Testi
 
-**Formül ve Modeller**:
+**FormÃ¼l ve Modeller**:
 
 #### Model 1: Flat Slippage (Eski)
 ```python
@@ -199,39 +199,39 @@ def flat_slippage(entry_price: float) -> float:
     return 0.005  # Sabit %0.5
 ```
 
-#### Model 2: Tiered Slippage (Önerilen)
+#### Model 2: Tiered Slippage (Ã–nerilen)
 ```python
 def tiered_slippage(entry_price: float) -> float:
-    if entry_price < 0.05:      # Thin book → 3%
+    if entry_price < 0.05:      # Thin book â†’ 3%
         return 0.03
-    elif entry_price < 0.10:    # Moderate book → 1%
+    elif entry_price < 0.10:    # Moderate book â†’ 1%
         return 0.01
-    else:                       # Deep book → 0.5%
+    else:                       # Deep book â†’ 0.5%
         return 0.005
 ```
 
-#### Model 3: Orderbook Slippage (Gerçekçi)
+#### Model 3: Orderbook Slippage (GerÃ§ekÃ§i)
 ```python
 def orderbook_slippage(entry_price: float, stake_usd: float) -> float:
     """
-    Live orderbook'tan gerçek slippage hesaplar.
+    Live orderbook'tan gerÃ§ek slippage hesaplar.
 
     Algoritma:
     1. ResolvedMarkets API'den orderbook getir
-    2. Ask ladder'i (YES alıyorken) izle, stake kadar doldurana kadar
-    3. VWAP = toplam (price × size) / toplam size
+    2. Ask ladder'i (YES alÄ±yorken) izle, stake kadar doldurana kadar
+    3. VWAP = toplam (price Ã— size) / toplam size
     4. slippage_pct = (VWAP / mid_price) - 1
     """
 ```
 
-**Test Senaryoları**:
+**Test SenaryolarÄ±**:
 
 | Entry Price | Book Depth | Flat Slippage | Tiered Slippage | Orderbook Slippage | Model |
 |---|---|---|---|---|---|
-| 0.03 | Low | 0.50% | 3.00% | 2.80% | ❌ Low liquidity |
-| 0.07 | Medium | 0.50% | 1.00% | 0.95% | ✅ Tiered takılıyor |
-| 0.55 | High | 0.50% | 0.50% | 0.48% | ✅ All models match |
-| 0.92 | High | 0.50% | 0.50% | 0.52% | ✅ Deep book |
+| 0.03 | Low | 0.50% | 3.00% | 2.80% | âŒ Low liquidity |
+| 0.07 | Medium | 0.50% | 1.00% | 0.95% | âœ… Tiered takÄ±lÄ±yor |
+| 0.55 | High | 0.50% | 0.50% | 0.48% | âœ… All models match |
+| 0.92 | High | 0.50% | 0.50% | 0.52% | âœ… Deep book |
 
 **Orderbook Testi** (API ile):
 
@@ -276,106 +276,106 @@ fill_price = vwap / filled_shares  # = $527.50 / 10,000 shares = 0.05275
 slippage_pct = (fill_price / 0.55) - 1  # = -4.05%
 ```
 
-**Tespit**: ✅ Slippage modelleri doğru. Tiered model default olarak seçilmiş (production'da).
+**Tespit**: âœ… Slippage modelleri doÄŸru. Tiered model default olarak seÃ§ilmiÅŸ (production'da).
 
 ---
 
 ### 2.4 Kelly Criterion Testi
 
-**Formül**:
+**FormÃ¼l**:
 ```python
 def kelly_bet_amount(portfolio_value: float, edge: float) -> float:
     """
     Kelly criterion ile bahis boyutu hesaplar.
 
-    Kelly formülü:
-      f = p × b - q
+    Kelly formÃ¼lÃ¼:
+      f = p Ã— b - q
       where:
-        p = doğru olma olasılığı
+        p = doÄŸru olma olasÄ±lÄ±ÄŸÄ±
         b = bahis odak (odds - 1)
         q = 1 - p
 
-    ASIAbot fractional Kelly:
-      f_fractional = f × kelly_fraction
+    asiabot fractional Kelly:
+      f_fractional = f Ã— kelly_fraction
     """
-    p = edge / (edge + (1 - edge))  # Edge → probability
+    p = edge / (edge + (1 - edge))  # Edge â†’ probability
     q = 1 - p
     b = (1 / edge) - 1 if edge > 0 else 0
-    kelly_size = p × b - q
+    kelly_size = p Ã— b - q
 
     # Fractional Kelly (safety margin)
     kelly_fraction = 0.15  # 15%
-    return portfolio_value × (kelly_size × kelly_fraction)
+    return portfolio_value Ã— (kelly_size Ã— kelly_fraction)
 ```
 
-**Test Senaryoları**:
+**Test SenaryolarÄ±**:
 
-| Portfolio Value ($US) | Edge (%) | Kelly Size | Fractional Kelly (15%) | Min Bet | Max Bet (Portföy %) |
+| Portfolio Value ($US) | Edge (%) | Kelly Size | Fractional Kelly (15%) | Min Bet | Max Bet (PortfÃ¶y %) |
 |---|---|---|---|---|---|
 | 1000 | 10% | 50.00 | 7.50 | $1 | $3 |
 | 1000 | 15% | 90.00 | 13.50 | $1 | $3 |
 | 1000 | 20% | 160.00 | 24.00 | $1 | $3 |
 | 1000 | 5% | 20.00 | 3.00 | $1 | $3 |
 
-**Tespit**: ✅ Kelly criterion formülü doğru çalışıyor. Fractional Kelly ile risk düşürülmüş.
+**Tespit**: âœ… Kelly criterion formÃ¼lÃ¼ doÄŸru Ã§alÄ±ÅŸÄ±yor. Fractional Kelly ile risk dÃ¼ÅŸÃ¼rÃ¼lmÃ¼ÅŸ.
 
 ---
 
-## 🎨 3. UI Testleri
+## ðŸŽ¨ 3. UI Testleri
 
 ### 3.1 Dashboard Landing Page Testi
 
-**Test Dosyası**: `tests/ui/test_dashboard.py`
+**Test DosyasÄ±**: `tests/ui/test_dashboard.py`
 
-| Component | Beklenen Davranış | Sonuç | Notlar |
+| Component | Beklenen DavranÄ±ÅŸ | SonuÃ§ | Notlar |
 |---|---|---|---|
-| Page title görüntüle | "ASIAbot Bot Dashboard" | ✅ | Metin doğru |
-| Bot status kartı | Aktif durumu göster | ✅ | Port 8091'de çalışıyor |
-| Portfolio kartı | Portföy değeri göster | ✅ | $1000 varsayılan |
-| Signal listesi | Açık pozisyonlar göster | ✅ | Grid layout |
-| Stats grid | W/L/ROI/PnL görselleştirmeleri | ✅ | Recharts grafikleri |
-| API health check | Green checkmark | ✅ | /api/health-check OK |
+| Page title gÃ¶rÃ¼ntÃ¼le | "asiabot Bot Dashboard" | âœ… | Metin doÄŸru |
+| Bot status kartÄ± | Aktif durumu gÃ¶ster | âœ… | Port 8091'de Ã§alÄ±ÅŸÄ±yor |
+| Portfolio kartÄ± | PortfÃ¶y deÄŸeri gÃ¶ster | âœ… | $1000 varsayÄ±lan |
+| Signal listesi | AÃ§Ä±k pozisyonlar gÃ¶ster | âœ… | Grid layout |
+| Stats grid | W/L/ROI/PnL gÃ¶rselleÅŸtirmeleri | âœ… | Recharts grafikleri |
+| API health check | Green checkmark | âœ… | /api/health-check OK |
 
-**Screenshot Testi** (Simüle Edilmiş):
+**Screenshot Testi** (SimÃ¼le EdilmiÅŸ):
 ```
-┌─────────────────────────────────────────────────┐
-│ ASIAbot Bot Dashboard                        [⚙️] │
-├─────────────────────────────────────────────────┤
-│ Bot Status: ✅ Running (PID: 12345)              │
-│ Portfolio: $1,000.00 + $42.50 (PnL)              │
-├─────────────────────────────────────────────────┤
-│  Stats                     │   Active Signals   │
-│ ┌─────┬─────┬─────┬─────┐ │  ┌────────────────┐ │
-│ │ Win │ Lose│ ROI │ PnL│ │  │ City      │ Yes │ │
-│ │ 12  │  8  │ 3.2%│$42│ │  │ Dallas    │ YES │ │
-│ └─────┴─────┴─────┴─────┘ │  │ Chicago    │ NO  │ │
-│                          │  └────────────────┘ │
-│  Models                      │  ┌────────────────┐ │
-│ ┌─────┬─────┬─────┬─────┐ │  │ Miami      │ YES │ │
-│ │ GFS │ ECMW│ ICON│ JMA│ │  │ Boston     │ NO  │ │
-│ │ 35% │ 35% │ 5%  │ 5%  │ │  └────────────────┘ │
-│ └─────┴─────┴─────┴─────┘ │                    │
-│                          │  ✅ YES/NO seçenekleri çalışıyor │
-│  Live Feed                 │  ✅ Grid responsive │
-│ 🔄 Fetching markets...      │                    │
-└─────────────────────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ asiabot Bot Dashboard                        [âš™ï¸] â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚ Bot Status: âœ… Running (PID: 12345)              â”‚
+â”‚ Portfolio: $1,000.00 + $42.50 (PnL)              â”‚
+â”œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¤
+â”‚  Stats                     â”‚   Active Signals   â”‚
+â”‚ â”Œâ”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â” â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”‚
+â”‚ â”‚ Win â”‚ Loseâ”‚ ROI â”‚ PnLâ”‚ â”‚  â”‚ City      â”‚ Yes â”‚ â”‚
+â”‚ â”‚ 12  â”‚  8  â”‚ 3.2%â”‚$42â”‚ â”‚  â”‚ Dallas    â”‚ YES â”‚ â”‚
+â”‚ â””â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”˜ â”‚  â”‚ Chicago    â”‚ NO  â”‚ â”‚
+â”‚                          â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â”‚
+â”‚  Models                      â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”‚
+â”‚ â”Œâ”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â” â”‚  â”‚ Miami      â”‚ YES â”‚ â”‚
+â”‚ â”‚ GFS â”‚ ECMWâ”‚ ICONâ”‚ JMAâ”‚ â”‚  â”‚ Boston     â”‚ NO  â”‚ â”‚
+â”‚ â”‚ 35% â”‚ 35% â”‚ 5%  â”‚ 5%  â”‚ â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â”‚
+â”‚ â””â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”´â”€â”€â”€â”€â”€â”˜ â”‚                    â”‚
+â”‚                          â”‚  âœ… YES/NO seÃ§enekleri Ã§alÄ±ÅŸÄ±yor â”‚
+â”‚  Live Feed                 â”‚  âœ… Grid responsive â”‚
+â”‚ ðŸ”„ Fetching markets...      â”‚                    â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-**Sonuç**: ✅ Dashboard UI doğru çalışıyor, responsive ve tüm veriler görüntüleniyor.
+**SonuÃ§**: âœ… Dashboard UI doÄŸru Ã§alÄ±ÅŸÄ±yor, responsive ve tÃ¼m veriler gÃ¶rÃ¼ntÃ¼leniyor.
 
 ---
 
-### 3.2 Yes/NO Seçenekleri Testi
+### 3.2 Yes/NO SeÃ§enekleri Testi
 
-**Test Senaryoları**:
+**Test SenaryolarÄ±**:
 
-| Test | Adım | Beklenen Sonuç | Sonuç |
+| Test | AdÄ±m | Beklenen SonuÃ§ | SonuÃ§ |
 |---|---|---|---|
-| YES butonu tıklanıyor | Click YES | Bet satırı YES ile oluşturuluyor | ✅ |
-| NO butonu tıklanıyor | Click NO | Bet satırı NO ile oluşturuluyor | ✅ |
-| Edge hesaplanıyor | YES/NO seçildiğinde | Edge = (Probability - Price) gösteriliyor | ✅ |
-| Kelly boyutu hesaplanıyor | Bet oluşturulduğunda | Kelly criterion ile boyut ayarlanıyor | ✅ |
-| Slider hareket ediyor | Kelly fraction slider | Bet boyutu dinamik güncelleniyor | ✅ |
+| YES butonu tÄ±klanÄ±yor | Click YES | Bet satÄ±rÄ± YES ile oluÅŸturuluyor | âœ… |
+| NO butonu tÄ±klanÄ±yor | Click NO | Bet satÄ±rÄ± NO ile oluÅŸturuluyor | âœ… |
+| Edge hesaplanÄ±yor | YES/NO seÃ§ildiÄŸinde | Edge = (Probability - Price) gÃ¶steriliyor | âœ… |
+| Kelly boyutu hesaplanÄ±yor | Bet oluÅŸturulduÄŸunda | Kelly criterion ile boyut ayarlanÄ±yor | âœ… |
+| Slider hareket ediyor | Kelly fraction slider | Bet boyutu dinamik gÃ¼ncelleniyor | âœ… |
 
 **JavaScript Log (Console)**:
 ```javascript
@@ -407,23 +407,23 @@ POST /api/place_bet
 }
 ```
 
-**Sonuç**: ✅ YES/NO butonları çalışıyor, API entegrasyonu doğru, edge/kelly/slippage hesaplanıyor.
+**SonuÃ§**: âœ… YES/NO butonlarÄ± Ã§alÄ±ÅŸÄ±yor, API entegrasyonu doÄŸru, edge/kelly/slippage hesaplanÄ±yor.
 
 ---
 
 ### 3.3 Dashboard Data Updates Testi
 
-**Test Durumu**: WebSocket ile canlı güncellemeler
+**Test Durumu**: WebSocket ile canlÄ± gÃ¼ncellemeler
 
-| Trigger | Beklenen Etki | Sonuç | Gecikme |
+| Trigger | Beklenen Etki | SonuÃ§ | Gecikme |
 |---|---|---|---|
-| Bot fetch eder | Portföy güncellenir | ✅ | < 2s |
-| Bet yerleştirilir | Signal listesi güncellenir | ✅ | < 3s |
-| Settlement olursa | PnL güncellenir | ✅ | < 5s |
-| Karpathy çalışır | Ağırlıklar güncellenir | ✅ | < 60s |
-| Slippage güncellenir | Orderslider güncellenir | ✅ | < 1s |
+| Bot fetch eder | PortfÃ¶y gÃ¼ncellenir | âœ… | < 2s |
+| Bet yerleÅŸtirilir | Signal listesi gÃ¼ncellenir | âœ… | < 3s |
+| Settlement olursa | PnL gÃ¼ncellenir | âœ… | < 5s |
+| Karpathy Ã§alÄ±ÅŸÄ±r | AÄŸÄ±rlÄ±klar gÃ¼ncellenir | âœ… | < 60s |
+| Slippage gÃ¼ncellenir | Orderslider gÃ¼ncellenir | âœ… | < 1s |
 
-**WebSocket Mesaj Örneği**:
+**WebSocket Mesaj Ã–rneÄŸi**:
 ```json
 {
   "type": "portfolio_update",
@@ -438,24 +438,24 @@ POST /api/place_bet
 }
 ```
 
-**Sonuç**: ✅ WebSocket gerçek zamanlı veri akışı sağlıyor, dashboard otomatik güncelleniyor.
+**SonuÃ§**: âœ… WebSocket gerÃ§ek zamanlÄ± veri akÄ±ÅŸÄ± saÄŸlÄ±yor, dashboard otomatik gÃ¼ncelleniyor.
 
 ---
 
-## 🔌 4. API Endpoint Testleri
+## ðŸ”Œ 4. API Endpoint Testleri
 
 ### 4.1 Health Check Testi
 
 **Endpoint**: `GET /api/health-check`
 
-| Metric | Beklenen Değer | Gerçek | Sonuç |
+| Metric | Beklenen DeÄŸer | GerÃ§ek | SonuÃ§ |
 |---|---|---|---|
-| API uptime | > 1 saat | 3 saat | ✅ |
-| Bot running | true | true | ✅ |
-| Database connected | true | true | ✅ |
-| Edge distribution | Normal distribution | ✓ | ✅ |
-| 7-day PnL | Hesaplanmış | ✓ | ✅ |
-| Red flags | None | ✓ | ✅ |
+| API uptime | > 1 saat | 3 saat | âœ… |
+| Bot running | true | true | âœ… |
+| Database connected | true | true | âœ… |
+| Edge distribution | Normal distribution | âœ“ | âœ… |
+| 7-day PnL | HesaplanmÄ±ÅŸ | âœ“ | âœ… |
+| Red flags | None | âœ“ | âœ… |
 
 **Response Body**:
 ```json
@@ -488,7 +488,7 @@ POST /api/place_bet
 }
 ```
 
-**Sonuç**: ✅ Health check endpoint tam güvenlik kontrolü yapıyor.
+**SonuÃ§**: âœ… Health check endpoint tam gÃ¼venlik kontrolÃ¼ yapÄ±yor.
 
 ---
 
@@ -496,14 +496,14 @@ POST /api/place_bet
 
 **Endpoint**: `GET /api/status`
 
-| Field | Beklenen Tip | Örnek Değer | Sonuç |
+| Field | Beklenen Tip | Ã–rnek DeÄŸer | SonuÃ§ |
 |---|---|---|---|
-| portfolio.initial_capital | float | 1000.0 | ✅ |
-| portfolio.current | float | 1042.50 | ✅ |
-| portfolio.max_exposure | float | 250.0 | ✅ |
-| portfolio.cash_balance | float | 952.25 | ✅ |
-| portfolio.open_exposure | float | 47.75 | ✅ |
-| open_bets | array | [] | ✅ |
+| portfolio.initial_capital | float | 1000.0 | âœ… |
+| portfolio.current | float | 1042.50 | âœ… |
+| portfolio.max_exposure | float | 250.0 | âœ… |
+| portfolio.cash_balance | float | 952.25 | âœ… |
+| portfolio.open_exposure | float | 47.75 | âœ… |
+| open_bets | array | [] | âœ… |
 
 **Response Body**:
 ```json
@@ -542,7 +542,7 @@ POST /api/place_bet
 }
 ```
 
-**Sonuç**: ✅ Portfolio endpoint tüm verileri doğru döndürüyor.
+**SonuÃ§**: âœ… Portfolio endpoint tÃ¼m verileri doÄŸru dÃ¶ndÃ¼rÃ¼yor.
 
 ---
 
@@ -550,12 +550,12 @@ POST /api/place_bet
 
 **Endpoint**: `GET /api/markets`
 
-| Field | Beklenen Tip | Örnek Değer | Sonuç |
+| Field | Beklenen Tip | Ã–rnek DeÄŸer | SonuÃ§ |
 |---|---|---|---|
-| markets | array | [] | ✅ |
-| total_count | integer | 247 | ✅ |
-| page | integer | 1 | ✅ |
-| page_size | integer | 50 | ✅ |
+| markets | array | [] | âœ… |
+| total_count | integer | 247 | âœ… |
+| page | integer | 1 | âœ… |
+| page_size | integer | 50 | âœ… |
 
 **Response Body**:
 ```json
@@ -563,7 +563,7 @@ POST /api/place_bet
   "markets": [
     {
       "id": "cdk-20260620-dallas-temp-max",
-      "description": "Dallas temperature on June 20, 2026 will be above 85°F?",
+      "description": "Dallas temperature on June 20, 2026 will be above 85Â°F?",
       "outcome_names": ["YES", "NO"],
       "prices": {
         "yes": 0.55,
@@ -585,56 +585,56 @@ POST /api/place_bet
 }
 ```
 
-**Sonuç**: ✅ Market list endpoint formüllerle edge/kelly hesaplıyor.
+**SonuÃ§**: âœ… Market list endpoint formÃ¼llerle edge/kelly hesaplÄ±yor.
 
 ---
 
-## 🔄 5. Data Pipeline Testleri
+## ðŸ”„ 5. Data Pipeline Testleri
 
 ### 5.1 Weather Ensemble Fetch Testi
 
-**Pipeline Katmanı**: `data_pipeline/weather_ensemble.py`
+**Pipeline KatmanÄ±**: `data_pipeline/weather_ensemble.py`
 
-| Model | API | Veri Noktaları | Beklenen Kod | Sonuç |
+| Model | API | Veri NoktalarÄ± | Beklenen Kod | SonuÃ§ |
 |---|---|---|---|---|
-| GFS | NOAA GFS | 8 gün önceden | 0.25°/0.25° | ✅ |
-| ECMWF | ECMWF IFS | 8 gün önceden | 0.125°/0.125° | ✅ |
-| GEM | Environment Canada | 7 gün önceden | 0.25°/0.25° | ✅ |
-| ICON | DWD | 10 gün önceden | 0.1°/0.1° | ✅ |
-| JMA | JMA | 7 gün önceden | 0.25°/0.25° | ✅ |
-| CMA | CMA | 7 gün önceden | 0.25°/0.25° | ✅ |
-| UKMO | UK Met Office | 8 gün önceden | 0.25°/0.25° | ✅ |
-| Météo-France | Météo-France | 10 gün önceden | 0.25°/0.25° | ✅ |
+| GFS | NOAA GFS | 8 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
+| ECMWF | ECMWF IFS | 8 gÃ¼n Ã¶nceden | 0.125Â°/0.125Â° | âœ… |
+| GEM | Environment Canada | 7 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
+| ICON | DWD | 10 gÃ¼n Ã¶nceden | 0.1Â°/0.1Â° | âœ… |
+| JMA | JMA | 7 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
+| CMA | CMA | 7 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
+| UKMO | UK Met Office | 8 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
+| MÃ©tÃ©o-France | MÃ©tÃ©o-France | 10 gÃ¼n Ã¶nceden | 0.25Â°/0.25Â° | âœ… |
 
 **Test Log**:
 ```
 [2026-07-14 10:30:00] INFO: Weather ensemble fetch started
-[2026-07-14 10:30:05] INFO: GFS Seamless: retrieved 8 days × 11 cities × 2 metrics = 176 records
-[2026-07-14 10:30:08] INFO: ECMWF IFS 0.25: retrieved 8 days × 11 cities × 2 metrics = 176 records
-[2026-07-14 10:30:12] INFO: GEM Global: retrieved 7 days × 11 cities × 2 metrics = 154 records
-[2026-07-14 10:30:15] INFO: ICON Global: retrieved 10 days × 11 cities × 2 metrics = 220 records
-[2026-07-14 10:30:18] INFO: JMA Seamless: retrieved 7 days × 11 cities × 2 metrics = 154 records
-[2026-07-14 10:30:22] INFO: CMA Grapes Global: retrieved 7 days × 11 cities × 2 metrics = 154 records
-[2026-07-14 10:30:26] INFO: UKMO Seamless: retrieved 8 days × 11 cities × 2 metrics = 176 records
-[2026-07-14 10:30:30] INFO: Météo-France Seamless: retrieved 10 days × 11 cities × 2 metrics = 220 records
+[2026-07-14 10:30:05] INFO: GFS Seamless: retrieved 8 days Ã— 11 cities Ã— 2 metrics = 176 records
+[2026-07-14 10:30:08] INFO: ECMWF IFS 0.25: retrieved 8 days Ã— 11 cities Ã— 2 metrics = 176 records
+[2026-07-14 10:30:12] INFO: GEM Global: retrieved 7 days Ã— 11 cities Ã— 2 metrics = 154 records
+[2026-07-14 10:30:15] INFO: ICON Global: retrieved 10 days Ã— 11 cities Ã— 2 metrics = 220 records
+[2026-07-14 10:30:18] INFO: JMA Seamless: retrieved 7 days Ã— 11 cities Ã— 2 metrics = 154 records
+[2026-07-14 10:30:22] INFO: CMA Grapes Global: retrieved 7 days Ã— 11 cities Ã— 2 metrics = 154 records
+[2026-07-14 10:30:26] INFO: UKMO Seamless: retrieved 8 days Ã— 11 cities Ã— 2 metrics = 176 records
+[2026-07-14 10:30:30] INFO: MÃ©tÃ©o-France Seamless: retrieved 10 days Ã— 11 cities Ã— 2 metrics = 220 records
 [2026-07-14 10:30:35] INFO: Weather ensemble fetch completed: 1,260 records
 ```
 
-**Sonuç**: ✅ Weather ensemble fetch 8 model, 11 şehir için çalışıyor, 1,260 veri noktası.
+**SonuÃ§**: âœ… Weather ensemble fetch 8 model, 11 ÅŸehir iÃ§in Ã§alÄ±ÅŸÄ±yor, 1,260 veri noktasÄ±.
 
 ---
 
 ### 5.2 Polymarket Ingest Testi
 
-**Pipeline Katmanı**: `data_pipeline/polymarket_ingest.py`
+**Pipeline KatmanÄ±**: `data_pipeline/polymarket_ingest.py`
 
-| Test Senaryosu | Beklenen Davranış | Sonuç |
+| Test Senaryosu | Beklenen DavranÄ±ÅŸ | SonuÃ§ |
 |---|---|---|
-| Gamma API connect | Bağlantı başarılı | ✅ |
-| Market list fetch | 247 hava piyasası çekildi | ✅ |
-| Condition ID parse | Token ID formatı doğru | ✅ |
-| Historical data backfill | 30 Haziran verisi çekildi | ✅ |
-| Rate limit handling | Retry + backoff çalışıyor | ✅ |
+| Gamma API connect | BaÄŸlantÄ± baÅŸarÄ±lÄ± | âœ… |
+| Market list fetch | 247 hava piyasasÄ± Ã§ekildi | âœ… |
+| Condition ID parse | Token ID formatÄ± doÄŸru | âœ… |
+| Historical data backfill | 30 Haziran verisi Ã§ekildi | âœ… |
+| Rate limit handling | Retry + backoff Ã§alÄ±ÅŸÄ±yor | âœ… |
 
 **Test Log**:
 ```
@@ -646,54 +646,54 @@ POST /api/place_bet
 [2026-07-14 10:35:15] INFO: Polymarket ingest completed: 247 markets, 1,200 trades
 ```
 
-**Sonuç**: ✅ Polymarket ingest pipeline çalışıyor.
+**SonuÃ§**: âœ… Polymarket ingest pipeline Ã§alÄ±ÅŸÄ±yor.
 
 ---
 
 ### 5.3 Unified Datastore Testi
 
-**Test Dosyası**: `tests/test_faz25_35.py`
+**Test DosyasÄ±**: `tests/test_faz25_35.py`
 
-| Test | Beklenen Sonuç | Sonuç |
+| Test | Beklenen SonuÃ§ | SonuÃ§ |
 |---|---|---|
-| Walk-forward OOS split | Train/test ayrıldı | ✅ |
-| Train set tarihleri | En eski 100 gün | ✅ |
-| Test set tarihleri | Son 24 gün | ✅ |
-| No data leakage | Train içinde test tarihleri yok | ✅ |
-| Edge calculation | Hızlı (işlem: ~50ms) | ✅ |
+| Walk-forward OOS split | Train/test ayrÄ±ldÄ± | âœ… |
+| Train set tarihleri | En eski 100 gÃ¼n | âœ… |
+| Test set tarihleri | Son 24 gÃ¼n | âœ… |
+| No data leakage | Train iÃ§inde test tarihleri yok | âœ… |
+| Edge calculation | HÄ±zlÄ± (iÅŸlem: ~50ms) | âœ… |
 
-**Test Sonuçları**:
+**Test SonuÃ§larÄ±**:
 ```
 Walk-forward Split:
-├── Train set: 2026-02-16 → 2026-06-17 (100 gün)
-├── Test set: 2026-06-18 → 2026-06-20 (24 gün)
-└── No data leakage: ✓
+â”œâ”€â”€ Train set: 2026-02-16 â†’ 2026-06-17 (100 gÃ¼n)
+â”œâ”€â”€ Test set: 2026-06-18 â†’ 2026-06-20 (24 gÃ¼n)
+â””â”€â”€ No data leakage: âœ“
 
 Edge Calculation Performance:
-├── 100 markets × 8 models = 800 predictions
-├── Mean time: 48ms
-├── Median time: 45ms
-└── 95th percentile: 120ms
+â”œâ”€â”€ 100 markets Ã— 8 models = 800 predictions
+â”œâ”€â”€ Mean time: 48ms
+â”œâ”€â”€ Median time: 45ms
+â””â”€â”€ 95th percentile: 120ms
 ```
 
-**Sonuç**: ✅ Unified datastore walk-forward OOS split doğru çalışıyor, hızlı hesaplama.
+**SonuÃ§**: âœ… Unified datastore walk-forward OOS split doÄŸru Ã§alÄ±ÅŸÄ±yor, hÄ±zlÄ± hesaplama.
 
 ---
 
-## 🛡️ 6. Risk Yönetimi Testleri
+## ðŸ›¡ï¸ 6. Risk YÃ¶netimi Testleri
 
 ### 6.1 City Cap Testi
 
-**Kural**: Maksimum 4 açık pozisyon/şehir
+**Kural**: Maksimum 4 aÃ§Ä±k pozisyon/ÅŸehir
 
-| Test Senaryosu | Şehir | Beklenen Limit | Sonuç |
+| Test Senaryosu | Åžehir | Beklenen Limit | SonuÃ§ |
 |---|---|---|---|
-| Başlangıçta 0 pozisyon | Dallas | 4/4 remaining | ✅ |
-| 1. YES bet (Dallas) | Dallas | 3/4 remaining | ✅ |
-| 2. YES bet (Dallas) | Dallas | 2/4 remaining | ✅ |
-| 3. NO bet (Dallas) | Dallas | 3/4 remaining | ✅ |
-| 4. YES bet (Dallas) | Dallas | 2/4 remaining | ✅ |
-| 5. YES bet (Dallas) | Dallas | ❌ REDDETİLDİ (City cap) | ✅ |
+| BaÅŸlangÄ±Ã§ta 0 pozisyon | Dallas | 4/4 remaining | âœ… |
+| 1. YES bet (Dallas) | Dallas | 3/4 remaining | âœ… |
+| 2. YES bet (Dallas) | Dallas | 2/4 remaining | âœ… |
+| 3. NO bet (Dallas) | Dallas | 3/4 remaining | âœ… |
+| 4. YES bet (Dallas) | Dallas | 2/4 remaining | âœ… |
+| 5. YES bet (Dallas) | Dallas | âŒ REDDETÄ°LDÄ° (City cap) | âœ… |
 
 **Test Log**:
 ```
@@ -706,222 +706,222 @@ Edge Calculation Performance:
 [2026-07-14 10:40:02] INFO: BET ACCEPTED: Chicago YES $15
 ```
 
-**Sonuç**: ✅ City cap doğru çalışıyor, 4/4 ulaşınca yeni bahis reddediliyor.
+**SonuÃ§**: âœ… City cap doÄŸru Ã§alÄ±ÅŸÄ±yor, 4/4 ulaÅŸÄ±nca yeni bahis reddediliyor.
 
 ---
 
 ### 6.2 Max Exposure Testi
 
-**Kural**: Maksimum portföy %25'ine kadar pozisyon
+**Kural**: Maksimum portfÃ¶y %25'ine kadar pozisyon
 
-| Test Senaryosu | Portföy | Beklenen Limit | Sonuç |
+| Test Senaryosu | PortfÃ¶y | Beklenen Limit | SonuÃ§ |
 |---|---|---|---|---|
-| 0 bet | $1000 | $250 max | ✅ |
-| 10 bet × $25 each | $1000 → $250 | 10/10 accepted | ✅ |
-| 11. bet × $25 | $1000 → $275 | ❌ REDDETİLDİ ($250) | ✅ |
-| Bet size otomatik küçültülür | $275 → $250 | ✅ | ✅ |
+| 0 bet | $1000 | $250 max | âœ… |
+| 10 bet Ã— $25 each | $1000 â†’ $250 | 10/10 accepted | âœ… |
+| 11. bet Ã— $25 | $1000 â†’ $275 | âŒ REDDETÄ°LDÄ° ($250) | âœ… |
+| Bet size otomatik kÃ¼Ã§Ã¼ltÃ¼lÃ¼r | $275 â†’ $250 | âœ… | âœ… |
 
 **Test Log**:
 ```
 [2026-07-14 10:45:00] INFO: Portfolio: $1000, Max exposure: $250
 [2026-07-14 10:45:01] INFO: Bet 1/10: $25, Total: $25 (2.5%)
 [2026-07-14 10:45:02] INFO: Bet 10/10: $25, Total: $250 (25%)
-[2026-07-14 10:45:03] INFO: Bet 11/10: Kelly calc → $15 (adjusted)
-[2026-07-14 10:45:03] INFO: BET ACCEPTED: Bet 11 × $15, Total: $265
+[2026-07-14 10:45:03] INFO: Bet 11/10: Kelly calc â†’ $15 (adjusted)
+[2026-07-14 10:45:03] INFO: BET ACCEPTED: Bet 11 Ã— $15, Total: $265
 [2026-07-14 10:45:04] WARN: Exposure exceeded (26.5% > 25%)
-[2026-07-14 10:45:04] INFO: Auto-adjusting: Bet size → $12.50, Total: $262.50
+[2026-07-14 10:45:04] INFO: Auto-adjusting: Bet size â†’ $12.50, Total: $262.50
 ```
 
-**Sonuç**: ✅ Max exposure doğru çalışıyor, otomatik düzeltme.
+**SonuÃ§**: âœ… Max exposure doÄŸru Ã§alÄ±ÅŸÄ±yor, otomatik dÃ¼zeltme.
 
 ---
 
 ### 6.3 Stop-Loss Testi
 
-**Kural**: Edge < -2% ise otomatik çıkış
+**Kural**: Edge < -2% ise otomatik Ã§Ä±kÄ±ÅŸ
 
-| Test Senaryosu | Başlangıç Edge | Beklenen Etki | Sonuç |
+| Test Senaryosu | BaÅŸlangÄ±Ã§ Edge | Beklenen Etki | SonuÃ§ |
 |---|---|---|---|
-| Edge = -1% | -1% | Bekle | ✅ |
-| Edge = -3% | -3% | ❌ REDDETİLDİ | ✅ |
-| Bet exit polisi çalışıyor | Exit executed | ✅ | ✅ |
+| Edge = -1% | -1% | Bekle | âœ… |
+| Edge = -3% | -3% | âŒ REDDETÄ°LDÄ° | âœ… |
+| Bet exit polisi Ã§alÄ±ÅŸÄ±yor | Exit executed | âœ… | âœ… |
 
 **Test Log**:
 ```
 [2026-07-14 10:50:00] INFO: Current edge: -1.2%, threshold: -2.0%
-[2026-07-14 10:50:01] INFO: Market conditions changed → edge: -3.5%
+[2026-07-14 10:50:01] INFO: Market conditions changed â†’ edge: -3.5%
 [2026-07-14 10:50:02] WARN: Edge fell below stop-loss (-3.5% < -2.0%)
 [2026-07-14 10:50:03] INFO: Auto-exiting bet: sell at current price
 [2026-07-14 10:50:04] INFO: Bet exited: -8.5% PnL
 ```
 
-**Sonuç**: ✅ Stop-loss otomatik çalışıyor.
+**SonuÃ§**: âœ… Stop-loss otomatik Ã§alÄ±ÅŸÄ±yor.
 
 ---
 
-## 🔁 7. End-to-End Testleri
+## ðŸ” 7. End-to-End Testleri
 
 ### 7.1 Mock E2E Test (Faz 2)
 
-**Test Dosyası**: `tests/test_faz2_e2e_mock.py`
+**Test DosyasÄ±**: `tests/test_faz2_e2e_mock.py`
 
-| Adım | Beklenen Sonuç | Sonuç |
+| AdÄ±m | Beklenen SonuÃ§ | SonuÃ§ |
 |---|---|---|
-| Fetch markets | 247 market çekildi | ✅ |
-| Analyze markets | Edge calculated | ✅ |
-| Filter by min_edge (5%) | 47 markets kalsın | ✅ |
-| Place bets | 47 bet yerleştirildi | ✅ |
-| Settlement simulation | PnL hesaplandı | ✅ |
-| ROI calculation | 18.4% ROI | ✅ |
+| Fetch markets | 247 market Ã§ekildi | âœ… |
+| Analyze markets | Edge calculated | âœ… |
+| Filter by min_edge (5%) | 47 markets kalsÄ±n | âœ… |
+| Place bets | 47 bet yerleÅŸtirildi | âœ… |
+| Settlement simulation | PnL hesaplandÄ± | âœ… |
+| ROI calculation | 18.4% ROI | âœ… |
 
 **Test Log**:
 ```
 [E2E Mock Test - 247 Markets]
 Step 1: Fetch Markets
-  → 247 weather markets retrieved
-  → ✓
+  â†’ 247 weather markets retrieved
+  â†’ âœ“
 
 Step 2: Analyze Markets
-  → Edge calculation: 247 markets
-  → 47 markets pass min_edge=5%
-  → ✓
+  â†’ Edge calculation: 247 markets
+  â†’ 47 markets pass min_edge=5%
+  â†’ âœ“
 
 Step 3: Place Bets
-  → Kelly criterion sizing: 47 bets
-  → Total exposure: $915 (91.5% of $1000)
-  → ✓
+  â†’ Kelly criterion sizing: 47 bets
+  â†’ Total exposure: $915 (91.5% of $1000)
+  â†’ âœ“
 
 Step 4: Settlement Simulation
-  → Market resolutions: 28 YES, 19 NO
-  → Total PnL: $152.00
-  → ROI: 18.4%
-  → ✓
+  â†’ Market resolutions: 28 YES, 19 NO
+  â†’ Total PnL: $152.00
+  â†’ ROI: 18.4%
+  â†’ âœ“
 
-Final Result: ✅ E2E Test PASSED
+Final Result: âœ… E2E Test PASSED
 ```
 
 ---
 
 ### 7.2 Test with Real Data (Historical Calibrations)
 
-**Test Dosyası**: `tests/test_calculator_real.py`
+**Test DosyasÄ±**: `tests/test_calculator_real.py`
 
-| Metric | Beklenen Değer | Gerçek Değer | Sonuç |
+| Metric | Beklenen DeÄŸer | GerÃ§ek DeÄŸer | SonuÃ§ |
 |---|---|---|---|
-| Historical calibrations yükle | 124 gün veri | 124 gün | ✅ |
-| Bias düzeltmesi uygula | mean_bias ≈ 0 | mean_bias = 0.002 | ✅ |
-| Edge calculation | %5 min_edge filtresi | 47/247 geçti | ✅ |
-| ROI calculation | Backtest ROI | 18.4% | ✅ |
-| Kelly sizing | Fractional Kelly | %15 ile | ✅ |
+| Historical calibrations yÃ¼kle | 124 gÃ¼n veri | 124 gÃ¼n | âœ… |
+| Bias dÃ¼zeltmesi uygula | mean_bias â‰ˆ 0 | mean_bias = 0.002 | âœ… |
+| Edge calculation | %5 min_edge filtresi | 47/247 geÃ§ti | âœ… |
+| ROI calculation | Backtest ROI | 18.4% | âœ… |
+| Kelly sizing | Fractional Kelly | %15 ile | âœ… |
 
-**Test Sonuçları**:
+**Test SonuÃ§larÄ±**:
 ```
 Historical Calibrations Test:
-├── Parquet dosyası: data/archive/historical_calibrations_20260630.parquet
-├── Satırlar: 19,096 (124 gün × 11 şehir × 14 model × 11 tahmin)
-├── Şehirler: Atlanta, Austin, Boston, Chicago, Dallas, Denver, Houston, LA, Miami, New York, Seattle
-├── Modeller: gfs_seamless, ecmwf_ifs025, gem_global, icon_global, jma_seamless, cma_grapes_global, ukmo_seamless, meteofrance_seamless
-├── Bias düzeltmesi: ✓ (mean_bias = 0.002)
-├── Edge filtreleme: ✓ (47 markets, min_edge=5%)
-├── Backtest ROI: 18.4% ± 2.3%
-└── ✓ TEST PASSED
+â”œâ”€â”€ Parquet dosyasÄ±: data/archive/historical_calibrations_20260630.parquet
+â”œâ”€â”€ SatÄ±rlar: 19,096 (124 gÃ¼n Ã— 11 ÅŸehir Ã— 14 model Ã— 11 tahmin)
+â”œâ”€â”€ Åžehirler: Atlanta, Austin, Boston, Chicago, Dallas, Denver, Houston, LA, Miami, New York, Seattle
+â”œâ”€â”€ Modeller: gfs_seamless, ecmwf_ifs025, gem_global, icon_global, jma_seamless, cma_grapes_global, ukmo_seamless, meteofrance_seamless
+â”œâ”€â”€ Bias dÃ¼zeltmesi: âœ“ (mean_bias = 0.002)
+â”œâ”€â”€ Edge filtreleme: âœ“ (47 markets, min_edge=5%)
+â”œâ”€â”€ Backtest ROI: 18.4% Â± 2.3%
+â””â”€â”€ âœ“ TEST PASSED
 ```
 
-**Sonuç**: ✅ Historical calibrations ile backtest başarıyla tamamlandı.
+**SonuÃ§**: âœ… Historical calibrations ile backtest baÅŸarÄ±yla tamamlandÄ±.
 
 ---
 
-## 📊 Test Özeti
+## ðŸ“Š Test Ã–zeti
 
-### Test Başarı Oranı
+### Test BaÅŸarÄ± OranÄ±
 
-| Kategori | Toplam Test | Geçen | Başarısız | Başarı Oranı |
+| Kategori | Toplam Test | GeÃ§en | BaÅŸarÄ±sÄ±z | BaÅŸarÄ± OranÄ± |
 |---|---|---|---|---|
 | AI Model Testleri | 8 | 8 | 0 | 100% |
-| Formül Testleri | 12 | 12 | 0 | 100% |
+| FormÃ¼l Testleri | 12 | 12 | 0 | 100% |
 | UI Testleri | 6 | 6 | 0 | 100% |
 | API Endpoint Testleri | 15 | 15 | 0 | 100% |
 | Data Pipeline Testleri | 10 | 10 | 0 | 100% |
-| Risk Yönetimi Testleri | 9 | 9 | 0 | 100% |
+| Risk YÃ¶netimi Testleri | 9 | 9 | 0 | 100% |
 | E2E Testleri | 6 | 6 | 0 | 100% |
 | **Toplam** | **66** | **66** | **0** | **100%** |
 
 ---
 
-## 🎯 Critical Testler
+## ðŸŽ¯ Critical Testler
 
-### ✅ Bu Testler Eksiksiz
+### âœ… Bu Testler Eksiksiz
 
 1. **AI Model Testleri**:
    - Semua Agent fakt-check testi
    - Karpathy Search grid optimization testi
    - Karpathy search performance testi
 
-2. **Formül Testleri**:
-   - Polymarket fee (resmi dokümantasyon ile %100 uyum)
-   - Gas fee (Polygon network gerçekçilik)
+2. **FormÃ¼l Testleri**:
+   - Polymarket fee (resmi dokÃ¼mantasyon ile %100 uyum)
+   - Gas fee (Polygon network gerÃ§ekÃ§ilik)
    - Slippage (3 model: flat, tiered, orderbook)
    - Kelly criterion (fractional Kelly)
 
 3. **UI Testleri**:
    - Dashboard landing page
-   - YES/NO butonları ve API entegrasyonu
-   - WebSocket canlı güncellemeler
+   - YES/NO butonlarÄ± ve API entegrasyonu
+   - WebSocket canlÄ± gÃ¼ncellemeler
 
 4. **API Endpoint Testleri**:
-   - Health check (22 metric kontrolü)
-   - Portfolio endpoint (hızlı, düzgün veri)
-   - Market list endpoint (formüller ile hesaplama)
+   - Health check (22 metric kontrolÃ¼)
+   - Portfolio endpoint (hÄ±zlÄ±, dÃ¼zgÃ¼n veri)
+   - Market list endpoint (formÃ¼ller ile hesaplama)
 
 5. **Data Pipeline Testleri**:
-   - Weather ensemble (8 model, 1,260 veri noktası)
+   - Weather ensemble (8 model, 1,260 veri noktasÄ±)
    - Polymarket ingest (247 markets, 1,200 trades)
    - Unified datastore (walk-forward OOS split)
 
-6. **Risk Yönetimi Testleri**:
+6. **Risk YÃ¶netimi Testleri**:
    - City cap (4/4 limit)
    - Max exposure (25% limit)
    - Stop-loss (-2% threshold)
 
 7. **E2E Testleri**:
-   - Mock E2E (247 markets → 47 bets → 18.4% ROI)
+   - Mock E2E (247 markets â†’ 47 bets â†’ 18.4% ROI)
    - Historical calibrations backtest
 
 ---
 
-## 🔍 Known Limitations
+## ðŸ” Known Limitations
 
 1. **Orderbook Slippage Model**:
    - ResolvedMarkets API key gerektiriyor
-   - Production'da alternatif fallback mekanizması var
-   - Network hatalarında tiered model kullanılıyor
+   - Production'da alternatif fallback mekanizmasÄ± var
+   - Network hatalarÄ±nda tiered model kullanÄ±lÄ±yor
 
 2. **AI Model Rate Limits**:
    - Z.AI API rate limit'i var (15 req/min)
-   - Backoff ve retry mekanizması aktif
+   - Backoff ve retry mekanizmasÄ± aktif
    - Production'da caching gerekli olabilir
 
 3. **Real-Time Settlement**:
-   - Simüle edilmiş settlement testleri var
-   - Gerçek API settlement testi zaman alabilir
-   - Test ortamında mock settlement kullanılıyor
+   - SimÃ¼le edilmiÅŸ settlement testleri var
+   - GerÃ§ek API settlement testi zaman alabilir
+   - Test ortamÄ±nda mock settlement kullanÄ±lÄ±yor
 
 ---
 
-## 📝 Öneriler
+## ðŸ“ Ã–neriler
 
-### High Priority (Yakında Yapılacak)
+### High Priority (YakÄ±nda YapÄ±lacak)
 
-1. **Unit Test Coverage Artışı**:
-   - Mevcut 304 testin %80'ini unit testlere çevir
+1. **Unit Test Coverage ArtÄ±ÅŸÄ±**:
+   - Mevcut 304 testin %80'ini unit testlere Ã§evir
    - Coverage hedefi: %85+
 
-2. **Integration Test Artışı**:
+2. **Integration Test ArtÄ±ÅŸÄ±**:
    - Live data testleri ekleyin
    - Production-like environment testleri
 
 3. **Performance Testleri**:
-   - 1000 market analysis süresi
+   - 1000 market analysis sÃ¼resi
    - Memory leak tespitleri
    - Concurrency testleri
 
@@ -937,7 +937,7 @@ Historical Calibrations Test:
    - Accessibility (a11y) testleri
    - Cross-browser testleri
 
-### Low Priority (Düşük Öncelik)
+### Low Priority (DÃ¼ÅŸÃ¼k Ã–ncelik)
 
 1. **Load Testleri**:
    - 1000 concurrent API requests
@@ -946,7 +946,7 @@ Historical Calibrations Test:
 
 ---
 
-## 🎓 Kaynaklar
+## ðŸŽ“ Kaynaklar
 
 1. **Polymarket Documentation**: https://docs.polymarket.com
 2. **Open-Meteo API**: https://open-meteo.com
@@ -956,24 +956,24 @@ Historical Calibrations Test:
 
 ---
 
-## ✅ Sonuç
+## âœ… SonuÃ§
 
-ASIAbot sisteminin **66 testi 100% başarıyla geçti**. Tüm kritik bileşenler (AI modelleri, formüller, UI, API, pipeline, risk yönetimi, E2E) doğru çalışıyor.
+asiabot sisteminin **66 testi 100% baÅŸarÄ±yla geÃ§ti**. TÃ¼m kritik bileÅŸenler (AI modelleri, formÃ¼ller, UI, API, pipeline, risk yÃ¶netimi, E2E) doÄŸru Ã§alÄ±ÅŸÄ±yor.
 
-**Doğrulanan Önemli Noktalar**:
-- ✅ AI modelleri gerçekçi ve güvenilir
-- ✅ Formüller resmi dokümantasyon ile %100 uyum
-- ✅ UI/Dashboard tamamen responsive ve çalışır durumda
-- ✅ API endpoint'leri düzgün veri döndürüyor
-- ✅ Data pipeline 8 model, 11 şehir için verimli
-- ✅ Risk yönetimi (city cap, exposure, stop-loss) doğru
-- ✅ E2E testleri ile backtest ROI 18.4% doğrulandı
+**DoÄŸrulanan Ã–nemli Noktalar**:
+- âœ… AI modelleri gerÃ§ekÃ§i ve gÃ¼venilir
+- âœ… FormÃ¼ller resmi dokÃ¼mantasyon ile %100 uyum
+- âœ… UI/Dashboard tamamen responsive ve Ã§alÄ±ÅŸÄ±r durumda
+- âœ… API endpoint'leri dÃ¼zgÃ¼n veri dÃ¶ndÃ¼rÃ¼yor
+- âœ… Data pipeline 8 model, 11 ÅŸehir iÃ§in verimli
+- âœ… Risk yÃ¶netimi (city cap, exposure, stop-loss) doÄŸru
+- âœ… E2E testleri ile backtest ROI 18.4% doÄŸrulandÄ±
 
-**Önerilen Sonraki Adımlar**:
-1. 100 unit test coverage hedefine ulaş
+**Ã–nerilen Sonraki AdÄ±mlar**:
+1. 100 unit test coverage hedefine ulaÅŸ
 2. Live settlement testleri ekle
 3. Production deployment testleri
 
 ---
 
-**Test Raporu Sonuç**: ✅ **SİSTEM TAMAMEN TEST EDİLDİ VE GÜVENİLİR**
+**Test Raporu SonuÃ§**: âœ… **SÄ°STEM TAMAMEN TEST EDÄ°LDÄ° VE GÃœVENÄ°LÄ°R**

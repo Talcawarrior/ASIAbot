@@ -1,8 +1,8 @@
-# ASIAbot BOT - Windows Task Scheduler (Son Versiyon)
+﻿# asiabot BOT - Windows Task Scheduler (Son Versiyon)
 # Sleep/Wake + Crash restart destekli
 
-$TaskName = "ASIAbotBot"
-$ScriptPath = "C:\Users\fdemir\Documents\New project\ASIAbot\start_bot.bat"
+$TaskName = "asiabotBot"
+$ScriptPath = "C:\Users\fdemir\Documents\New project\asiabot\start_bot.bat"
 
 # Eski task'i temizle
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
@@ -40,11 +40,11 @@ Register-ScheduledTask `
     -Trigger @($TriggerStartup, $TriggerLogon, $TriggerRepeat) `
     -Settings $Settings `
     -Principal $Principal `
-    -Description "ASIAbot Bot - Auto-restart on crash, sleep, wake" `
+    -Description "asiabot Bot - Auto-restart on crash, sleep, wake" `
     -Force
 
 Write-Host "============================================"
-Write-Host "  ASIAbot Bot Service kuruldu!"
+Write-Host "  asiabot Bot Service kuruldu!"
 Write-Host "============================================"
 Write-Host ""
 Write-Host "Ozellikler:"
@@ -53,3 +53,4 @@ Write-Host "  - Kullanici giris yaptiginda baslar"
 Write-Host "  - Her 2 dakikada kontrol eder"
 Write-Host "  - Sleep/Wake otomatik baslatma"
 Write-Host "  - Crash'te 3 sn sonra yeniden baslatma"
+

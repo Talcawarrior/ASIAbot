@@ -108,7 +108,9 @@ class PolymarketIngest:
                     backoff = 0.5 * (2**attempt)
                     logger.debug("Gamma retry %d on %s: %s", attempt + 1, path, exc)
                     time.sleep(backoff)
-        raise RuntimeError(f"Gamma GET {path} failed after {self.cfg.max_retries + 1} attempts: {last_exc}")
+        raise RuntimeError(
+            f"Gamma GET {path} failed after {self.cfg.max_retries + 1} attempts: {last_exc}"
+        )
 
     # -- Public: bulk market fetch ---------------------------------------
 
@@ -257,7 +259,9 @@ class PolymarketIngest:
         logger.info("Cached %d closed markets to %s", len(df), CLOSED_MARKETS_CACHE)
         return df
 
-    def fetch_active_markets(self, *, category: str | None = None, limit: int | None = None) -> pd.DataFrame:
+    def fetch_active_markets(
+        self, *, category: str | None = None, limit: int | None = None
+    ) -> pd.DataFrame:
         """Fetch all currently active (not yet resolved) markets."""
         df = self.fetch_markets(
             closed=False,
@@ -345,7 +349,9 @@ class PolymarketIngest:
             )
         )
         weather_df: pd.DataFrame = df[mask].copy()  # type: ignore[assignment]
-        logger.info("Filtered %d weather markets out of %d closed", len(weather_df), len(df))
+        logger.info(
+            "Filtered %d weather markets out of %d closed", len(weather_df), len(df)
+        )
         return weather_df
 
 
@@ -421,7 +427,9 @@ def _extract_resolved_outcome(row: pd.Series) -> str | None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
     ingest = PolymarketIngest()
 
     print("\n=== Recent closed markets (last 50) ===")

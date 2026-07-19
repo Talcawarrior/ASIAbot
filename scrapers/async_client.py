@@ -1,4 +1,4 @@
-"""Async HTTP client with bounded concurrency, per-host throttle, and in-process cache.
+﻿"""Async HTTP client with bounded concurrency, per-host throttle, and in-process cache.
 
 Tier 3 #12 from the code-review tier plan. Replaces the sequential
 ``requests``-based scraper paths with a small aiohttp wrapper that:
@@ -42,21 +42,17 @@ logger = logging.getLogger("SCRAPER_ASYNC")
 
 
 # ---- Public knobs (module-level so tests can monkeypatch) -------------
-MAX_CONCURRENT = 8
-_THROTTLE_S = 0.25
+MAX_CONCURRENT = 20
+_THROTTLE_S = 1.0
 _TIMEOUT_S = 15.0
-_USER_AGENT = "ASIAbot/1.0 (+tier3-12)"
+_USER_AGENT = "asiabot/1.0 (+tier3-12)"
 
 
 # ---- Cache -------------------------------------------------------------
-# (url, frozen-params) -> (result-or-None, timestamp).
-# We remember failures (None) too so a 429-storm does not get retried by
-# every market in the scan.
-# TTL: successful responses cached for 5 min, failures for 60 s.
-_CACHE: dict[tuple, tuple[Any, float]] = {}
+# (url, frozen-params) -> result-or-None. We remember failures (None)
+# too so a 429-storm does not get retried by every market in the scan.
+_CACHE: dict[tuple, Any] = {}
 _CACHE_LOCK = threading.Lock()
-_SUCCESS_TTL = 300.0  # 5 minutes for successful responses
-_FAILURE_TTL = 60.0  # 1 minute for failed responses (429 etc.)
 
 
 def _cache_key(url: str, params: dict | None) -> tuple:
@@ -67,25 +63,16 @@ def _cache_key(url: str, params: dict | None) -> tuple:
 
 def _cache_get(key: tuple) -> tuple[bool, Any]:
     """Return (hit, value). hit=True even when the cached value is None
-    so callers can short-circuit failed fetches. Respects TTL."""
-    import time as _time
-
+    so callers can short-circuit failed fetches."""
     with _CACHE_LOCK:
         if key in _CACHE:
-            value, ts = _CACHE[key]
-            ttl = _FAILURE_TTL if value is None else _SUCCESS_TTL
-            if _time.monotonic() - ts < ttl:
-                return True, value
-            else:
-                del _CACHE[key]
+            return True, _CACHE[key]
         return False, None
 
 
 def _cache_set(key: tuple, value: Any) -> None:
-    import time as _time
-
     with _CACHE_LOCK:
-        _CACHE[key] = (value, _time.monotonic())
+        _CACHE[key] = value
 
 
 def cache_clear() -> None:
@@ -122,6 +109,7 @@ async def _async_fetch_one(
     host: str,
     url: str,
     params: dict | None,
+    cache_key: tuple | None = None,
 ) -> Any:
     """Issue one GET, returning the parsed JSON body or None on failure.
 
@@ -141,13 +129,19 @@ async def _async_fetch_one(
                     break
             await asyncio.sleep(wait)
         try:
-            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=_TIMEOUT_S)) as resp:
+            async with session.get(
+                url, params=params, timeout=aiohttp.ClientTimeout(total=_TIMEOUT_S)
+            ) as resp:
                 if resp.status != 200:
                     logger.warning("async fetch %s -> HTTP %s", url, resp.status)
+                    if cache_key is not None:
+                        _cache_set(cache_key, None)
                     return None
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:  # type: ignore
             logger.warning("async fetch %s failed: %s", url, exc)
+            if cache_key is not None:
+                _cache_set(cache_key, None)
             return None
 
 
@@ -173,7 +167,9 @@ class AsyncHttpClient:
             raise RuntimeError("aiohttp is not installed")
         with self._session_lock:
             if self._session is None or self._session.closed:
-                self._session = aiohttp.ClientSession(headers={"User-Agent": _USER_AGENT})
+                self._session = aiohttp.ClientSession(
+                    headers={"User-Agent": _USER_AGENT}
+                )
             return self._session
 
     async def aclose(self) -> None:
@@ -211,10 +207,18 @@ class AsyncHttpClient:
         # the cross-event-loop ResourceWarning that shows up on Windows
         # when the test process exits before the pool drains.
         connector = aiohttp.TCPConnector(force_close=True)
-        session = aiohttp.ClientSession(headers={"User-Agent": _USER_AGENT}, connector=connector)
+        session = aiohttp.ClientSession(
+            headers={"User-Agent": _USER_AGENT}, connector=connector
+        )
         try:
             tasks = [
-                asyncio.create_task(_async_fetch_one(session, sem, host, url, params)) for url, params, host in items
+                asyncio.create_task(
+                    _async_fetch_one(
+                        session, sem, host, url, params,
+                        cache_key=_cache_key(url, params),
+                    )
+                )
+                for url, params, host in items
             ]
             return await asyncio.gather(*tasks, return_exceptions=False)
         finally:
@@ -224,7 +228,9 @@ class AsyncHttpClient:
             await session.close()
 
     # ---- sync entry points --------------------------------------------
-    def fetch_one_blocking(self, url: str, params: dict | None = None, host: str = "") -> Any:
+    def fetch_one_blocking(
+        self, url: str, params: dict | None = None, host: str = ""
+    ) -> Any:
         """Synchronous fetch with cache + throttle. Returns parsed JSON or None.
 
         Uses aiohttp when available, falling back to ``requests`` so a
@@ -239,9 +245,12 @@ class AsyncHttpClient:
             return self._sync_fetch(url, params, host, key)
         return asyncio.run(self._afetch_one_async(url, params, host, key))
 
-    async def _afetch_one_async(self, url: str, params: dict | None, host: str, key: tuple) -> Any:
+    async def _afetch_one_async(
+        self, url: str, params: dict | None, host: str, key: tuple
+    ) -> Any:
         results = await self._afetch([(url, params, host)])
         value = results[0] if results else None
+        # Also cache here in case _afetch didn't cache (e.g. aiohttp-less path)
         _cache_set(key, value)
         return value
 
@@ -296,7 +305,8 @@ class AsyncHttpClient:
         # aiohttp path: run all pending in one event-loop iteration.
         ordered = [t for _, t in pending]
         results = asyncio.run(self._afetch(ordered))
-        for (idx, (url, params, _host)), value in zip(pending, results, strict=False):
+        for (idx, (url, params, _host)), value in zip(pending, results):
             out[idx] = value
             _cache_set(_cache_key(url, params), value)
         return out
+

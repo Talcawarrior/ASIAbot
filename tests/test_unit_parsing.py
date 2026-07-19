@@ -80,7 +80,9 @@ class TestUnitParsing:
         assert r is not None, "expected a result"
         value_c, low_c, high_c = r
         # 90°F → 32.22°C
-        assert abs(value_c - 32.2) < 0.2, f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
+        assert abs(value_c - 32.2) < 0.2, (
+            f"Miami should be Fahrenheit: got {value_c}°C, expected ~32.2"
+        )
         assert low_c is None
         assert high_c is None
 
@@ -169,7 +171,11 @@ class TestRangeParisAndParseUpdate:
         assert ok, "parse_and_update should succeed"
 
         with get_session() as session:
-            m2 = session.query(WeatherMarket).filter_by(id="test-range-paris-001").first()
+            m2 = (
+                session.query(WeatherMarket)
+                .filter_by(id="test-range-paris-001")
+                .first()
+            )
             assert m2 is not None
             assert m2.threshold_low is not None, "threshold_low should be set"
             assert m2.threshold_high is not None, "threshold_high should be set"
@@ -203,7 +209,11 @@ class TestRangeParisAndParseUpdate:
         assert ok
 
         with get_session() as session:
-            m2 = session.query(WeatherMarket).filter_by(id="test-plain-london-002").first()
+            m2 = (
+                session.query(WeatherMarket)
+                .filter_by(id="test-plain-london-002")
+                .first()
+            )
             assert m2 is not None
             assert m2.threshold_low is None
             assert m2.threshold_high is None

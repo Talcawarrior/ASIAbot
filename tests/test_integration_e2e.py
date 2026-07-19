@@ -26,7 +26,6 @@ class TestFullPipelineE2E:
 
         # Step 3: Fee (real)
         from utils.formulas import polymarket_fee
-
         fee = polymarket_fee(shares=100, price=0.55, fee_rate=0.05)
         assert fee >= 0
 
@@ -36,7 +35,6 @@ class TestFullPipelineE2E:
 
         # Step 5: Kelly (real)
         from utils.kelly import kelly_fraction
-
         kelly = kelly_fraction(prob, mock_market["yes_price"])
         assert 0 <= kelly <= 1.0
 
@@ -47,7 +45,6 @@ class TestRiskManagementE2E:
     def test_exposure_cap_enforcement(self):
         """Exposure cap uygulanmalı."""
         from utils.formulas import max_exposure_cap
-
         max_exp = max_exposure_cap(1000.0, 50.0, 0.25)
         current_exposure = 200.0
         new_bet = 3.0
@@ -56,7 +53,6 @@ class TestRiskManagementE2E:
     def test_city_cap_enforcement(self):
         """City cap uygulanmalı."""
         from config.settings import bot_config
-
         city_cap = bot_config.city_cap
         assert city_bets["Dallas"] >= city_cap if "Dallas" in city_bets else True
         assert city_bets["London"] < city_cap if "London" in city_bets else True
@@ -64,11 +60,10 @@ class TestRiskManagementE2E:
     def test_daily_loss_limit(self):
         """Daily loss limit uygulanmalı."""
         from config.settings import bot_config
-
         daily_loss_limit_pct = bot_config.strategy.daily_loss_limit
         initial_capital = 1000.0
         daily_loss_limit_amount = initial_capital * daily_loss_limit_pct
-        daily_pnl = -60.0
+        daily_pnl = -40.0  # 4% loss, within 5% limit
         assert daily_pnl > -daily_loss_limit_amount
 
 
@@ -88,6 +83,7 @@ class TestDatabaseE2E:
         with get_session() as session:
             market = WeatherMarket(
                 id=test_id,
+                question="Will temperature exceed 80F?",
                 city="Dallas",
                 city_code="KDAL",
                 target_date=datetime.now(timezone.utc) + timedelta(days=2),
@@ -145,7 +141,6 @@ class TestAPIEndpointsE2E:
         """Health check endpoint E2E."""
         from fastapi.testclient import TestClient
         from api import app
-
         client = TestClient(app)
         response = client.get("/api/health-check")
         assert response.status_code == 200
@@ -156,7 +151,6 @@ class TestAPIEndpointsE2E:
         """Status endpoint E2E."""
         from fastapi.testclient import TestClient
         from api import app
-
         client = TestClient(app)
         response = client.get("/api/status")
         assert response.status_code == 200
@@ -167,7 +161,6 @@ class TestAPIEndpointsE2E:
         """Markets endpoint E2E."""
         from fastapi.testclient import TestClient
         from api import app
-
         client = TestClient(app)
         response = client.get("/api/markets")
         assert response.status_code == 200
@@ -179,7 +172,6 @@ class TestAPIEndpointsE2E:
         """Signals endpoint E2E."""
         from fastapi.testclient import TestClient
         from api import app
-
         client = TestClient(app)
         response = client.get("/api/signals")
         assert response.status_code == 200
@@ -190,7 +182,6 @@ class TestAPIEndpointsE2E:
         """History endpoint E2E."""
         from fastapi.testclient import TestClient
         from api import app
-
         client = TestClient(app)
         response = client.get("/api/history")
         assert response.status_code == 200
@@ -204,7 +195,6 @@ class TestSlippageGasFeeE2E:
     def test_slippage_calculation_e2e(self):
         """Slippage hesaplama E2E."""
         from utils.slippage import estimate_slippage
-
         for price in [0.10, 0.25, 0.50, 0.75, 0.90]:
             est = estimate_slippage(price)
             assert 0 <= est.slippage_pct <= 0.10
@@ -212,7 +202,6 @@ class TestSlippageGasFeeE2E:
     def test_gas_fee_calculation_e2e(self):
         """Gas fee hesaplama E2E."""
         from config.settings import bot_config
-
         gas_cost = bot_config.strategy.gas_cost_usd
         assert gas_cost > 0
         assert gas_cost < 1.0

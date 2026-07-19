@@ -1,4 +1,4 @@
-"""ASIAbot Data Pipeline modules.
+﻿"""asiabot Data Pipeline modules.
 
 High-fidelity data ingestion layer for backtesting. Five modules, each with
 a single responsibility, all producing pandas DataFrames that the
@@ -23,3 +23,4 @@ __all__ = [
     "polymarket_ingest",
     "unified_datastore",
 ]
+

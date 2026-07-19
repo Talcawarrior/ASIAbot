@@ -1,4 +1,4 @@
-"""Integration tests for the FastAPI app exposed by main.py.
+﻿"""Integration tests for the FastAPI app exposed by main.py.
 
 These tests exercise the HTTP layer end-to-end (no mocks of the app itself)
 against the live `data/bot.db` (SQLite, WAL mode, read-only open). The aim
@@ -88,4 +88,5 @@ def test_dashboard_html_served(client):
     assert resp.status_code == 200, resp.text
     body = resp.text
     # Accept either the Next.js built page or the fallback message
-    assert "ASIAbot" in body or "Dashboard" in body
+    assert "asiabot" in body or "Dashboard" in body
+

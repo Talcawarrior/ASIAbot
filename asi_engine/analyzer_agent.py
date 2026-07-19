@@ -1,4 +1,4 @@
-"""Analyzer Agent for ASIAbot.
+﻿"""Analyzer Agent for asiabot.
 
 Analyzes experimental backtest logs and distills them into semantic, causal
 insights to write to the Cognition Base.
@@ -31,7 +31,9 @@ class AnalyzerAgent:
         pnl = backtest_results["pnl"]  # noqa: F841
         total_bets = backtest_results["total_bets"]  # noqa: F841
 
-        logger.info("ASI Analyzer: Formulating causal insights for Round %d...", run_round)
+        logger.info(
+            "ASI Analyzer: Formulating causal insights for Round %d...", run_round
+        )
 
         # Retrieve previous best node
         nodes = self.cognition_base.nodes
@@ -60,11 +62,11 @@ class AnalyzerAgent:
             )
         elif brier_improved:
             insight = (
-                f"MIXED: Olasılık kalibrasyonu (Brier Score) {best_node.brier_score:.4f} değerinden {brier:.4f} "
-                f"seviyesine iyileşti ancak finansal getiri (ROI) {best_node.roi:.2f}% değerinden {roi:.2f}% "
-                f"seviyesine düştü. Bu durum, modelin daha gerçekçi tahminler ürettiğini ancak "
-                f"Polymarket üzerindeki 'taker fee' (%2) ve likidite maliyetlerinin getiri üzerinde baskı kurduğunu "
-                f"gösteriyor. Kelly katsayısının artırılması gerekebilir."
+                f"MIXED: OlasÄ±lÄ±k kalibrasyonu (Brier Score) {best_node.brier_score:.4f} deÄŸerinden {brier:.4f} "
+                f"seviyesine iyileÅŸti ancak finansal getiri (ROI) {best_node.roi:.2f}% deÄŸerinden {roi:.2f}% "
+                f"seviyesine dÃ¼ÅŸtÃ¼. Bu durum, modelin daha gerÃ§ekÃ§i tahminler Ã¼rettiÄŸini ancak "
+                f"Polymarket Ã¼zerindeki 'taker fee' (%2) ve likidite maliyetlerinin getiri Ã¼zerinde baskÄ± kurduÄŸunu "
+                f"gÃ¶steriyor. Kelly katsayÄ±sÄ±nÄ±n artÄ±rÄ±lmasÄ± gerekebilir."
             )
         else:
             insight = (
@@ -91,3 +93,4 @@ class AnalyzerAgent:
         )
 
         return node
+

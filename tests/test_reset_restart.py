@@ -7,6 +7,7 @@ DO NOT REMOVE the pytest.skip() at the bottom.
 If enabled, it will DELETE ALL PRODUCTION DATA.
 """
 
+
 import pytest
 
 
@@ -14,7 +15,6 @@ import pytest
 def client():
     from fastapi.testclient import TestClient
     from main import app
-
     return TestClient(app)
 
 

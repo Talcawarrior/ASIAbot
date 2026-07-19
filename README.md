@@ -1,77 +1,77 @@
-# ASIAbot - Self-Evolving Weather Prediction Bot
+﻿# asiabot - Self-Evolving Weather Prediction Bot
 
-**Port: 8093** | **Framework: FastAPI + Next.js** | **Dry-Run Mode: Enabled**
+**Port: 8091** | **Framework: FastAPI + Next.js** | **Dry-Run Mode: Enabled**
 
 ---
 
-## 📋 İçindekiler
+## ðŸ“‹ Ä°Ã§indekiler
 
 1. [Sistem Mimarisi](#sistem-mimarisi)
-2. [Formül & Algoritmalar](#formül--algoritmalar)
+2. [FormÃ¼l & Algoritmalar](#formÃ¼l--algoritmalar)
 3. [Veri Pipeline](#veri-pipeline)
-4. [Risk Yönetimi](#risk-yönetimi)
+4. [Risk YÃ¶netimi](#risk-yÃ¶netimi)
 5. [Gas Fee & Slippage](#gas-fee--slippage)
 6. [Karpathy-Search ile Strateji Optimizasyonu](#karpathy-search-ile-strateji-optimizasyonu)
 7. [Testing Suite](#testing-suite)
-8. [Deployment & Deployment Yönetimi](#deployment--deployment-yönetimi)
+8. [Deployment & Deployment YÃ¶netimi](#deployment--deployment-yÃ¶netimi)
 9. [API Endpoints](#api-endpoints)
 10. [Runbook](#runbook)
 
 ---
 
-## 🏗️ Sistem Mimarisi
+## ðŸ—ï¸ Sistem Mimarisi
 
-### Genel Akış
+### Genel AkÄ±ÅŸ
 
 ```
-┌─────────────────┐
-│ Polymarket      │ ← Fetch Markets
-│ Public-Search   │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Weather API     │ ← Open-Meteo (GFS, ECMWF, ICON, JMA, CMA, UKMO, MeteoFrance)
-│ Ensemble        │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Calculator      │ ← Weighted Mean + StdDev → Probability
-│ Engine          │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Strategy        │ ← Kelly Criterion (0.15) + Edge Threshold (5%)
-│ Engine          │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Risk Manager    │ ← Exposure Cap, City Cap, Daily Loss Limit
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Betting Engine  │ ← Slippage Adjusted Kelly + Gas Cost
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Settler         │ ← Settlement Logic (won/lost/closed_early)
-└─────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Polymarket      â”‚ â† Fetch Markets
+â”‚ Public-Search   â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Weather API     â”‚ â† Open-Meteo (GFS, ECMWF, ICON, JMA, CMA, UKMO, MeteoFrance)
+â”‚ Ensemble        â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Calculator      â”‚ â† Weighted Mean + StdDev â†’ Probability
+â”‚ Engine          â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Strategy        â”‚ â† Kelly Criterion (0.15) + Edge Threshold (5%)
+â”‚ Engine          â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Risk Manager    â”‚ â† Exposure Cap, City Cap, Daily Loss Limit
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Betting Engine  â”‚ â† Slippage Adjusted Kelly + Gas Cost
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+         â”‚
+         â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Settler         â”‚ â† Settlement Logic (won/lost/closed_early)
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
-### Modüller
+### ModÃ¼ller
 
-| Modül | Sorumluluk | Dosya |
+| ModÃ¼l | Sorumluluk | Dosya |
 |-------|-----------|-------|
 | **API** | FastAPI endpoints, WebSocket, BotState | `api.py` |
-| **Calculator** | Olasılık hesaplama, Kelly criterion | `engine/calculator.py` |
-| **Strategy** | Edge hesaplama, bet kararı | `engine/strategy.py` |
+| **Calculator** | OlasÄ±lÄ±k hesaplama, Kelly criterion | `engine/calculator.py` |
+| **Strategy** | Edge hesaplama, bet kararÄ± | `engine/strategy.py` |
 | **RiskManager** | Exposure cap, city cap | `engine/strategy.py` |
-| **BettingEngine** | Bet yerleştirme, slippage adjustment | `engine/strategy.py` |
+| **BettingEngine** | Bet yerleÅŸtirme, slippage adjustment | `engine/strategy.py` |
 | **SettlementEngine** | Settlement hesaplama, PnL | `executor/settler.py` |
 | **WeatherEngine** | Multi-model weather fetch | `engine/calculator.py` |
 | **PolymarketScraper** | Market fetch & bet placement | `scrapers/polymarket.py` |
@@ -88,25 +88,25 @@
 
 ---
 
-## 📐 Formül & Algoritmalar
+## ðŸ“ FormÃ¼l & Algoritmalar
 
 ### 1. Probability Estimation
 
-**Olasılık hesaplama formülü** (weighted mean + stddev):
+**OlasÄ±lÄ±k hesaplama formÃ¼lÃ¼** (weighted mean + stddev):
 
 ```python
-mean = Σ(weight_i × value_i) / Σweight_i
-std = √[ Σweight_i × (value_i - mean)² / Σweight_i ]
+mean = Î£(weight_i Ã— value_i) / Î£weight_i
+std = âˆš[ Î£weight_i Ã— (value_i - mean)Â² / Î£weight_i ]
 
-probability = Φ(mean, std, threshold, days_ahead, market_type)
+probability = Î¦(mean, std, threshold, days_ahead, market_type)
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - GFS: 0.7 (weight: 30%)
 - ECMWF: 0.65 (weight: 25%)
 - ICON: 0.6 (weight: 10%)
-- Mean: (0.7×0.3 + 0.65×0.25 + 0.6×0.1) / 0.65 = 0.67
-- Threshold: 0.60 (60°F)
+- Mean: (0.7Ã—0.3 + 0.65Ã—0.25 + 0.6Ã—0.1) / 0.65 = 0.67
+- Threshold: 0.60 (60Â°F)
 - Days ahead: 2
 - **Probability (HIGH)**: ~72%
 
@@ -115,40 +115,40 @@ probability = Φ(mean, std, threshold, days_ahead, market_type)
 **Kelly fraction hesaplama**:
 
 ```python
-f* = (p × b - q) / b
+f* = (p Ã— b - q) / b
 ```
 
 Where:
-- `p` = probability (görsel olasılık)
+- `p` = probability (gÃ¶rsel olasÄ±lÄ±k)
 - `b` = odds (price ratio)
 - `q` = 1 - p
 
-**Örnek**:
+**Ã–rnek**:
 - Probability (p) = 0.65 (65%)
 - Entry price = 0.60
 - Odds (b) = 1 / 0.60 = 1.67
 
 ```python
-f* = (0.65 × 1.67 - 0.35) / 1.67
+f* = (0.65 Ã— 1.67 - 0.35) / 1.67
 f* = 1.0855 - 0.35 / 1.67
 f* = 0.7355 / 1.67
 f* = 0.44 (44% Kelly)
 ```
 
-**ASIAbot'da** quarter Kelly kullanılır (44% × 0.15 = 6.6% of portfolio per bet).
+**asiabot'da** quarter Kelly kullanÄ±lÄ±r (44% Ã— 0.15 = 6.6% of portfolio per bet).
 
 ### 3. Max Bet Cap
 
 **Per-bet limit**:
 
 ```python
-max_bet_cap = portfolio_value × MAX_BET_PCT
+max_bet_cap = portfolio_value Ã— MAX_BET_PCT
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Portfolio: $1,000
 - Max bet %: 0.3%
-- **Max bet**: $1000 × 0.003 = **$3.0**
+- **Max bet**: $1000 Ã— 0.003 = **$3.0**
 
 ### 4. Max Exposure Cap
 
@@ -156,61 +156,61 @@ max_bet_cap = portfolio_value × MAX_BET_PCT
 
 ```python
 conservative_portfolio_value = initial_capital + realized_pnl_before_today
-max_exposure = conservative_portfolio_value × TOTAL_EXPOSURE_PCT
+max_exposure = conservative_portfolio_value Ã— TOTAL_EXPOSURE_PCT
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Initial capital: $1,000
 - Realized PnL before today: +$50
 - Max exposure %: 25%
 - **Conservative portfolio**: $1,000 + $50 = $1,050
-- **Max exposure**: $1,050 × 0.25 = **$262.5**
+- **Max exposure**: $1,050 Ã— 0.25 = **$262.5**
 
-**Senaryo 1 - Limit Dışı**:
+**Senaryo 1 - Limit DÄ±ÅŸÄ±**:
 - Total open bets: $300
 - Max exposure allowed: $262.5
 - **Decision**: Reject new bet (exposure cap exceeded)
 
-**Senaryo 2 - Limit İçinde**:
+**Senaryo 2 - Limit Ä°Ã§inde**:
 - Total open bets: $200
 - Max exposure allowed: $262.5
-- **Decision**: Accept bet (exposure = $200 + $3 = $203 ≤ $262.5)
+- **Decision**: Accept bet (exposure = $200 + $3 = $203 â‰¤ $262.5)
 
 ### 5. City Cap
 
-**Şehir bazlı limit**:
+**Åžehir bazlÄ± limit**:
 
 ```python
-total_open_bets_in_city = Σ bets[city == current_city]
+total_open_bets_in_city = Î£ bets[city == current_city]
 MAX_BETS_PER_CITY = 4
 
 if total_open_bets_in_city >= MAX_BETS_PER_CITY:
     Reject new bet
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Dallas: 3 bets open
 - London: 4 bets open
 - Paris: 2 bets open
 - **Dallas for next bet**: OK (3 < 4)
-- **London for next bet**: REJECT (4 ≥ 4)
+- **London for next bet**: REJECT (4 â‰¥ 4)
 
 ### 6. Daily Loss Limit
 
-**Günlük zarar limiti**:
+**GÃ¼nlÃ¼k zarar limiti**:
 
 ```python
-daily_loss_limit_amount = initial_capital × DAILY_LOSS_LIMIT_PCT
-realized_daily_loss = Σ(pnl for bets settled today)
+daily_loss_limit_amount = initial_capital Ã— DAILY_LOSS_LIMIT_PCT
+realized_daily_loss = Î£(pnl for bets settled today)
 
 if realized_daily_loss >= daily_loss_limit_amount:
     Stop bot or pause new bets
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Initial capital: $1,000
 - Daily loss limit %: 5%
-- **Limit**: $1,000 × 0.05 = **$50**
+- **Limit**: $1,000 Ã— 0.05 = **$50**
 
 If today's realized PnL = -$50:
 - **Action**: Daily loss limit reached (may pause or stop)
@@ -220,13 +220,13 @@ If today's realized PnL = -$50:
 **Official fee formula** (category-specific):
 
 ```python
-fee = shares × fee_rate × price × (1 - price)
+fee = shares Ã— fee_rate Ã— price Ã— (1 - price)
 ```
 
-**Örnek** (Weather category, fee_rate = 5%):
+**Ã–rnek** (Weather category, fee_rate = 5%):
 - Shares: 100
 - Price: 0.75
-- **Fee**: $100 × 0.05 × 0.75 × (1 - 0.75) = **$0.94**
+- **Fee**: $100 Ã— 0.05 Ã— 0.75 Ã— (1 - 0.75) = **$0.94**
 
 **Fee is charged at ORDER MATCH TIME**, not at settlement.
 
@@ -237,21 +237,21 @@ fee = shares × fee_rate × price × (1 - price)
 ```python
 if WON:
     payout = stake / entry_price
-    fee_already_paid = shares × fee_rate × price × (1 - price)
+    fee_already_paid = shares Ã— fee_rate Ã— price Ã— (1 - price)
     net_pnl = payout - stake - fee_already_paid
 
 if LOST:
     net_pnl = -stake - fee_already_paid
 ```
 
-**Örnek** (Won bet):
+**Ã–rnek** (Won bet):
 - Stake: $100
 - Entry price: 0.60
 - Entry fee: $1.50 (calculated beforehand)
 - **Payout**: $100 / 0.60 = $166.67
 - **Net PnL**: $166.67 - $100 - $1.50 = **$65.17**
 
-**Örnek** (Lost bet):
+**Ã–rnek** (Lost bet):
 - Stake: $100
 - Entry fee: $1.50
 - **Net PnL**: -$100 - $1.50 = **-$101.50**
@@ -261,113 +261,113 @@ if LOST:
 **Unrealized PnL hesaplama**:
 
 ```python
-unrealized_pnl = shares × (current_price - entry_price)
+unrealized_pnl = shares Ã— (current_price - entry_price)
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Shares: 100
 - Entry price: $0.60
 - Current price: $0.65
-- **Unrealized PnL**: 100 × ($0.65 - $0.60) = **$5.00**
+- **Unrealized PnL**: 100 Ã— ($0.65 - $0.60) = **$5.00**
 
 ### 10. Win Rate
 
 **Win rate hesaplama**:
 
 ```python
-win_rate = (wins / total_closed) × 100
+win_rate = (wins / total_closed) Ã— 100
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Wins: 60
 - Total closed: 100
-- **Win rate**: (60 / 100) × 100 = **60%**
+- **Win rate**: (60 / 100) Ã— 100 = **60%**
 
 ### 11. ROI
 
 **Return on Investment hesaplama**:
 
 ```python
-roi = (total_pnl / total_stake) × 100
+roi = (total_pnl / total_stake) Ã— 100
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Total PnL: $50
 - Total stake: $100
-- **ROI**: ($50 / $100) × 100 = **50%**
+- **ROI**: ($50 / $100) Ã— 100 = **50%**
 
 ### 12. Exit Price Reconstruction
 
-**Exit price'ı PnL'den hesaplama**:
+**Exit price'Ä± PnL'den hesaplama**:
 
 ```python
 if SIDE == YES:
-    exit_price = entry_price × (1 + unrealized_pnl / stake)
+    exit_price = entry_price Ã— (1 + unrealized_pnl / stake)
 
 if SIDE == NO:
-    exit_price = entry_price × (1 - |unrealized_pnl| / stake)
+    exit_price = entry_price Ã— (1 - |unrealized_pnl| / stake)
 ```
 
-**Örnek** (NO side, loss):
+**Ã–rnek** (NO side, loss):
 - Entry price: $0.60
 - Unrealized PnL: -$10
 - Stake: $100
 - Shares: 166.67
-- **Exit price**: 0.60 × (1 - 10/100) = 0.60 × 0.90 = **$0.54**
+- **Exit price**: 0.60 Ã— (1 - 10/100) = 0.60 Ã— 0.90 = **$0.54**
 
 ---
 
-## 🔄 Veri Pipeline
+## ðŸ”„ Veri Pipeline
 
-### Pipeline Adımları
+### Pipeline AdÄ±mlarÄ±
 
 1. **Fetch Markets** (Polymarket API)
 2. **Parse Markets** (extract parameters)
 3. **Weather Forecast** (Open-Meteo ensemble)
-4. **Analyze Markets** (calculator → probability → edge)
+4. **Analyze Markets** (calculator â†’ probability â†’ edge)
 5. **Risk Check** (exposure cap, city cap, daily loss limit)
 6. **Place Bets** (with slippage adjustment)
-7. **Settlement** (Polymarket resolves → calculate PnL)
+7. **Settlement** (Polymarket resolves â†’ calculate PnL)
 
-### Veri Akışı
+### Veri AkÄ±ÅŸÄ±
 
 ```
 Polymarket
-    ↓
-┌─────────────┐
-│ Weather API │ ← en son 14 gün
-│ (8 model)   │
-└─────┬───────┘
-      │
-      ▼
-┌─────────────┐
-│ Weather      │ ← SQLite (weather_forecasts tablosu)
-│ Forecasts    │
-└─────┬───────┘
-      │
-      ▼
-┌─────────────┐
-│ Calculator   │ ← weighted mean + stddev → probability
-│ (Analyze)   │
-└─────┬───────┘
-      │
-      ▼
-┌─────────────┐
-│ Strategy     │ ← Kelly + edge → should_bet?
-│ (Betting)   │
-└─────┬───────┘
-      │
-      ▼
-┌─────────────┐
-│ API          │ ← REST endpoints (status, markets, signals)
-│ /api/*      │
-└─────┬───────┘
-      │
-      ▼
-┌─────────────┐
-│ Dashboard    │ ← Next.js frontend
-│ (UI)        │
-└─────────────┘
+    â†“
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Weather API â”‚ â† en son 14 gÃ¼n
+â”‚ (8 model)   â”‚
+â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+      â”‚
+      â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Weather      â”‚ â† SQLite (weather_forecasts tablosu)
+â”‚ Forecasts    â”‚
+â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+      â”‚
+      â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Calculator   â”‚ â† weighted mean + stddev â†’ probability
+â”‚ (Analyze)   â”‚
+â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+      â”‚
+      â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Strategy     â”‚ â† Kelly + edge â†’ should_bet?
+â”‚ (Betting)   â”‚
+â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+      â”‚
+      â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ API          â”‚ â† REST endpoints (status, markets, signals)
+â”‚ /api/*      â”‚
+â””â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”˜
+      â”‚
+      â–¼
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚ Dashboard    â”‚ â† Next.js frontend
+â”‚ (UI)        â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### Database Schemas
@@ -454,17 +454,17 @@ total_lost        INTEGER
 
 ---
 
-## ⚠️ Risk Yönetimi
+## âš ï¸ Risk YÃ¶netimi
 
 ### Risk Limitleri
 
-| Limit | Value | Açıklama |
+| Limit | Value | AÃ§Ä±klama |
 |-------|-------|----------|
 | **Max bet %** | 0.3% (0.003) | Per-bet limiti |
-| **Max exposure %** | 25% (0.25) | Total açık pozisyon limiti |
-| **City cap** | 4 | Her şehirde max 4 bet |
-| **Daily loss limit %** | 5% (0.05) | Günlük zarar limiti |
-| **Kelly fraction** | 0.15 | Quarter Kelly (0.44 → 0.15) |
+| **Max exposure %** | 25% (0.25) | Total aÃ§Ä±k pozisyon limiti |
+| **City cap** | 4 | Her ÅŸehirde max 4 bet |
+| **Daily loss limit %** | 5% (0.05) | GÃ¼nlÃ¼k zarar limiti |
+| **Kelly fraction** | 0.15 | Quarter Kelly (0.44 â†’ 0.15) |
 | **Min edge** | 5% (0.05) | Minimum net edge (slippage + fee dahil) |
 | **Min entry price** | 0.01 | Minimum fiyat (long-shot filtre) |
 | **Inefficiency min** | -1.0 | Negatif = gate disabled |
@@ -473,39 +473,39 @@ total_lost        INTEGER
 
 ```
 New Bet Decision Flow
-    │
-    ▼
+    â”‚
+    â–¼
 1. Check Min Edge
-   ├── Net edge < 5%? → REJECT
-   │
-    ▼
+   â”œâ”€â”€ Net edge < 5%? â†’ REJECT
+   â”‚
+    â–¼
 2. Check Min Entry Price
-   ├── Price < $0.01? → REJECT
-   │
-    ▼
+   â”œâ”€â”€ Price < $0.01? â†’ REJECT
+   â”‚
+    â–¼
 3. Check Exposure Cap
-   ├── Total open + new_bet > Max exposure? → REJECT
-   │
-    ▼
+   â”œâ”€â”€ Total open + new_bet > Max exposure? â†’ REJECT
+   â”‚
+    â–¼
 4. Check City Cap
-   ├── Bets in city >= 4? → REJECT
-   │
-    ▼
+   â”œâ”€â”€ Bets in city >= 4? â†’ REJECT
+   â”‚
+    â–¼
 5. Check Daily Loss Limit
-   ├── Realized loss today >= 5%? → PAUSE/STOP
-   │
-    ▼
+   â”œâ”€â”€ Realized loss today >= 5%? â†’ PAUSE/STOP
+   â”‚
+    â–¼
 6. Check Liquidity
-   ├── Liquidity < threshold? → REJECT
-   │
-    ▼
+   â”œâ”€â”€ Liquidity < threshold? â†’ REJECT
+   â”‚
+    â–¼
 7. Place Bet
-   └── Pass → Place bet with slippage adjustment
+   â””â”€â”€ Pass â†’ Place bet with slippage adjustment
 ```
 
 ---
 
-## 💰 Gas Fee & Slippage
+## ðŸ’° Gas Fee & Slippage
 
 ### Gas Fee
 
@@ -522,17 +522,17 @@ gas_cost_usd = $0.10
 
 **Impact on Kelly sizing**:
 ```python
-kelly_raw = raw_kelly_frac × bankroll
-gas_cost = kelly_raw × gas_cost_usd
+kelly_raw = raw_kelly_frac Ã— bankroll
+gas_cost = kelly_raw Ã— gas_cost_usd
 kelly_adj = kelly_raw - gas_cost
 
 if kelly_adj < 1.0:
     Bet size reduced to $1.0 (minimum bet size)
 ```
 
-**Örnek**:
+**Ã–rnek**:
 - Raw Kelly: $6.6 (6.6% of $1,000)
-- Gas cost: $6.6 × $0.10 = $0.66
+- Gas cost: $6.6 Ã— $0.10 = $0.66
 - **Adjusted Kelly**: $6.6 - $0.66 = **$5.94**
 
 ### Slippage
@@ -568,17 +568,17 @@ else:
     slippage_pct = tiered_slippage(entry_price)
 ```
 
-**Örnek** (Tiered slippage):
+**Ã–rnek** (Tiered slippage):
 - Entry price: $0.55
 - Slippage: **1%** (tiered rule)
 - Raw edge: 8%
-- **Net edge**: 8% - 1% = **7%** ✅
+- **Net edge**: 8% - 1% = **7%** âœ…
 
-**Örnek** (No edge after slippage):
+**Ã–rnek** (No edge after slippage):
 - Entry price: $0.55
 - Raw edge: 4%
 - Slippage: **1%** (tiered rule)
-- **Net edge**: 4% - 1% = **3%** ❌ (< 5% min edge)
+- **Net edge**: 4% - 1% = **3%** âŒ (< 5% min edge)
 
 ### Adjusted Edge Calculation
 
@@ -587,13 +587,13 @@ else:
 raw_edge = estimated_probability - market_implied_price
 
 # Step 2: Entry fee
-entry_fee = shares × fee_rate × price × (1 - price)
+entry_fee = shares Ã— fee_rate Ã— price Ã— (1 - price)
 
 # Step 3: Slippage
 slippage_est = estimate_slippage(entry_price)
 
 # Step 4: Gas cost
-gas_cost_usd = kelly_raw × gas_cost_per_usd
+gas_cost_usd = kelly_raw Ã— gas_cost_per_usd
 
 # Step 5: Adjusted edge
 net_edge = raw_edge - slippage - gas_cost
@@ -601,19 +601,19 @@ net_edge = raw_edge - slippage - gas_cost
 
 ---
 
-## 🔬 Karpathy-Search ile Strateji Optimizasyonu
+## ðŸ”¬ Karpathy-Search ile Strateji Optimizasyonu
 
-### Karpathy Arama Algoritması
+### Karpathy Arama AlgoritmasÄ±
 
-**Problem**: Naive Kelly bot win rate %94 (62/66 trades) ama kaybeder çünkü:
+**Problem**: Naive Kelly bot win rate %94 (62/66 trades) ama kaybeder Ã§Ã¼nkÃ¼:
 - Losing trades: Long-shot bets (< 30%)
 - Single loss wipes out dozens of small wins
 
-**Çözüm**: Asymmetric-payoff filter (Karpathy search ile bulundu)
+**Ã‡Ã¶zÃ¼m**: Asymmetric-payoff filter (Karpathy search ile bulundu)
 
 ### Strateji Parametreleri
 
-| Parametre | Default | Optimized | Açıklama |
+| Parametre | Default | Optimized | AÃ§Ä±klama |
 |-----------|---------|-----------|----------|
 | **min_edge** | 5% | 5% | Minimum net edge |
 | **min_entry_price** | 0.01 | 0.35 | Minimum fiyat gate |
@@ -623,34 +623,34 @@ net_edge = raw_edge - slippage - gas_cost
 
 **Neden gerekli?**
 - Low price = Low risk, Low reward
-- Karşılıksız risk/ödül asymmetry
+- KarÅŸÄ±lÄ±ksÄ±z risk/Ã¶dÃ¼l asymmetry
 - Example: Bet $0.10 for $0.90 profit (90x leverage)
 
-**Örnek**:
-- Bet $0.10 → Win $0.90 → Profit $0.80 (800% return)
-- Lose bet $0.10 → Loss $0.10 (100% loss)
-- **Neden riskli?** Zarar, tek kazananda yüzlerce kazancın yanına sığmaz
+**Ã–rnek**:
+- Bet $0.10 â†’ Win $0.90 â†’ Profit $0.80 (800% return)
+- Lose bet $0.10 â†’ Loss $0.10 (100% loss)
+- **Neden riskli?** Zarar, tek kazananda yÃ¼zlerce kazancÄ±n yanÄ±na sÄ±ÄŸmaz
 
-**Örnek dağılım**:
-- 62 wins: (10×$0.05) + (20×$0.50) + (20×$1.00) + (12×$5.00) = **$136**
-- 4 losses: 4×$0.10 = **$0.40**
+**Ã–rnek daÄŸÄ±lÄ±m**:
+- 62 wins: (10Ã—$0.05) + (20Ã—$0.50) + (20Ã—$1.00) + (12Ã—$5.00) = **$136**
+- 4 losses: 4Ã—$0.10 = **$0.40**
 - **Net PnL**: $136 - $0.40 - fees = **+$135.60**
 
-Bu ölçüde bir asimetriyi dengelemek için **min_entry_price = 0.35** filtresi:
+Bu Ã¶lÃ§Ã¼de bir asimetriyi dengelemek iÃ§in **min_entry_price = 0.35** filtresi:
 
 - Long-shot bets (< 35%) filtreleniyor
 - Sadece "iyi odds" (high payout) bahis kabul ediliyor
-- **Trade count**: 66 → ~15 (kazanma oranı %93, ama win/loss balance iyileşti)
+- **Trade count**: 66 â†’ ~15 (kazanma oranÄ± %93, ama win/loss balance iyileÅŸti)
 
 ### inefficiency_min (Asymmetric gate)
 
 **Konsept**:
-- Market inefficiency = Market price ≠ Fair value
+- Market inefficiency = Market price â‰  Fair value
 - Asymmetric inefficiency = One direction more mispriced than other
 
-**Örnek**:
+**Ã–rnek**:
 ```
-Market: "Temperature will exceed 80°F in Dallas"
+Market: "Temperature will exceed 80Â°F in Dallas"
 Current price: YES = 0.60, NO = 0.40
 Fair value (ensemble): YES = 0.55, NO = 0.45
 
@@ -664,72 +664,72 @@ Required inefficiency: -0.124 (we want NO to be MORE underpriced)
 ```
 
 **Karpatzy sonucu**:
-- `inefficiency_min = -0.124` vermiş en iyi trade-off
-- Negatif değer = market'in YES tarafını overprice etmesi gerekiyor (NO tarafını bet et)
+- `inefficiency_min = -0.124` vermiÅŸ en iyi trade-off
+- Negatif deÄŸer = market'in YES tarafÄ±nÄ± overprice etmesi gerekiyor (NO tarafÄ±nÄ± bet et)
 
 ---
 
-## 🧪 Testing Suite
+## ðŸ§ª Testing Suite
 
-### 📊 Kapsamlı Test Özeti
+### ðŸ“Š KapsamlÄ± Test Ã–zeti
 
-| Test Kategorisi | Test Sayısı | Başarı Oranı |
+| Test Kategorisi | Test SayÄ±sÄ± | BaÅŸarÄ± OranÄ± |
 |---|---|---|
 | **AI Model Testleri** | 8 | 100% |
-| **Formül Testleri** | 12 | 100% |
+| **FormÃ¼l Testleri** | 12 | 100% |
 | **UI Testleri** | 6 | 100% |
 | **API Endpoint Testleri** | 15 | 100% |
 | **Data Pipeline Testleri** | 10 | 100% |
-| **Risk Yönetimi Testleri** | 9 | 100% |
+| **Risk YÃ¶netimi Testleri** | 9 | 100% |
 | **End-to-End Testleri** | 6 | 100% |
 | **Toplam** | **66** | **100%** |
 
-**Test Raporu**: [SYSTEM_TESTING_REPORT.md](./SYSTEM_TESTING_REPORT.md) — Detaylı test sonuçları, formül doğrulamaları ve performans metrikleri.
+**Test Raporu**: [SYSTEM_TESTING_REPORT.md](./SYSTEM_TESTING_REPORT.md) â€” DetaylÄ± test sonuÃ§larÄ±, formÃ¼l doÄŸrulamalarÄ± ve performans metrikleri.
 
 ---
 
 ### Unit Testler
 
-**Test dosyası**: `tests/test_units.py`
+**Test dosyasÄ±**: `tests/test_units.py`
 
 **Test kategorileri**:
 
-| Test Sınıfı | Test Sayısı | Özet |
+| Test SÄ±nÄ±fÄ± | Test SayÄ±sÄ± | Ã–zet |
 |-------------|------------|------|
-| `TestCalculatorEstimateProbability` | 8 | Olasılık hesaplama |
+| `TestCalculatorEstimateProbability` | 8 | OlasÄ±lÄ±k hesaplama |
 | `TestCalculatorKellyCriterion` | 4 | Kelly criterion |
 | `TestMaxBetCap` | 3 | Max bet cap |
 | `TestMaxExposureCap` | 3 | Max exposure cap |
 | `TestPolymarketFee` | 4 | Fee hesaplama |
 | `TestSettlementPnL` | 3 | Settlement PnL |
-| `TestPortfolioValues` | 7 | Portfolio hesaplamaları |
+| `TestPortfolioValues` | 7 | Portfolio hesaplamalarÄ± |
 | `TestSlippageModels` | 4 | Slippage modelleri |
 | `TestStrategyParams` | 3 | Karpathy search params |
 
 **Test run**:
 ```bash
-cd ASIAbot
+cd asiabot
 pytest tests/test_units.py -v
 ```
 
 ---
 
-### YENİ: Kapsamlı Test Seti
+### YENÄ°: KapsamlÄ± Test Seti
 
-**Test dosyası**: `tests/test_comprehensive.py` ✨
+**Test dosyasÄ±**: `tests/test_comprehensive.py` âœ¨
 
-66 test kapsayan kapsamlı test seti:
+66 test kapsayan kapsamlÄ± test seti:
 - **AI Model**: Semua agent, Karpathy search (grid optimization, performance, cache)
-- **Formülller**: Polymarket fee (resmi dokümantasyon %100 uyum), Gas fee, Slippage (3 model), Kelly criterion
-- **UI**: Dashboard, YES/NO butonları, WebSocket güncellemeleri
-- **API**: Health check (22 metric), Portfolio, Markets (formül ile hesaplama)
+- **FormÃ¼lller**: Polymarket fee (resmi dokÃ¼mantasyon %100 uyum), Gas fee, Slippage (3 model), Kelly criterion
+- **UI**: Dashboard, YES/NO butonlarÄ±, WebSocket gÃ¼ncellemeleri
+- **API**: Health check (22 metric), Portfolio, Markets (formÃ¼l ile hesaplama)
 - **Data Pipeline**: Weather ensemble (8 model, 1,260 veri), Polymarket ingest, Walk-forward OOS split
 - **Risk**: City cap, max exposure, stop-loss
 - **E2E**: Mock E2E, Historical calibrations backtest
 
 **Test run**:
 ```bash
-cd ASIAbot
+cd asiabot
 pytest tests/test_comprehensive.py -v
 ```
 
@@ -737,33 +737,33 @@ pytest tests/test_comprehensive.py -v
 
 ### Integration Testler
 
-**Test dosyası**: `tests/test_integration.py`
+**Test dosyasÄ±**: `tests/test_integration.py`
 
 **Test kategorileri**:
 
-| Test Sınıfı | Test Sayısı | Özet |
+| Test SÄ±nÄ±fÄ± | Test SayÄ±sÄ± | Ã–zet |
 |-------------|------------|------|
-| `TestBotStartup` | 3 | Bot başlatma |
+| `TestBotStartup` | 3 | Bot baÅŸlatma |
 | `TestDataPipeline` | 4 | Veri pipeline |
 | `TestAPIEndpoints` | 7 | API endpoints |
 | `TestASIEvolveEndpoints` | 3 | ASI-Evolve endpoints |
 | `TestUIComponents` | 3 | UI components |
-| `TestRiskManagement` | 4 | Risk yönetimi |
+| `TestRiskManagement` | 4 | Risk yÃ¶netimi |
 
 **Test run**:
 ```bash
-cd ASIAbot
+cd asiabot
 pytest tests/test_integration.py -v
 ```
 
 ### Test Runner Script
 
-**Tüm testleri çalıştır**:
+**TÃ¼m testleri Ã§alÄ±ÅŸtÄ±r**:
 ```bash
 python run_tests.py
 ```
 
-**Özel testler**:
+**Ã–zel testler**:
 ```bash
 python run_tests.py --unit
 python run_tests.py --integration
@@ -773,30 +773,30 @@ python run_tests.py --no-unit --integration
 
 ### Test Coverage
 
-**Şu anki coverage** (estimated):
+**Åžu anki coverage** (estimated):
 - **Calculator**: ~90%
 - **Formulas**: 100%
 - **API endpoints**: ~70%
 - **Strategy**: ~80%
 - **Slippage & Gas fee**: ~50%
 
-**Teste dayalı geliştirme (TDD)**:
+**Teste dayalÄ± geliÅŸtirme (TDD)**:
 1. Unit test yaz
-2. Unit test run → fail
+2. Unit test run â†’ fail
 3. Implement kod
-4. Unit test run → pass
+4. Unit test run â†’ pass
 5. Integration test
 6. Code review
 
 ---
 
-## 🚀 Deployment & Deployment Yönetimi
+## ðŸš€ Deployment & Deployment YÃ¶netimi
 
 ### Local Development
 
-**Başlatma**:
+**BaÅŸlatma**:
 ```bash
-cd ASIAbot
+cd asiabot
 
 # Install dependencies
 pip install -r requirements.txt
@@ -805,7 +805,7 @@ pip install -r requirements.txt
 python main.py reset  # (optional, resets DB)
 
 # Start bot
-python main.py bot  # (foreground, port 8093)
+python main.py bot  # (foreground, port 8091)
 
 # Alternative: API only
 python main.py run
@@ -813,26 +813,26 @@ python main.py run
 
 **API endpoints**:
 ```
-GET  /api/status          → Bot status & portfolio
-GET  /api/markets         → Open + missed markets
-GET  /api/signals         → Active bets
-GET  /api/history         → Settled bets
-GET  /api/equity-curve    → Daily PnL
-GET  /api/slippage        → Slippage data
-GET  /api/health-check    → Bot health metrics
-POST /api/start           → Start bot loops
-POST /api/stop            → Stop bot loops
-POST /api/reset           → Reset bot state
+GET  /api/status          â†’ Bot status & portfolio
+GET  /api/markets         â†’ Open + missed markets
+GET  /api/signals         â†’ Active bets
+GET  /api/history         â†’ Settled bets
+GET  /api/equity-curve    â†’ Daily PnL
+GET  /api/slippage        â†’ Slippage data
+GET  /api/health-check    â†’ Bot health metrics
+POST /api/start           â†’ Start bot loops
+POST /api/stop            â†’ Stop bot loops
+POST /api/reset           â†’ Reset bot state
 ```
 
 **Dashboard**:
 ```
-http://127.0.0.1:8093
+http://127.0.0.1:8091
 ```
 
 ### Production Deployment
 
-**Önerilen stack**:
+**Ã–nerilen stack**:
 - Backend: FastAPI + Gunicorn + Uvicorn workers
 - Database: PostgreSQL (instead of SQLite)
 - Reverse Proxy: Nginx
@@ -841,33 +841,33 @@ http://127.0.0.1:8093
 **Deploy steps**:
 ```bash
 # 1. Copy to production server
-scp -r ASIAbot user@server:/opt/ASIAbot
+scp -r asiabot user@server:/opt/asiabot
 
 # 2. Install dependencies
 pip install -r requirements.txt
-cd ASIAbot
+cd asiabot
 pip install gunicorn uvicorn workers
 
 # 3. Set environment variables
-export ASIAbot_API_KEY="your_api_key"
+export asiabot_API_KEY="your_api_key"
 export DRY_RUN="false"
 export MAX_BET_PCT="0.001"  # 0.1% (decrease risk)
 
 # 4. Start bot
-gunicorn api:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8093
+gunicorn api:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8091
 
 # 5. Systemd service (recommended)
-cat > /etc/systemd/system/ASIAbot.service <<EOF
+cat > /etc/systemd/system/asiabot.service <<EOF
 [Unit]
-Description=ASIAbot Bot
+Description=asiabot Bot
 After=network.target
 
 [Service]
 Type=simple
-User=ASIAbot
-WorkingDirectory=/opt/ASIAbot
-Environment="PATH=/opt/ASIAbot/venv/bin"
-ExecStart=/opt/ASIAbot/venv/bin/gunicorn api:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8093
+User=asiabot
+WorkingDirectory=/opt/asiabot
+Environment="PATH=/opt/asiabot/venv/bin"
+ExecStart=/opt/asiabot/venv/bin/gunicorn api:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8091
 Restart=always
 
 [Install]
@@ -875,24 +875,24 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl start ASIAbot
-systemctl enable ASIAbot
+systemctl start asiabot
+systemctl enable asiabot
 ```
 
 **Nginx config**:
 ```nginx
 server {
     listen 80;
-    server_name ASIAbot.example.com;
+    server_name asiabot.example.com;
 
     location / {
-        proxy_pass http://127.0.0.1:8093;
+        proxy_pass http://127.0.0.1:8091;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
 
     location /static {
-        alias /opt/ASIAbot/dashboard/out;
+        alias /opt/asiabot/dashboard/out;
     }
 }
 ```
@@ -901,12 +901,12 @@ server {
 
 **Health check**:
 ```bash
-curl http://127.0.0.1:8093/api/health-check
+curl http://127.0.0.1:8091/api/health-check
 ```
 
 **Status check**:
 ```bash
-curl http://127.0.0.1:8093/api/status | jq
+curl http://127.0.0.1:8091/api/status | jq
 ```
 
 **Logs**:
@@ -915,14 +915,14 @@ curl http://127.0.0.1:8093/api/status | jq
 tail -f logs/bot.log
 
 # Systemd logs
-journalctl -u ASIAbot -f
+journalctl -u asiabot -f
 ```
 
 **Alerts** (recommended):
-- Daily loss > 5% → Slack alert
-- Exposure > 90% → Critical alert
-- API down → Slack alert
-- Database connection error → Alert
+- Daily loss > 5% â†’ Slack alert
+- Exposure > 90% â†’ Critical alert
+- API down â†’ Slack alert
+- Database connection error â†’ Alert
 
 ### Backup & Restore
 
@@ -942,7 +942,7 @@ cp config/settings.py config/settings.py.backup
 
 ---
 
-## 🔌 API Endpoints
+## ðŸ”Œ API Endpoints
 
 ### GET /api/status
 
@@ -1083,7 +1083,7 @@ cp config/settings.py config/settings.py.backup
 
 ---
 
-## 📖 Runbook
+## ðŸ“– Runbook
 
 ### Startup Checklist
 
@@ -1091,23 +1091,23 @@ cp config/settings.py config/settings.py.backup
 - [ ] Database initialized: `python main.py reset`
 - [ ] Environment variables set (`.env` file)
 - [ ] Config values verified in `config/settings.py`
-- [ ] API key set: `export ASIAbot_API_KEY="your_key"`
+- [ ] API key set: `export asiabot_API_KEY="your_key"`
 
 ### Daily Operations
 
 1. **Check bot status**:
    ```bash
-   curl http://127.0.0.1:8093/api/status | jq
+   curl http://127.0.0.1:8091/api/status | jq
    ```
 
 2. **Check open positions**:
    ```bash
-   curl http://127.0.0.1:8093/api/signals | jq '.signals[] | {city, side, edge, unrealized_pnl}'
+   curl http://127.0.0.1:8091/api/signals | jq '.signals[] | {city, side, edge, unrealized_pnl}'
    ```
 
 3. **Check health metrics**:
    ```bash
-   curl http://127.0.0.1:8093/api/health-check | jq '.red_flags'
+   curl http://127.0.0.1:8091/api/health-check | jq '.red_flags'
    ```
 
 4. **View logs**:
@@ -1120,7 +1120,7 @@ cp config/settings.py config/settings.py.backup
 **Bot doesn't respond**:
 ```bash
 # Check if port is in use
-netstat -ano | findstr 8093
+netstat -ano | findstr 8091
 
 # Check if process is running
 tasklist | findstr python
@@ -1154,12 +1154,12 @@ python main.py bot
 
 **Stop bot immediately**:
 ```bash
-curl -X POST http://127.0.0.1:8093/api/stop
+curl -X POST http://127.0.0.1:8091/api/stop
 ```
 
 **Reset bot (all data lost)**:
 ```bash
-curl -X POST http://127.0.0.1:8093/api/reset
+curl -X POST http://127.0.0.1:8091/api/reset
 ```
 
 **Emergency database backup**:
@@ -1169,7 +1169,7 @@ cp data/bot.db data/bot.db.emergency.backup
 
 ---
 
-## 📊 Performance Metrics
+## ðŸ“Š Performance Metrics
 
 ### Sample Data (90 days, 15 cities)
 
@@ -1211,7 +1211,7 @@ cp data/bot.db data/bot.db.emergency.backup
 
 ---
 
-## 🔮 ASI-Evolve Dashboard
+## ðŸ”® ASI-Evolve Dashboard
 
 ### Weights (Self-Evolving)
 
@@ -1245,9 +1245,9 @@ cp data/bot.db data/bot.db.emergency.backup
 
 ---
 
-## 📞 Support & Documentation
+## ðŸ“ž Support & Documentation
 
-- **GitHub**: https://github.com/Talcawarrior/ASIAbot
+- **GitHub**: https://github.com/Talcawarrior/asiabot
 - **Issues**: Report bugs on GitHub
 - **Documentation**: This file + inline code comments
 
@@ -1256,3 +1256,4 @@ cp data/bot.db data/bot.db.emergency.backup
 **Last updated**: 2026-07-15
 **Version**: 1.0.0
 **Status**: Production-ready (dry-run mode)
+

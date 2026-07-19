@@ -1,4 +1,4 @@
-"""Orchestrator for ASIAbot.
+﻿"""Orchestrator for asiabot.
 
 Triggers the complete closed-loop self-improving cycle:
 Learn -> Design -> Experiment -> Analyze -> Deploy.
@@ -16,7 +16,7 @@ from utils.weights_store import save_strategy_params, save_weights
 logger = logging.getLogger("ASI_ORCHESTRATOR")
 
 
-class ASIAbotOrchestrator:
+class asiabotOrchestrator:
     """The central manager running the self-evolving ASI-Evolve framework."""
 
     def __init__(self):
@@ -33,7 +33,7 @@ class ASIAbotOrchestrator:
         persists the learning.
         """
         logger.info("==================================================")
-        logger.info("   ASIAbot: STARTING AUTONOMOUS EVOLUTION LOOP    ")
+        logger.info("   asiabot: STARTING AUTONOMOUS EVOLUTION LOOP    ")
         logger.info("==================================================")
 
         current_round_start = len(self.cognition_base.nodes)
@@ -49,14 +49,16 @@ class ASIAbotOrchestrator:
             results = self.simulator.run_backtest(proposed_params)
 
             # 3. ANALYZE & LEARN: Formulate causal insights and update memory
-            node = self.analyzer.analyze_results(run_round, hypothesis, results, proposed_params)
+            node = self.analyzer.analyze_results(
+                run_round, hypothesis, results, proposed_params
+            )
             self.cognition_base.add_node(node)
 
         # 4. DEPLOY: Find the best parameters in all history and write to active config files
         best_params = self.cognition_base.get_best_parameters()
 
         logger.info("\n==================================================")
-        logger.info("   ASIAbot: DEPLOYING BEST EVOLVED STRATEGY      ")
+        logger.info("   asiabot: DEPLOYING BEST EVOLVED STRATEGY      ")
         logger.info("==================================================")
 
         best_weights = best_params["model_weights"]
@@ -80,7 +82,9 @@ class ASIAbotOrchestrator:
         bot_config.strategy.min_edge = best_min_edge
         bot_config.strategy.kelly_fraction = best_kelly
 
-        logger.info("ASIAbot: Live trading models and configurations updated successfully!")
+        logger.info(
+            "asiabot: Live trading models and configurations updated successfully!"
+        )
 
         # Return best stats
         best_node = max(self.cognition_base.nodes, key=lambda n: n.roi)
@@ -90,3 +94,4 @@ class ASIAbotOrchestrator:
             "brier_score": best_node.brier_score,
             "parameters": best_params,
         }
+

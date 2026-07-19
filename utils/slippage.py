@@ -55,7 +55,9 @@ def _tiered_slippage(entry_price: float) -> float:
     return 0.005
 
 
-def _vwap_from_asks(asks: list[dict], stake_usd: float, fallback_price: float) -> tuple[float, float]:
+def _vwap_from_asks(
+    asks: list[dict], stake_usd: float, fallback_price: float
+) -> tuple[float, float]:
     """Walk orderbook ask levels, compute VWAP fill and total depth.
 
     Returns (fill_vwap, depth_usd).
@@ -110,7 +112,9 @@ def _orderbook_slippage(
 
         ob = ResolvedMarketsClient().get_live_orderbook(condition_id)
         if not ob or ("asks" not in ob and "bids" not in ob):
-            logger.warning("Orderbook empty for %s, falling back to tiered", condition_id)
+            logger.warning(
+                "Orderbook empty for %s, falling back to tiered", condition_id
+            )
             return _tiered_fallback(entry_price, "orderbook: empty_book")
 
         asks = ob.get("asks", [])
@@ -122,8 +126,6 @@ def _orderbook_slippage(
 
         fill_vwap, depth_usd = _vwap_from_asks(asks, stake_usd, entry_price)
         slippage_pct = max(0.0, (fill_vwap / mid - 1)) if mid > 0 else 0.005
-        # Cap to prevent pathological orderbook data from blowing up edge calc
-        slippage_pct = min(slippage_pct, MAX_SLIPPAGE_PCT)
 
         return SlippageEstimate(
             slippage_pct=round(slippage_pct, 4),
@@ -133,15 +135,10 @@ def _orderbook_slippage(
             model_used="orderbook",
         )
     except Exception as exc:
-        logger.warning("Orderbook slippage fetch failed, falling back to tiered: %s", exc)
+        logger.warning(
+            "Orderbook slippage fetch failed, falling back to tiered: %s", exc
+        )
         return _tiered_fallback(entry_price, f"orderbook_error: {exc}")
-
-
-# ─── Cap ───────────────────────────────────────────────────────────────────────
-# Protect against pathological orderbook responses that could yield absurd
-# slippage (e.g., > 5 %). A 5 % cap covers even very illiquid markets;
-# anything higher is likely a data/API issue, not real market structure.
-MAX_SLIPPAGE_PCT = 0.05
 
 
 def _tiered_fallback(entry_price: float, model_used: str) -> SlippageEstimate:
@@ -310,7 +307,7 @@ def check_orderbook_depth(
         from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient
 
         client = ResolvedMarketsClient()
-        ob = client.get_live_orderbook(condition_id)
+        ob = client.fetch_historical_orderbook(condition_id)
         if not ob:
             return True, 0.0
 

@@ -5,6 +5,10 @@ which did not exist on the class (only on WeatherEngine). The bot
 stalled for 6+ hours with AttributeError on every scan cycle. This
 test guards the Calculator side of the same logic so the same
 mistake can't be made again on the other class.
+
+Note: WeatherEngine._compute_effective_min_edge was removed by the
+ponytail audit; the canonical implementation is now
+``utils.probability.compute_effective_min_edge``.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -12,10 +16,13 @@ from types import SimpleNamespace
 
 from config.settings import bot_config
 from engine.calculator import Calculator
+from utils.probability import compute_effective_min_edge
 
 
 def _market(hours_from_now: float) -> SimpleNamespace:
-    return SimpleNamespace(resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now))
+    return SimpleNamespace(
+        resolution_date=datetime.now(timezone.utc) + timedelta(hours=hours_from_now)
+    )
 
 
 def test_calculator_static_method_exists():
@@ -25,11 +32,9 @@ def test_calculator_static_method_exists():
     assert callable(getattr(c, "_compute_effective_min_edge", None))
 
 
-def test_calculator_matches_weather_engine_behavior():
-    """Calculator and utils.probability.compute_effective_min_edge must produce the same answer
-    for the same market so the two implementations cannot drift apart."""
-    from utils.probability import compute_effective_min_edge
-
+def test_calculator_matches_standalone_function():
+    """Calculator and utils.probability must produce the same answer
+    for the same market so the two paths cannot drift apart."""
     cases = [48, 24, 12, 1, 0, -5]
     for h in cases:
         m = _market(h)

@@ -1,22 +1,22 @@
-"""Unified datastore: joins all 4 data sources into a backtest-ready schema.
+﻿"""Unified datastore: joins all 4 data sources into a backtest-ready schema.
 
-The previous eval_harness.py used a YES=True oracle for backtesting — this
+The previous eval_harness.py used a YES=True oracle for backtesting â€” this
 caused the inflated 74.34% ROI claim that GLM-5.2's audit exposed as
 synthetic. This module fixes the root cause by joining real ground-truth
 data from four sources into a single walk-forward-out-of-sample dataset:
 
-  1. polymarket_ingest      → market metadata + final resolved outcomes
-  2. weather_ensemble       → 8-model forecast + archive actuals (ground truth)
-  3. poly_data_ingest       → on-chain OrderFilled trades (order flow)
-  4. resolvedmarkets_ingest → tick-level orderbook snapshots (depth)
+  1. polymarket_ingest      â†' market metadata + final resolved outcomes
+  2. weather_ensemble       â†' 8-model forecast + archive actuals (ground truth)
+  3. poly_data_ingest       â†' on-chain OrderFilled trades (order flow)
+  4. resolvedmarkets_ingest â†' tick-level orderbook snapshots (depth)
 
 The unified schema is:
 
-  unified_markets    (one row per market — polymarket metadata + outcome)
-  unified_forecasts  (one row per (market, model, target_date) — ensemble)
-  unified_actuals    (one row per (city, date) — ground truth temperature)
-  unified_trades     (one row per OrderFilled event — on-chain)
-  unified_snapshots  (one row per (market, timestamp) — orderbook depth)
+  unified_markets    (one row per market â€” polymarket metadata + outcome)
+  unified_forecasts  (one row per (market, model, target_date) â€” ensemble)
+  unified_actuals    (one row per (city, date) â€” ground truth temperature)
+  unified_trades     (one row per OrderFilled event â€” on-chain)
+  unified_snapshots  (one row per (market, timestamp) â€” orderbook depth)
 
 Walk-forward OOS split: the dataset is split by DATE, not by random shuffle.
 For each backtest step N, train on data before date[N], test on date[N..N+K].
@@ -206,7 +206,9 @@ class UnifiedDatastore:
     def write_snapshots(self, df: pd.DataFrame) -> None:
         self._write_validated("snapshots", df, UNIFIED_SNAPSHOTS_SCHEMA)
 
-    def _write_validated(self, name: str, df: pd.DataFrame, schema: dict[str, str]) -> None:
+    def _write_validated(
+        self, name: str, df: pd.DataFrame, schema: dict[str, str]
+    ) -> None:
         if df.empty:
             logger.warning("UnifiedDatastore: empty %s DataFrame, skipping write", name)
             return
@@ -221,7 +223,9 @@ class UnifiedDatastore:
                     else:
                         df[col] = df[col].astype(dtype, errors="ignore")
                 except Exception as exc:
-                    logger.debug("Could not coerce %s.%s to %s: %s", name, col, dtype, exc)
+                    logger.debug(
+                        "Could not coerce %s.%s to %s: %s", name, col, dtype, exc
+                    )
         path = self._path(name)
         df.to_parquet(path, index=False)
         logger.info("Wrote %d rows to %s", len(df), path)
@@ -296,7 +300,11 @@ class UnifiedDatastore:
 
         df = df.copy()
         df[date_column] = pd.to_datetime(df[date_column], utc=True, errors="coerce")
-        df = df.dropna(subset=[date_column]).sort_values(date_column).reset_index(drop=True)
+        df = (
+            df.dropna(subset=[date_column])
+            .sort_values(date_column)
+            .reset_index(drop=True)
+        )
 
         if df.empty:
             return []
@@ -320,9 +328,11 @@ class UnifiedDatastore:
             test_start = cur_t
             test_end = cur_t + pd.Timedelta(days=test)
             train_start = cur_t - pd.Timedelta(days=lookback)
-            train_end = cur_t  # exclusive — train does NOT include test window
+            train_end = cur_t  # exclusive â€” train does NOT include test window
 
-            train_df = df[(df[date_column] >= train_start) & (df[date_column] < train_end)]
+            train_df = df[
+                (df[date_column] >= train_start) & (df[date_column] < train_end)
+            ]
             test_df = df[(df[date_column] >= test_start) & (df[date_column] < test_end)]
 
             if len(test_df) < self.cfg.min_markets_per_window:
@@ -354,7 +364,7 @@ class UnifiedDatastore:
 
             splits.append(split_meta)
             logger.info(
-                "Split %d: train %s..%s (%d rows) → test %s..%s (%d rows)",
+                "Split %d: train %s..%s (%d rows) â†' test %s..%s (%d rows)",
                 n,
                 train_start.date(),
                 train_end.date(),
@@ -395,7 +405,9 @@ class UnifiedDatastore:
         markets = self.read_markets()
         actuals = self.read_actuals()
         if markets.empty or actuals.empty:
-            logger.warning("Brier dataset requires both markets and actuals to be populated")
+            logger.warning(
+                "Brier dataset requires both markets and actuals to be populated"
+            )
             return pd.DataFrame()
 
         # Join on (city, target_date)
@@ -471,7 +483,7 @@ def ingest_all(
     Returns a dict of row counts per table.
     """
     if weather_locations is None:
-        # Default: 15 cities from ASIAbot's PDF spec
+        # Default: 15 cities from asiabot's PDF spec
         weather_locations = [
             ("Miami", 25.7617, -80.1918),
             ("NewYork", 40.7128, -74.0060),
@@ -523,7 +535,9 @@ def ingest_all(
         from data_pipeline.weather_ensemble import backfill_archive_many
 
         end_date = datetime.now(UTC).strftime("%Y-%m-%d")
-        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime("%Y-%m-%d")
+        start_date = (datetime.now(UTC) - pd.Timedelta(days=backfill_days)).strftime(
+            "%Y-%m-%d"
+        )
         actuals_df = backfill_archive_many(
             weather_locations,
             start_date=start_date,
@@ -535,15 +549,15 @@ def ingest_all(
     except Exception as exc:
         logger.error("Weather actuals ingest failed: %s", exc)
 
-    # 3. Forecasts — per-model historical + live ensemble
+    # 3. Forecasts â€” per-model historical + live ensemble
     # ----------------------------------------------------------------
     # The forecast join is split into two parts:
-    #   (a) Historical backfill — uses Open-Meteo Historical Forecast API
+    #   (a) Historical backfill â€” uses Open-Meteo Historical Forecast API
     #       (historical-forecast-api.open-meteo.com, free, no key) to
     #       retrieve per-model 0-day-ahead (analysis) forecasts for every
     #       past date in our markets table. This replaces the synthetic
     #       per-model probability fallback in karpathy_weekly.py.
-    #   (b) Live ensemble — uses Open-Meteo Forecast API for the next
+    #   (b) Live ensemble â€” uses Open-Meteo Forecast API for the next
     #       14 days (still needed for forward-looking markets).
     # ----------------------------------------------------------------
     logger.info("=== [3/4] Weather forecasts (historical backfill + live ensemble) ===")
@@ -570,7 +584,9 @@ def ingest_all(
                     date_col = cand
                     break
             if date_col and not markets_df_for_range.empty:
-                dt_series = pd.to_datetime(markets_df_for_range[date_col], utc=True, errors="coerce").dropna()
+                dt_series = pd.to_datetime(
+                    markets_df_for_range[date_col], utc=True, errors="coerce"
+                ).dropna()
                 if not dt_series.empty:
                     hist_start = dt_series.min().strftime("%Y-%m-%d")
                     hist_end = max(
@@ -590,7 +606,9 @@ def ingest_all(
                     )
                     if not hist_df.empty:
                         # Reshape to match unified_forecasts schema
-                        hist_df["target_date"] = pd.to_datetime(hist_df["date"], utc=True, errors="coerce")
+                        hist_df["target_date"] = pd.to_datetime(
+                            hist_df["date"], utc=True, errors="coerce"
+                        )
                         hist_df["fetched_at"] = pd.Timestamp.utcnow()
                         forecast_frames.append(
                             hist_df[
@@ -614,7 +632,7 @@ def ingest_all(
         except Exception as exc:
             logger.warning("Historical forecast backfill skipped: %s", exc)
 
-        # (b) Live ensemble — small sample for forward-looking markets
+        # (b) Live ensemble â€” small sample for forward-looking markets
         for city, lat, lon in weather_locations[:5]:  # cap for smoke test
             res = fetch_forecast_ensemble(lat, lon, city=city)
             if res:
@@ -627,7 +645,7 @@ def ingest_all(
                 forecast_frames.append(fc)
             _time.sleep(0.5)  # avoid Open-Meteo 429 rate limit
 
-        # (c) NWS deterministic forecast (US cities only — 9th pseudo-model)
+        # (c) NWS deterministic forecast (US cities only â€” 9th pseudo-model)
         # Free, no key. Adds diversity to the ensemble for US locations.
         try:
             from data_pipeline.weather_ensemble import fetch_nws_forecast
@@ -636,7 +654,9 @@ def ingest_all(
             for city, lat, lon in weather_locations:
                 nws_df = fetch_nws_forecast(lat, lon, city=city)
                 if not nws_df.empty:
-                    nws_df["target_date"] = pd.to_datetime(nws_df["date"], utc=True, errors="coerce")
+                    nws_df["target_date"] = pd.to_datetime(
+                        nws_df["date"], utc=True, errors="coerce"
+                    )
                     nws_df["fetched_at"] = pd.Timestamp.utcnow()
                     nws_frames.append(
                         nws_df[
@@ -667,7 +687,7 @@ def ingest_all(
     except Exception as exc:
         logger.error("Forecast ingest failed: %s", exc)
 
-    # 4. Resolved Markets snapshots (optional — requires API key)
+    # 4. Resolved Markets snapshots (optional â€” requires API key)
     if use_resolvedmarkets and resolvedmarkets_market_ids:
         logger.info("=== [4/4] Resolved Markets snapshots ===")
         try:
@@ -688,7 +708,9 @@ def ingest_all(
         except Exception as exc:
             logger.error("Resolvedmarkets ingest failed: %s", exc)
     else:
-        logger.info("=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ===")
+        logger.info(
+            "=== [4/4] Skipped Resolved Markets snapshots (use_resolvedmarkets=False) ==="
+        )
 
     return ds.summary()
 
@@ -699,7 +721,9 @@ def ingest_all(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
 
     print("\n=== Full ingest pipeline (smoke test) ===")
     counts = ingest_all(backfill_days=30, markets_limit=200)
@@ -716,3 +740,4 @@ if __name__ == "__main__":
         table_name="markets",
     )
     print(f"Built {len(splits)} splits")
+

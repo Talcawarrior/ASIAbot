@@ -1,4 +1,4 @@
-"""Standalone Open-Meteo 8-model ensemble module.
+﻿"""Standalone Open-Meteo 8-model ensemble module.
 
 Decoupled from the DB-backed scrapers/meteo.py. This module provides pure
 functions that fetch either live forecasts or historical archive data from
@@ -6,17 +6,17 @@ Open-Meteo, returning pandas DataFrames ready for backtesting.
 
 Two modes:
   - forecast (live): 14-day forward ensemble for a (lat, lon) pair
-  - archive (historical): daily actuals for a date range — used as ground
+  - archive (historical): daily actuals for a date range â€” used as ground
     truth labels for backtest / Brier scoring
   - historical-forecast (backfill): per-model 0-day-ahead analysis
-    forecasts for past dates — replaces synthetic per-model probabilities
+    forecasts for past dates â€” replaces synthetic per-model probabilities
     in the karpathy_weekly forecast join.
 
-Models supported (matching ASIAbot's ensemble):
+Models supported (matching asiabot's ensemble):
   gfs_seamless, ecmwf_ifs025, gem_global, icon_global,
   jma_seamless, cma_grapes_global, ukmo_seamless, meteofrance_seamless
 
-Plus an optional NWS source (api.weather.gov) for US locations — free,
+Plus an optional NWS source (api.weather.gov) for US locations â€” free,
 no API key. Returns NWS's local-office deterministic forecast for the
 next 7 days. Adds a 9th pseudo-model "nws_deterministic" to the ensemble
 when called from US lat/lon pairs.
@@ -50,7 +50,9 @@ OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 # Historical Forecast API: returns per-model 0-day-ahead (analysis) forecasts
 # for past dates. Free, no API key. Docs:
 # https://open-meteo.com/en/docs/historical-forecast-api
-OPEN_METEO_HISTORICAL_FORECAST_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+OPEN_METEO_HISTORICAL_FORECAST_URL = (
+    "https://historical-forecast-api.open-meteo.com/v1/forecast"
+)
 
 DEFAULT_MODELS = (
     "gfs_seamless",
@@ -134,14 +136,18 @@ def fetch_forecast_ensemble(
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
-        logger.warning("Ensemble fetch failed for (%s, %s): %s", latitude, longitude, exc)
+        logger.warning(
+            "Ensemble fetch failed for (%s, %s): %s", latitude, longitude, exc
+        )
         return None
 
     # Open-Meteo returns a SINGLE `daily` dict. Per-model values are encoded
     # as "<variable>_<model>" keys (e.g. temperature_2m_max_gfs_seamless).
     daily = payload.get("daily", {})
     if not isinstance(daily, dict) or "time" not in daily:
-        logger.warning("Empty daily block from Open-Meteo for (%s, %s)", latitude, longitude)
+        logger.warning(
+            "Empty daily block from Open-Meteo for (%s, %s)", latitude, longitude
+        )
         return None
 
     times = daily["time"]
@@ -231,7 +237,9 @@ def fetch_archive_actuals(
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
-        logger.warning("Archive fetch failed for (%s, %s): %s", latitude, longitude, exc)
+        logger.warning(
+            "Archive fetch failed for (%s, %s): %s", latitude, longitude, exc
+        )
         return pd.DataFrame()
 
     daily = payload.get("daily", {})
@@ -329,7 +337,9 @@ def fetch_historical_forecast_ensemble(
     }
 
     try:
-        resp = requests.get(OPEN_METEO_HISTORICAL_FORECAST_URL, params=params, timeout=timeout)
+        resp = requests.get(
+            OPEN_METEO_HISTORICAL_FORECAST_URL, params=params, timeout=timeout
+        )
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:
@@ -418,7 +428,7 @@ def backfill_historical_forecasts_many(
 
 
 # ---------------------------------------------------------------------------
-# NWS api.weather.gov (US-only, free, no key) — 9th pseudo-model
+# NWS api.weather.gov (US-only, free, no key) â€” 9th pseudo-model
 # ---------------------------------------------------------------------------
 
 NWS_API_BASE = "https://api.weather.gov"
@@ -446,14 +456,14 @@ def fetch_nws_forecast(
     *,
     city: str = "",
     timeout: float = 15.0,
-    user_agent: str = "ASIAbot-research/1.0",
+    user_agent: str = "asiabot-research/1.0",
 ) -> pd.DataFrame:
     """Fetch NWS deterministic forecast for a US location.
 
     Two-step:
-      1. GET /points/{lat},{lon} → returns metadata with a `forecast` URL
+      1. GET /points/{lat},{lon} ' returns metadata with a `forecast` URL
          for the local NWS office's grid cell.
-      2. GET that forecast URL → returns 14 periods (7 days × day/night)
+      2. GET that forecast URL ' returns 14 periods (7 days Ã— day/night)
          with temperature + precipitation.
 
     Returns DataFrame with columns: city, latitude, longitude, date, model,
@@ -546,7 +556,7 @@ def brier_score_per_model(
 
     forecasts_df: long format with columns [city, date, model, variable, value]
     actuals_df:   wide format with columns [city, date, <variable>...]
-    threshold:    strike price in °C
+    threshold:    strike price in Â°C
     market_type:  HIGH (T >= threshold) or LOW (T <= threshold)
 
     Returns {model: brier_score} where 0.0 = perfect, 0.25 = random.
@@ -555,10 +565,16 @@ def brier_score_per_model(
         return {}
 
     # Pivot forecasts to wide
-    var_col = forecasts_df["variable"].iloc[0] if "variable" in forecasts_df.columns else "temperature_2m_max"
+    var_col = (
+        forecasts_df["variable"].iloc[0]
+        if "variable" in forecasts_df.columns
+        else "temperature_2m_max"
+    )
     fc_wide = (
         forecasts_df[forecasts_df["variable"] == var_col]
-        .pivot_table(index=["city", "date"], columns="model", values="value", aggfunc="first")
+        .pivot_table(
+            index=["city", "date"], columns="model", values="value", aggfunc="first"
+        )
         .reset_index()
     )
 
@@ -578,9 +594,11 @@ def brier_score_per_model(
 
     # Brier per model: treat each model's "P(YES)" as a rough CDF eval
     # (this is a simplified scorer; full calibration uses normal CDF in
-    # utils/probability.py — here we just measure raw model spread)
+    # utils/probability.py â€” here we just measure raw model spread)
     scores: dict[str, float] = {}
-    model_cols = [c for c in merged.columns if c not in {"city", "date", "actual", "outcome"}]
+    model_cols = [
+        c for c in merged.columns if c not in {"city", "date", "actual", "outcome"}
+    ]
     for m in model_cols:
         series = merged[m]
         if series.isna().all():
@@ -600,7 +618,9 @@ def brier_score_per_model(
 # ---------------------------------------------------------------------------
 
 
-def _normalize_weights(weights: dict[str, float], models: Iterable[str]) -> dict[str, float]:
+def _normalize_weights(
+    weights: dict[str, float], models: Iterable[str]
+) -> dict[str, float]:
     """Ensure weights are non-negative and sum to 1, covering all models."""
     out = {m: max(0.0, weights.get(m, 0.0)) for m in models}
     total = sum(out.values())
@@ -610,7 +630,9 @@ def _normalize_weights(weights: dict[str, float], models: Iterable[str]) -> dict
     return {m: v / total for m, v in out.items()}
 
 
-def _weighted_stats(df: pd.DataFrame, weights: dict[str, float]) -> tuple[dict[str, float], dict[str, float]]:
+def _weighted_stats(
+    df: pd.DataFrame, weights: dict[str, float]
+) -> tuple[dict[str, float], dict[str, float]]:
     """Compute weighted mean and std per variable across models."""
     wmean: dict[str, float] = {}
     wstd: dict[str, float] = {}
@@ -634,7 +656,9 @@ def _weighted_stats(df: pd.DataFrame, weights: dict[str, float]) -> tuple[dict[s
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(name)-22s  %(message)s"
+    )
 
     # Quick smoke test: 1 city, 7 days backfill
     print("\n=== Live ensemble forecast (Miami) ===")
@@ -666,6 +690,11 @@ if __name__ == "__main__":
     )
     if not hist.empty:
         print(f"rows={len(hist)} models={sorted(hist['model'].unique())}")
-        print(hist.pivot_table(index="date", columns="model", values="value", aggfunc="first").head(15))
+        print(
+            hist.pivot_table(
+                index="date", columns="model", values="value", aggfunc="first"
+            ).head(15)
+        )
     else:
         print("(empty)")
+

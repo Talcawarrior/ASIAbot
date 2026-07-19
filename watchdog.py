@@ -1,10 +1,10 @@
-"""ASIAbot Bot Watchdog - Bot'u izler, çökerse yeniden başlatır.
+﻿"""asiabot Bot Watchdog - Bot'u izler, Ã§Ã¶kerse yeniden baÅŸlatÄ±r.
 
-Bu script bağımsız çalışır ve bot'u izler.
-Bot 2 dakika yanıt vermezse otomatik olarak yeniden başlatır.
+Bu script baÄŸÄ±msÄ±z Ã§alÄ±ÅŸÄ±r ve bot'u izler.
+Bot 2 dakika yanÄ±t vermezse otomatik olarak yeniden baÅŸlatÄ±r.
 
-Kullanım:
-    python watchdog.py              # İzleme modu (sonsuz döngü)
+KullanÄ±m:
+    python watchdog.py              # Ä°zleme modu (sonsuz dÃ¶ngÃ¼)
     python watchdog.py --check      # Sadece kontrol et
 """
 
@@ -19,7 +19,7 @@ from datetime import datetime
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
 BOT_URL = "http://127.0.0.1:8091"
 CHECK_INTERVAL = 30  # saniye
-TIMEOUT = 180  # 3 dakika yanıt yoksa restart
+TIMEOUT = 120  # 2 dakika yanÄ±t yoksa restart
 
 IS_WINDOWS = platform.system() == "Windows"
 
@@ -31,11 +31,11 @@ def log(msg: str):
 
 
 def is_bot_running() -> bool:
-    """Bot çalışıyor mu? Port kontrolü."""
+    """Bot Ã§alÄ±ÅŸÄ±yor mu? Port kontrolÃ¼."""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3)
-        result = sock.connect_ex(("127.0.0.1", 8091))
+        result = sock.connect_ex(('127.0.0.1', 8091))
         sock.close()
         return result == 0
     except Exception:
@@ -43,7 +43,7 @@ def is_bot_running() -> bool:
 
 
 def start_bot():
-    """Bot'u başlat."""
+    """Bot'u baÅŸlat."""
     cmd = [sys.executable, "main.py", "bot"]
     kwargs = {
         "cwd": BOT_DIR,
@@ -62,55 +62,33 @@ def start_bot():
 
 
 def stop_bot():
-    """Bot'u durdur."""
+    """Bot'u durdur - sadece bot process'i öldür."""
     if IS_WINDOWS:
-        # Sadece bu bot'un PID'ini öldür, tüm python process'lerini değil!
-        import subprocess as _subprocess
-        import os as _os
-
-        try:
-            netstat = _subprocess.check_output(["netstat", "-ano"], text=True, stderr=_subprocess.DEVNULL)
-            bot_pids = set()
-            for line in netstat.splitlines():
-                if ":8091" in line and "LISTENING" in line:
-                    parts = line.split()
-                    if parts:
-                        try:
-                            bot_pids.add(int(parts[-1]))
-                        except ValueError:
-                            pass
-            my_pid = _os.getpid()
-            bot_pids.discard(my_pid)
-            for pid in bot_pids:
-                _subprocess.run(
-                    ["taskkill", "/F", "/PID", str(pid)],
-                    capture_output=True,
-                    creationflags=_subprocess.CREATE_NO_WINDOW,
-                )
-        except Exception:
-            _subprocess.run(
-                ["taskkill", "/F", "/IM", "python.exe"], capture_output=True, creationflags=_subprocess.CREATE_NO_WINDOW
-            )
+        # Sadece main.py bot process'ini bulup öldür
+        subprocess.run(
+            ["taskkill", "/F", "/FI", "IMAGENAME eq python.exe", "/FI", "WINDOWTITLE eq *main.py bot*"],
+            capture_output=True,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
     else:
         subprocess.run(["pkill", "-f", "main.py bot"], capture_output=True)
     log("Bot stopped")
 
 
 def watchdog_loop():
-    """Watchdog ana döngüsü."""
-    log("=== ASIAbot Watchdog Started ===")
+    """Watchdog ana dÃ¶ngÃ¼sÃ¼."""
+    log("=== asiabot Watchdog Started ===")
 
     last_response = time.time()
 
     while True:
         try:
-            # Bot çalışıyor mu?
+            # Bot Ã§alÄ±ÅŸÄ±yor mu?
             if is_bot_running():
                 last_response = time.time()
                 # Bot health check (HTTP)
                 try:
                     import urllib.request
-
                     req = urllib.request.urlopen(f"{BOT_URL}/api/status", timeout=5)
                     if req.status == 200:
                         log("Bot OK")
@@ -119,7 +97,7 @@ def watchdog_loop():
                 except Exception:
                     log("Bot port open but API unreachable")
             else:
-                # Bot çalışmıyor
+                # Bot Ã§alÄ±ÅŸmÄ±yor
                 elapsed = time.time() - last_response
                 if elapsed > TIMEOUT:
                     log(f"Bot DOWN for {int(elapsed)}s - restarting...")
@@ -141,3 +119,5 @@ def watchdog_loop():
 
 if __name__ == "__main__":
     watchdog_loop()
+
+

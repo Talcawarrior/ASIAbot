@@ -1,6 +1,6 @@
-"""ASIAbot Test Suite - Vibe Coding Test Framework
+﻿"""asiabot Test Suite - Vibe Coding Test Framework
 
-Test katmanları:
+Test katmanlarÄ±:
 1. Regression tests (en kritik)
 2. Unit tests (pytest + parametrize)
 3. Property-based testing (Hypothesis)
@@ -8,9 +8,10 @@ Test katmanları:
 5. Static analysis (mypy, ruff)
 6. Integration/E2E tests
 
-Kullanım:
+KullanÄ±m:
     pytest tests/ -v
     pytest tests/ -v --cov=.
     pytest tests/test_regression.py -v
     pytest tests/test_property_based.py -v
 """
+

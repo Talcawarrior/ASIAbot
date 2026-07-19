@@ -1,4 +1,4 @@
-# ASIAbot Kullanim Kilavuzu
+﻿# asiabot Kullanim Kilavuzu
 
 **Versiyon:** 1.0
 **Tarih:** Haziran 2026
@@ -8,7 +8,7 @@
 
 ## 1. Proje Nedir
 
-ASIAbot, Polymarket uzerinde hava durumu kaynakli piyasalarda otomatik alim-satim yapan bir Python botudur. Bot, 8 farkli hava durumu modelinden (GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, MeteoFrance) tahminleri agirlikli olarak birlestirir, Polymarket'teki fiyatlari karsilastirir ve deger avantaji (edge) tespit ettiginde kademeli (ladder) bahisler acar.
+asiabot, Polymarket uzerinde hava durumu kaynakli piyasalarda otomatik alim-satim yapan bir Python botudur. Bot, 8 farkli hava durumu modelinden (GFS, ECMWF, GEM, ICON, JMA, CMA, UKMO, MeteoFrance) tahminleri agirlikli olarak birlestirir, Polymarket'teki fiyatlari karsilastirir ve deger avantaji (edge) tespit ettiginde kademeli (ladder) bahisler acar.
 
 Botu sifirdan kuran birinin bilmesi gereken temel ozellikler:
 
@@ -25,7 +25,7 @@ Botu sifirdan kuran birinin bilmesi gereken temel ozellikler:
 ## 2. Mimari Yapisi
 
 ```
-ASIAbot/
+asiabot/
   main.py                 # CLI giris noktasi, port cakizma cozumu
   api.py                  # FastAPI sunucusu, tum API endpointleri, BotState
   bot_loop.py             # Arka plan donguleri: scan_and_bet_loop, settlement_loop
@@ -68,8 +68,8 @@ ASIAbot/
     karpathy_weekly.py    # Haftalik grid search
     llm_client.py         # Z.AI API istemcisi
     llm_loop_orchestrator.py  # LLM 3-layer loop
-    analyzer_agent.py     # Analiz ajanı
-    researcher_agent.py   # Arastirma ajanı
+    analyzer_agent.py     # Analiz ajanÄ±
+    researcher_agent.py   # Arastirma ajanÄ±
     sia_harness.py        # SIA test sistemi
     sia_hourly.py         # Saatlik SIA optimizasyonu
   jobs/
@@ -103,8 +103,8 @@ ASIAbot/
 ### 3.2 Depoyu Klonlama
 
 ```powershell
-git clone https://github.com/Talcawarrior/ASIAbot.git
-cd ASIAbot
+git clone https://github.com/Talcawarrior/asiabot.git
+cd asiabot
 ```
 
 ### 3.3 Python Bagimliliklari
@@ -533,7 +533,7 @@ Bot `http://localhost:8092` uzerinde FastAPI sunucusu calistirir.
 
 ## 12. Testler
 
-ASIAbot, 304 test dosyasi icerir. Testleri calistirmak icin:
+asiabot, 304 test dosyasi icerir. Testleri calistirmak icin:
 
 ```powershell
 # Tum testleri calistir
@@ -718,3 +718,4 @@ H: `POST /api/asi/evolve` endpoint'ini kullanin. 5 turlu evrim pipeline'i baslat
 | asi_engine/data_backfiller.py | - | Veri doldurma |
 | asi_engine/llm_client.py | - | LLM istemcisi |
 | asi_engine/llm_loop_orchestrator.py | - | LLM 3-layer loop |
+

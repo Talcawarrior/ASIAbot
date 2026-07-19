@@ -1,4 +1,4 @@
-"""Cognition Base for ASIAbot.
+﻿"""Cognition Base for asiabot.
 
 Stores the persistent semantic knowledge, human priors, and distilled
 insights (Cognition Nodes) across evolutionary rounds.
@@ -17,7 +17,7 @@ _lock = threading.Lock()
 
 
 class CognitionNode:
-    """A single unit of distilled learning (Cognition Node) in ASIAbot."""
+    """A single unit of distilled learning (Cognition Node) in asiabot."""
 
     def __init__(
         self,
@@ -139,9 +139,9 @@ class CognitionBase:
                         for item in raw_data
                     ]
             except Exception as e:
-                # H14: Keep existing nodes on corrupt JSON — do NOT clear self.nodes
+                # H14: Keep existing nodes on corrupt JSON â€” do NOT clear self.nodes
                 logger.error(
-                    "Could not load cognition base: %s — keeping existing %d nodes",
+                    "Could not load cognition base: %s â€” keeping existing %d nodes",
                     e,
                     len(self.nodes),
                 )
@@ -173,3 +173,4 @@ class CognitionBase:
 
     def get_all_insights(self) -> list[dict]:
         return [node.to_dict() for node in self.nodes]
+
