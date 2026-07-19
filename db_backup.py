@@ -176,7 +176,7 @@ def _cleanup_old(category: str):
     backups = sorted(glob.glob(pattern))
     for old in backups[: max(0, len(backups) - MAX_BACKUPS_PER_CATEGORY)]:
         base = old[:-3]  # strip ".gz" -> ".db"
-        for p in [old, base, base + "-wal", base + "-shm", base + ".tmp", base + ".gz.tmp"]:
+        for p in [old, base, base + "-wal", base + "-shm", base + ".tmp", base + ".gz.tmp", base + "-journal", base + ".tmp-journal"]:
             if os.path.exists(p):
                 try:
                     os.unlink(p)
