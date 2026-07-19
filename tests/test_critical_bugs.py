@@ -263,40 +263,45 @@ class TestDBProtection:
             after_size = os.path.getsize(prod_path)
             assert before_size == after_size, f"Production DB size changed: {before_size} -> {after_size}"
 
-    def test_backup_exists(self):
-        """data/backups/ en az 1 backup dosyası içermeli."""
-        backup_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "data",
-            "backups",
-        )
-        if os.path.exists(backup_dir):
-            backups = [f for f in os.listdir(backup_dir) if f.endswith(".db.gz")]
-            assert len(backups) >= 1, f"No backups found in {backup_dir}"
+    def test_backup_exists(self, monkeypatch):
+        """db_backup must be able to create a backup file in its backup dir."""
+        import tempfile
+        from db_backup import create_backup
 
-    def test_db_backup_function_works(self):
+        tmp = tempfile.mkdtemp()
+        monkeypatch.setattr("db_backup.BACKUP_DIR", tmp)
+        monkeypatch.setattr("db_backup.OFFSITE_DIR", tmp)
+        path = create_backup("test")
+        assert path is not None
+        assert os.path.exists(path)
+        assert os.path.basename(path).endswith(".db.gz")
+
+    def test_db_backup_function_works(self, monkeypatch):
         """db_backup.py create_backup fonksiyonu çalışmalı."""
         from db_backup import create_backup
         import tempfile
 
-        with tempfile.TemporaryDirectory():
-            # Geçici dosyaya backup al
+        with tempfile.TemporaryDirectory() as d:
+            monkeypatch.setattr("db_backup.BACKUP_DIR", d)
+            monkeypatch.setattr("db_backup.OFFSITE_DIR", d)
+            # Geçici dizine backup al
             backup_path = create_backup("test")
             assert backup_path is not None
             assert os.path.exists(backup_path)
-            # Temizle
-            os.unlink(backup_path)
 
-    def test_reset_endpoint_has_backup(self):
+    def test_reset_endpoint_has_backup(self, monkeypatch):
         """Reset endpoint'i tetiklendiğinde backup alınmalı."""
         # Bu test sadece backup mekanizmasını doğrular
         # Gerçek reset tetiklemez
         from db_backup import create_backup
+        import tempfile
 
-        backup_path = create_backup("pre_reset_test")
-        assert backup_path is not None
-        assert os.path.exists(backup_path)
-        os.unlink(backup_path)
+        with tempfile.TemporaryDirectory() as d:
+            monkeypatch.setattr("db_backup.BACKUP_DIR", d)
+            monkeypatch.setattr("db_backup.OFFSITE_DIR", d)
+            backup_path = create_backup("pre_reset_test")
+            assert backup_path is not None
+            assert os.path.exists(backup_path)
 
 
 # ── 6. TAKE PROFIT FORMAT STRING TESTLERİ ─────────────────────────────

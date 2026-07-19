@@ -19,17 +19,19 @@ import pytest
 
 
 def _pre_test_backup():
+    # NOTE: writes to the SYSTEM temp dir (single overwritten file), never to
+    # the project's data/backups. Otherwise every test run (incl. the pre-commit
+    # hook) would drop a fresh ~380 MB copy into data/backups and balloon it.
     try:
+        import tempfile
+        import shutil
+
         db_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
         db_path = os.path.join(db_dir, "bot.db")
-        backup_dir = os.path.join(db_dir, "backups")
         if os.path.exists(db_path) and os.path.getsize(db_path) > 0:
+            backup_dir = os.path.join(tempfile.gettempdir(), "asiabot_pre_test_backup")
             os.makedirs(backup_dir, exist_ok=True)
-            from datetime import datetime
-            import shutil
-
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            shutil.copy2(db_path, os.path.join(backup_dir, f"bot_pre_test_{ts}.db"))
+            shutil.copy2(db_path, os.path.join(backup_dir, "bot_pre_test.db"))
     except Exception:
         pass
 
