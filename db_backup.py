@@ -19,7 +19,9 @@ Hardening (applied after audit vs sibling bot):
     * Atomic replace via temp file + os.replace.
     * Per-category retention (not a single global pool).
     * Path-traversal safe (label is sanitized).
-    * Compressed (.db.gz) copy is emitted for offsite/ransomware safety.
+    * Backups are stored COMPRESSED (.db.gz) both locally and offsite, so each
+      snapshot is ~30 MB instead of a full ~380 MB raw copy of the live DB.
+      This keeps data/backups small even when the bot restarts/tests run often.
 """
 
 import glob
@@ -52,8 +54,19 @@ def _sidecar_paths(base: str) -> list[str]:
 
 
 def _integrity_ok(path: str) -> bool:
+    # .gz backups are decompressed to a temp file before the check.
+    plain = path
+    tmp_plain = None
+    if path.endswith(".gz"):
+        tmp_plain = path + ".integrity.tmp"
+        try:
+            with gzip.open(path, "rb") as f_in, open(tmp_plain, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        except Exception:
+            return False
+        plain = tmp_plain
     try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        con = sqlite3.connect(f"file:{plain}?mode=ro", uri=True)
         try:
             cur = con.cursor()
             cur.execute("PRAGMA integrity_check")
@@ -63,6 +76,12 @@ def _integrity_ok(path: str) -> bool:
         return bool(rows) and all(r[0] == "ok" for r in rows)
     except Exception:
         return False
+    finally:
+        if tmp_plain is not None and os.path.exists(tmp_plain):
+            try:
+                os.unlink(tmp_plain)
+            except OSError:
+                pass
 
 
 def verify_backup(path: str) -> bool:
@@ -71,11 +90,12 @@ def verify_backup(path: str) -> bool:
 
 
 def create_backup(label="auto", category=None):
-    """Create a consistent, verified backup of the live database.
+    """Create a consistent, verified, COMPRESSED backup of the live database.
 
     Uses the SQLite Online Backup API so a backup taken while the bot is
-    writing remains internally consistent. Returns the backup path, or None
-    if the source DB is missing/corrupt.
+    writing remains internally consistent, then stores it as a compressed
+    ``.db.gz`` (typically ~30 MB vs ~380 MB for a raw copy). Returns the
+    backup path, or None if the source DB is missing/corrupt.
     """
     os.makedirs(BACKUP_DIR, exist_ok=True)
     if not os.path.exists(DB_PATH):
@@ -84,9 +104,10 @@ def create_backup(label="auto", category=None):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe = _safe_label(label)
-    backup_name = f"bot_{safe}_{timestamp}.db"
-    backup_path = os.path.join(BACKUP_DIR, backup_name)
-    tmp_path = backup_path + ".tmp"
+    db_name = f"bot_{safe}_{timestamp}.db"
+    db_path = os.path.join(BACKUP_DIR, db_name)  # uncompressed temp name
+    gz_path = db_path + ".gz"  # final compressed backup
+    tmp_db = db_path + ".tmp"
 
     # Source integrity must be OK before we bother copying.
     if not _integrity_ok(DB_PATH):
@@ -96,7 +117,7 @@ def create_backup(label="auto", category=None):
     try:
         src = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
         try:
-            dst = sqlite3.connect(tmp_path)
+            dst = sqlite3.connect(tmp_db)
             try:
                 with dst:  # commit/close cleanly
                     src.backup(dst)
@@ -106,56 +127,56 @@ def create_backup(label="auto", category=None):
             src.close()
     except Exception as e:
         print(f"ERROR: backup failed: {e}")
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if os.path.exists(tmp_db):
+            os.unlink(tmp_db)
         return None
 
-    # Atomic publish.
-    os.replace(tmp_path, backup_path)
-
-    # Compressed offsite-friendly copy (plaintext at rest but small + portable).
-    gz_path = backup_path + ".gz"
-    with open(backup_path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+    # Compress the snapshot to the final .gz (atomic publish).
+    tmp_gz = gz_path + ".tmp"
+    with open(tmp_db, "rb") as f_in, gzip.open(tmp_gz, "wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
+    os.unlink(tmp_db)
+    os.replace(tmp_gz, gz_path)
 
-    size_kb = os.path.getsize(backup_path) / 1024
-    print(f"Backup created: {backup_name} ({size_kb:.0f} KB)")
+    size_kb = os.path.getsize(gz_path) / 1024
+    print(f"Backup created: {os.path.basename(gz_path)} ({size_kb:.0f} KB)")
 
     # Retention: per category (label family), keep newest N.
     _cleanup_old(category or safe)
 
-    # Offsite copy (different directory) for DR — no encryption, as configured.
+    # Offsite copy (compressed .gz to a different directory) for DR.
     try:
-        copy_to_offsite(backup_path)
+        copy_to_offsite(gz_path)
     except Exception as e:
         print(f"WARNING: offsite copy failed: {e}")
 
-    return backup_path
+    return gz_path
 
 
 def copy_to_offsite(backup_path: str, offsite_dir: str | None = None) -> str | None:
-    """Copy the latest compressed backup to a separate directory for DR.
+    """Copy a compressed backup (.gz) to a separate directory for DR.
 
-    Copies the .gz sidecar (produced by create_backup) to ``offsite_dir``
-    (defaults to OFFSITE_DIR, a sibling of the project). Returns the copied
-    path, or None if there is nothing to copy. No encryption — plain copy.
+    ``backup_path`` is the ``.gz`` file produced by create_backup. Copies it
+    to ``offsite_dir`` (defaults to OFFSITE_DIR, a sibling of the project).
+    Returns the copied path, or None if there is nothing to copy.
+    No encryption — plain portable copy, as configured.
     """
     offsite_dir = offsite_dir or OFFSITE_DIR
-    gz_path = backup_path + ".gz"
-    if not os.path.exists(gz_path):
+    if not backup_path.endswith(".gz") or not os.path.exists(backup_path):
         return None
     os.makedirs(offsite_dir, exist_ok=True)
-    dest = os.path.join(offsite_dir, os.path.basename(gz_path))
-    shutil.copy2(gz_path, dest)
+    dest = os.path.join(offsite_dir, os.path.basename(backup_path))
+    shutil.copy2(backup_path, dest)
     print(f"Offsite copy: {os.path.basename(dest)} -> {offsite_dir}")
     return dest
 
 
 def _cleanup_old(category: str):
-    pattern = os.path.join(BACKUP_DIR, f"bot_{_safe_label(category)}_*.db")
+    pattern = os.path.join(BACKUP_DIR, f"bot_{_safe_label(category)}_*.db.gz")
     backups = sorted(glob.glob(pattern))
     for old in backups[: max(0, len(backups) - MAX_BACKUPS_PER_CATEGORY)]:
-        for p in [old, old + ".gz", *[old + ext for ext in ("-wal", "-shm")]]:
+        base = old[:-3]  # strip ".gz" -> ".db"
+        for p in [old, base, base + "-wal", base + "-shm", base + ".tmp", base + ".gz.tmp"]:
             if os.path.exists(p):
                 try:
                     os.unlink(p)
@@ -167,21 +188,18 @@ def list_backups():
     if not os.path.exists(BACKUP_DIR):
         print("No backups found")
         return []
-    backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db")))
+    backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db.gz")))
     for b in backups:
-        if b.endswith(".gz"):
-            continue
         size_kb = os.path.getsize(b) / 1024
         mtime = datetime.fromtimestamp(os.path.getmtime(b))
         ok = "ok" if _integrity_ok(b) else "CORRUPT"
         print(f"  {os.path.basename(b)} ({size_kb:.0f} KB) - {mtime:%Y-%m-%d %H:%M:%S} [{ok}]")
-    return [b for b in backups if not b.endswith(".gz")]
+    return backups
 
 
 def restore_backup(backup_path=None):
     if backup_path is None:
-        backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db")))
-        backups = [b for b in backups if not b.endswith(".gz")]
+        backups = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db.gz")))
         if not backups:
             print("No backups to restore")
             return False
@@ -190,8 +208,26 @@ def restore_backup(backup_path=None):
     if not os.path.exists(backup_path):
         print(f"Backup not found: {backup_path}")
         return False
-    if not _integrity_ok(backup_path):
+
+    # Decompress the .gz snapshot to a temp plain db (legacy .db handled too).
+    if backup_path.endswith(".gz"):
+        tmp = DB_PATH + ".restore.tmp"
+        try:
+            with gzip.open(backup_path, "rb") as f_in, open(tmp, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        except Exception as e:
+            print(f"ERROR: cannot read backup archive: {e}")
+            return False
+    else:
+        tmp = backup_path  # legacy uncompressed backup
+
+    if not _integrity_ok(tmp):
         print("ERROR: selected backup is CORRUPT, refusing to restore")
+        if tmp != backup_path:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         return False
 
     if os.path.exists(DB_PATH):
@@ -199,14 +235,14 @@ def restore_backup(backup_path=None):
         shutil.copy2(DB_PATH, fallback)
         print(f"Current DB saved as: {os.path.basename(fallback)}")
 
-    # Atomic restore: copy to temp next to the target, then replace.
-    tmp = DB_PATH + ".restore.tmp"
-    shutil.copy2(backup_path, tmp)
+    # Atomic restore: replace the live DB with the verified snapshot.
     os.replace(tmp, DB_PATH)
-    for ext in ("-wal", "-shm"):
-        src = backup_path + ext
-        if os.path.exists(src):
-            shutil.copy2(src, DB_PATH + ext)
+    # Legacy sidecars (rare for a clean backup) when restoring a raw .db.
+    if not backup_path.endswith(".gz"):
+        for ext in ("-wal", "-shm"):
+            src = backup_path + ext
+            if os.path.exists(src):
+                shutil.copy2(src, DB_PATH + ext)
 
     print(f"Restored from: {os.path.basename(backup_path)}")
     return True
@@ -218,7 +254,7 @@ if __name__ == "__main__":
     elif "--restore" in sys.argv:
         restore_backup()
     elif "--verify" in sys.argv:
-        bs = [b for b in sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db"))) if not b.endswith(".gz")]
+        bs = sorted(glob.glob(os.path.join(BACKUP_DIR, "bot_*.db.gz")))
         if not bs:
             print("No backups to verify")
         else:

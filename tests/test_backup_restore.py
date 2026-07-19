@@ -89,7 +89,7 @@ def test_per_category_retention(live_db, monkeypatch):
     monkeypatch.setattr("db_backup.MAX_BACKUPS_PER_CATEGORY", 3)
     for i in range(6):
         create_backup("scheduled")
-    cat_files = [f for f in os.listdir(_dbmod.BACKUP_DIR) if f.startswith("bot_scheduled_") and f.endswith(".db")]
+    cat_files = [f for f in os.listdir(_dbmod.BACKUP_DIR) if f.startswith("bot_scheduled_") and f.endswith(".db.gz")]
     assert len(cat_files) == 3  # oldest 3 trimmed, newest 3 kept
 
 

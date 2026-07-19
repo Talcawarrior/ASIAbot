@@ -271,7 +271,7 @@ class TestDBProtection:
             "backups",
         )
         if os.path.exists(backup_dir):
-            backups = [f for f in os.listdir(backup_dir) if f.endswith(".db")]
+            backups = [f for f in os.listdir(backup_dir) if f.endswith(".db.gz")]
             assert len(backups) >= 1, f"No backups found in {backup_dir}"
 
     def test_db_backup_function_works(self):
