@@ -13,3 +13,20 @@ repos:
         args: [--config-file=mypy.ini, --exclude=scripts/]
         exclude: ^scripts/
         additional_dependencies: [types-requests, types-python-dateutil, sqlalchemy2-stubs]
+
+  # Fast, network/DB-free smoke tests run on every commit. The full suite
+  # (incl. live-API / DB-backed tests) is left to CI to keep commits fast.
+  - repo: local
+    hooks:
+      - id: pytest-smoke
+        name: pytest fast smoke tests
+        entry: python -m pytest -q -o addopts=
+        language: system
+        pass_filenames: false
+        always_run: true
+        args:
+          - tests/test_liveness.py
+          - tests/test_karpathy_search.py
+          - tests/test_active_risk_management.py
+          - tests/test_critical_bugs.py
+

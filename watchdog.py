@@ -1,11 +1,16 @@
-﻿"""asiabot Bot Watchdog - Bot'u izler, Ã§Ã¶kerse yeniden baÅŸlatÄ±r.
+"""asiabot Bot Watchdog - Bot'u izler, cokerse VEYA icten takilirsa yeniden baslatir.
 
-Bu script baÄŸÄ±msÄ±z Ã§alÄ±ÅŸÄ±r ve bot'u izler.
-Bot 2 dakika yanÄ±t vermezse otomatik olarak yeniden baÅŸlatÄ±r.
+Bu script bagimsiz calisir ve bot'u izler. Sadece "process olmus mu" degil,
+"API saglikli mi / bot gercekten calisiyor mu" kontrolu yapar. Bot su durumlarda
+otomatik yeniden baslatilir:
+  - Port dinlemiyorsa (process takildi / coktu)
+  - /api/status 200 donmuyorsa
+  - JSON icinde is_running = false ise  (SCAN LOOP DEAD gibi icten takilma)
+  - JSON icinde scan_health = "dead" ise
 
-KullanÄ±m:
-    python watchdog.py              # Ä°zleme modu (sonsuz dÃ¶ngÃ¼)
-    python watchdog.py --check      # Sadece kontrol et
+Kullanim:
+    python watchdog.py              # Izleme modu (sonsuz dongu)
+    python watchdog.py --check      # Sadece bir kez kontrol et
 """
 
 import subprocess
@@ -13,111 +18,354 @@ import time
 import sys
 import os
 import platform
-import socket
-from datetime import datetime
+import json
+import logging
+import atexit
 
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
-BOT_URL = "http://127.0.0.1:8091"
-CHECK_INTERVAL = 30  # saniye
-TIMEOUT = 120  # 2 dakika yanÄ±t yoksa restart
-
-IS_WINDOWS = platform.system() == "Windows"
+LOCK_PATH = os.path.join(BOT_DIR, "logs", "watchdog.lock")
 
 
-def log(msg: str):
-    """Log yaz."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
-
-
-def is_bot_running() -> bool:
-    """Bot Ã§alÄ±ÅŸÄ±yor mu? Port kontrolÃ¼."""
+def _read_lock_pid():
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(3)
-        result = sock.connect_ex(('127.0.0.1', 8091))
-        sock.close()
-        return result == 0
+        with open(LOCK_PATH) as f:
+            return int(f.read().strip())
+    except Exception:
+        return None
+
+
+def _pid_alive(pid):
+    if pid <= 0:
+        return False
+    if IS_WINDOWS:
+        try:
+            out = subprocess.check_output(
+                ["tasklist", "/FI", f"PID eq {pid}"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+            return str(pid) in out
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
     except Exception:
         return False
 
 
+def acquire_singleton():
+    """Tek watchdog garantiler. Baska bir watchdog zaten calisiyorsa cik."""
+    old = _read_lock_pid()
+    if old and old != os.getpid() and _pid_alive(old):
+        logger.info("Baska bir watchdog zaten calisiyor (PID %s) - cikiliyor", old)
+        sys.exit(0)
+    try:
+        with open(LOCK_PATH, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
+
+    def _release():
+        try:
+            if os.path.exists(LOCK_PATH):
+                with open(LOCK_PATH) as f:
+                    if f.read().strip() == str(os.getpid()):
+                        os.remove(LOCK_PATH)
+        except Exception:
+            pass
+
+    atexit.register(_release)
+
+
+BOT_URL = "http://127.0.0.1:8091"
+HOST = "127.0.0.1"
+PORT = 8091
+CHECK_INTERVAL = 30  # saniye - saglik kontrolu araligi
+UNHEALTHY_TIMEOUT = 120  # saniye - bu sure boyunca sagliksizsa restart
+STARTUP_WAIT = 60  # saniye - bot baslatildiktan sonra ilk kontrole kadar bekle
+MAX_RESTARTS = 1000  # guvenlik siniri
+# Maintenance lock: while this file exists the watchdog will NOT restart the
+# bot, so live code edits / restarts during development don't trigger a
+# watchdog-driven restart storm. Remove the file (or use --end-maintenance)
+# when edits are done.
+MAINTENANCE_FLAG = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".maintenance")
+
+
+def in_maintenance() -> bool:
+    try:
+        return os.path.exists(MAINTENANCE_FLAG)
+    except OSError:
+        return False
+
+
+IS_WINDOWS = platform.system() == "Windows"
+
+# ── Logging ──────────────────────────────────────────────────────────────
+os.makedirs(os.path.join(BOT_DIR, "logs"), exist_ok=True)
+_log_path = os.path.join(BOT_DIR, "logs", "watchdog.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - WATCHDOG - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(_log_path, encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger("watchdog")
+
+
+def log(msg: str):
+    logger.info(msg)
+
+
+# ── Bot process bulma / oldurme ───────────────────────────────────────────
+def find_bot_pids():
+    """'main.py bot' calistiran tum python process'lerinin PID'lerini bulur."""
+    pids = []
+    if not IS_WINDOWS:
+        try:
+            out = subprocess.check_output(["pgrep", "-f", "main.py.*bot"], text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    pids.append(int(line))
+        except Exception:
+            pass
+        return pids
+
+    # Windows: WMIC ile commandline icinde 'main.py' + 'bot' gecen PID'ler
+    try:
+        out = subprocess.check_output(
+            [
+                "wmic",
+                "process",
+                "where",
+                "name='python.exe' and commandline like '%main.py%bot%'",
+                "get",
+                "processid",
+            ],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        for line in out.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pids.append(int(line))
+    except Exception:
+        pass
+    return pids
+
+
+def kill_pid(pid: int):
+    try:
+        if IS_WINDOWS:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(pid)],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+        else:
+            os.kill(pid, 9)
+        log(f"PID {pid} olduruldu")
+    except Exception as e:
+        log(f"PID {pid} oldurulemedi: {e}")
+
+
+def kill_port_owner():
+    """Port 8091'i tutan process'leri oldurur (icen takili zombileri de kapsar)."""
+    if not IS_WINDOWS:
+        try:
+            out = subprocess.check_output(["lsof", "-ti", f":{PORT}"], text=True, stderr=subprocess.DEVNULL)
+            for line in out.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    kill_pid(int(line))
+        except Exception:
+            pass
+        return
+
+    try:
+        raw = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
+        pids = set()
+        for line in raw.splitlines():
+            if f":{PORT}" in line and "LISTENING" in line:
+                parts = line.split()
+                if parts:
+                    try:
+                        pids.add(int(parts[-1]))
+                    except ValueError:
+                        pass
+        my_pid = os.getpid()
+        pids.discard(my_pid)
+        for pid in pids:
+            kill_pid(pid)
+        if pids:
+            # Port bosalana kadar bekle
+            for _ in range(20):
+                time.sleep(0.5)
+                check = subprocess.check_output(["netstat", "-ano"], text=True, stderr=subprocess.DEVNULL)
+                if not any(f":{PORT}" in line and "LISTENING" in line for line in check.splitlines()):
+                    break
+    except Exception:
+        pass
+
+
+def kill_stale_bots():
+    """Takilmis / cakismis eski bot process'lerini temizler."""
+    killed = False
+    for pid in find_bot_pids():
+        if pid == os.getpid():
+            continue
+        kill_pid(pid)
+        killed = True
+    if killed:
+        time.sleep(2)
+        kill_port_owner()
+
+
+# ── Saglik kontrolu ────────────────────────────────────────────────────────
+def is_bot_healthy():
+    """Bot gercekten saglikli mi? (port + API + is_running + scan_health)
+
+    Dondurur: (saglikli_mi, sebep_metni)
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        req = urllib.request.urlopen(f"{BOT_URL}/api/status", timeout=5)
+    except urllib.error.HTTPError as e:
+        return False, f"HTTP {e.code}"
+    except Exception:
+        # Port kapali / baglanti yok -> bot takilmis veya cokmus
+        return False, "API yanit vermiyor (port kapali)"
+
+    if req.status != 200:
+        return False, f"HTTP status {req.status}"
+
+    try:
+        data = json.loads(req.read().decode("utf-8"))
+    except Exception:
+        return False, "JSON okunamadi"
+
+    if data.get("is_running") is not True:
+        return False, "is_running = false (bot icerden durmus)"
+
+    scan_health = data.get("scan_health")
+    if scan_health == "dead":
+        return False, "scan_health = dead (SCAN LOOP DEAD)"
+
+    return True, "ok"
+
+
+# ── Bot baslatma ────────────────────────────────────────────────────────────
 def start_bot():
-    """Bot'u baÅŸlat."""
     cmd = [sys.executable, "main.py", "bot"]
     kwargs = {
         "cwd": BOT_DIR,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
-
     if IS_WINDOWS:
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     else:
         kwargs["start_new_session"] = True
 
     proc = subprocess.Popen(cmd, **kwargs)
-    log(f"Bot started (PID: {proc.pid})")
+    log(f"Bot baslatildi (PID: {proc.pid})")
     return proc
 
 
-def stop_bot():
-    """Bot'u durdur - sadece bot process'i öldür."""
-    if IS_WINDOWS:
-        # Sadece main.py bot process'ini bulup öldür
-        subprocess.run(
-            ["taskkill", "/F", "/FI", "IMAGENAME eq python.exe", "/FI", "WINDOWTITLE eq *main.py bot*"],
-            capture_output=True,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-    else:
-        subprocess.run(["pkill", "-f", "main.py bot"], capture_output=True)
-    log("Bot stopped")
-
-
-def watchdog_loop():
-    """Watchdog ana dÃ¶ngÃ¼sÃ¼."""
-    log("=== asiabot Watchdog Started ===")
-
-    last_response = time.time()
-
-    while True:
+def restart_bot(proc):
+    log("=== BOT YENIDEN BASLATILIYOR ===")
+    # 1) Yonetilen process'i oldur
+    if proc is not None:
         try:
-            # Bot Ã§alÄ±ÅŸÄ±yor mu?
-            if is_bot_running():
-                last_response = time.time()
-                # Bot health check (HTTP)
-                try:
-                    import urllib.request
-                    req = urllib.request.urlopen(f"{BOT_URL}/api/status", timeout=5)
-                    if req.status == 200:
-                        log("Bot OK")
-                    else:
-                        log(f"Bot unhealthy (status={req.status})")
-                except Exception:
-                    log("Bot port open but API unreachable")
-            else:
-                # Bot Ã§alÄ±ÅŸmÄ±yor
-                elapsed = time.time() - last_response
-                if elapsed > TIMEOUT:
-                    log(f"Bot DOWN for {int(elapsed)}s - restarting...")
-                    stop_bot()
-                    time.sleep(3)
-                    start_bot()
-                    last_response = time.time()
+            if proc.poll() is None:
+                kill_pid(proc.pid)
+        except Exception:
+            pass
+    # 2) Port'u tutan / eski bot process'lerini temizle
+    kill_stale_bots()
+    time.sleep(2)
+    # 3) Yeni baslat
+    return start_bot()
+
+
+# ── Ana dongu ──────────────────────────────────────────────────────────────
+def watchdog_loop():
+    log("=== asiabot Watchdog Basladi (oto-iyilestirme aktif) ===")
+
+    # Ilk_acilis: eski takili bot'lari temizle
+    kill_stale_bots()
+
+    proc = None
+    unhealthy_since = None
+    restart_count = 0
+
+    while restart_count < MAX_RESTARTS:
+        try:
+            healthy, reason = is_bot_healthy()
+
+            if healthy:
+                unhealthy_since = None
+                # Yonetilen process cikmis mi?
+                if proc is not None and proc.poll() is not None:
+                    log("Bot process'i kendiliginden cikti, yeniden baslatiliyor...")
+                    proc = restart_bot(None)
+                    restart_count += 1
+                    time.sleep(STARTUP_WAIT)
+                    continue
+                if proc is None:
+                    # Saglikli bot var ama biz yonetmiyoruz -> benimse (sadece izle)
+                    log("Saglikli bot zaten calisiyor, izleniyor.")
                 else:
-                    log(f"Bot not responding ({int(elapsed)}s since last ok)")
+                    log("Bot SAGLIKLI")
+            else:
+                if unhealthy_since is None:
+                    unhealthy_since = time.time()
+                elapsed = int(time.time() - unhealthy_since)
+                log(f"Bot SAGLIKSIZ ({reason}) - {elapsed}s dir")
+
+                if in_maintenance():
+                    log("MAINTENANCE kilidi aktif -> yeniden baslatma atlandi")
+                    time.sleep(CHECK_INTERVAL)
+                    continue
+
+                if elapsed >= UNHEALTHY_TIMEOUT:
+                    log(f"{UNHEALTHY_TIMEOUT}s sagliksiz -> yeniden baslatma karari")
+                    proc = restart_bot(proc)
+                    restart_count += 1
+                    unhealthy_since = None
+                    log(f"Yeniden baslatma #{restart_count}")
+                    time.sleep(STARTUP_WAIT)
+                    continue
 
         except KeyboardInterrupt:
-            log("Watchdog interrupted")
+            log("Watchdog kullanici tarafindan durduruldu")
             break
         except Exception as e:
-            log(f"Watchdog error: {e}")
+            log(f"Watchdog hata: {e}")
 
         time.sleep(CHECK_INTERVAL)
 
+    log("=== Watchdog durdu (max yeniden baslatma sinirina ulasildi) ===")
+
 
 if __name__ == "__main__":
+    if "--check" in sys.argv:
+        ok, why = is_bot_healthy()
+        print(f"healthy={ok} reason={why}")
+        sys.exit(0 if ok else 1)
+    if "--maintenance" in sys.argv:
+        open(MAINTENANCE_FLAG, "w", encoding="utf-8").close()
+        print(f"Maintenance lock ON ({MAINTENANCE_FLAG}). Watchdog will not restart the bot.")
+        sys.exit(0)
+    if "--end-maintenance" in sys.argv:
+        if os.path.exists(MAINTENANCE_FLAG):
+            os.remove(MAINTENANCE_FLAG)
+        print("Maintenance lock OFF. Watchdog resumes normal restarts.")
+        sys.exit(0)
+    acquire_singleton()
     watchdog_loop()
-
-

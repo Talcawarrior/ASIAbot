@@ -101,9 +101,7 @@ class SettlementEngine:
                 portfolio = sync_session.query(Portfolio).filter(Portfolio.id == 1).first()
                 if portfolio:
                     open_exposure = (
-                        sync_session.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                        .filter(Bet.status.in_(OPEN_BET_STATUSES))
-                        .scalar()
+                        sync_session.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
                     ) or 0.0
                     cash = float(portfolio.cash_balance or 0)
                     portfolio.total_value = portfolio_total_value(cash, float(open_exposure))

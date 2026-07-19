@@ -55,22 +55,12 @@ def test_ensure_initial_portfolio_creates_row(fresh_db):
     # Verify portfolio was created
     pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
     assert pf is not None, "Portfolio(id=1) should exist after ensure_initial_portfolio"
-    assert pf.cash_balance == config.INITIAL_PORTFOLIO, (
-        f"cash_balance should be {config.INITIAL_PORTFOLIO}, got {pf.cash_balance}"
-    )
-    assert pf.current_value == config.INITIAL_PORTFOLIO, (
-        f"current_value should be {config.INITIAL_PORTFOLIO}, got {pf.current_value}"
-    )
-    assert pf.total_value == config.INITIAL_PORTFOLIO, (
-        f"total_value should be {config.INITIAL_PORTFOLIO}, got {pf.total_value}"
-    )
-    assert pf.initial_value == config.INITIAL_PORTFOLIO, (
-        f"initial_value should be {config.INITIAL_PORTFOLIO}, got {pf.initial_value}"
-    )
+    assert pf.cash_balance == config.INITIAL_PORTFOLIO, f"cash_balance should be {config.INITIAL_PORTFOLIO}, got {pf.cash_balance}"
+    assert pf.current_value == config.INITIAL_PORTFOLIO, f"current_value should be {config.INITIAL_PORTFOLIO}, got {pf.current_value}"
+    assert pf.total_value == config.INITIAL_PORTFOLIO, f"total_value should be {config.INITIAL_PORTFOLIO}, got {pf.total_value}"
+    assert pf.initial_value == config.INITIAL_PORTFOLIO, f"initial_value should be {config.INITIAL_PORTFOLIO}, got {pf.initial_value}"
     assert pf.daily_pnl == 0.0, f"daily_pnl should be 0.0, got {pf.daily_pnl}"
-    assert pf.total_realized_pnl == 0.0, (
-        f"total_realized_pnl should be 0.0, got {pf.total_realized_pnl}"
-    )
+    assert pf.total_realized_pnl == 0.0, f"total_realized_pnl should be 0.0, got {pf.total_realized_pnl}"
     assert pf.total_won == 0, f"total_won should be 0, got {pf.total_won}"
     assert pf.total_lost == 0, f"total_lost should be 0, got {pf.total_lost}"
 
@@ -102,11 +92,7 @@ def test_cli_reset_creates_portfolio_if_missing(fresh_db):
     from database.models import Analysis as AnalysisModel
     from database.models import Portfolio as PortfolioModel
 
-    (
-        session.query(Bet)
-        .filter(Bet.status.in_(OPEN_BET_STATUSES))
-        .update({"status": "cancelled"}, synchronize_session=False)
-    )
+    (session.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).update({"status": "cancelled"}, synchronize_session=False))
     (session.query(AnalysisModel).delete(synchronize_session=False))
 
     pf = session.query(PortfolioModel).filter(PortfolioModel.id == 1).first()

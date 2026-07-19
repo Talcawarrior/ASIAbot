@@ -143,9 +143,7 @@ class CognitionStore:
             self._faiss_index = faiss.IndexFlatIP(self.dim)
             logger.info("CognitionStore: FAISS + sentence-transformers loaded")
         except ImportError:
-            logger.info(
-                "CognitionStore: faiss/sentence-transformers not installed — using hash-based fallback embeddings"
-            )
+            logger.info("CognitionStore: faiss/sentence-transformers not installed — using hash-based fallback embeddings")
 
     def _embed(self, text: str) -> list[float]:
         if self._embedder is not None:
@@ -472,10 +470,13 @@ def _mean_stats(per_split: list[dict[str, float]]) -> dict[str, float]:
             "brier_score": 0.25,
             "total_pnl": 0.0,
             "total_staked": 0.0,
+            "max_dd_pct": 0.0,
         }
     keys = ["sharpe", "roi_pct", "win_rate", "brier_score", "total_pnl", "total_staked"]
     out = {k: sum(s.get(k, 0.0) for s in per_split) / len(per_split) for k in keys}
     out["total_trades"] = int(sum(s.get("total_trades", 0) for s in per_split))
+    # Max drawdown is a risk metric — take the worst (max) across splits.
+    out["max_dd_pct"] = round(max((s.get("max_dd_pct", 0.0) for s in per_split), default=0.0), 4)
     out["sharpe"] = round(out["sharpe"], 4)
     out["roi_pct"] = round(out["roi_pct"], 4)
     out["brier_score"] = round(out["brier_score"], 4)
@@ -488,9 +489,7 @@ def _load_best(
 ) -> tuple[Hypothesis | None, dict[str, float] | None]:
     """Load the current best hypothesis from the experiment DB."""
     cur = conn.cursor()
-    cur.execute(
-        "SELECT id, hypothesis_json, stats_json FROM experiments WHERE accepted = 1 ORDER BY sharpe DESC LIMIT 1"
-    )
+    cur.execute("SELECT id, hypothesis_json, stats_json FROM experiments WHERE accepted = 1 ORDER BY sharpe DESC LIMIT 1")
     row = cur.fetchone()
     if not row:
         return None, None
@@ -525,9 +524,7 @@ def _append_results_tsv(
     status: str,
 ) -> None:
     os.makedirs(os.path.dirname(RESULTS_TSV_PATH), exist_ok=True)
-    header = (
-        "round\tcandidate\ttimestamp\tdescription\tsource\tmin_edge\tkelly\tsharpe\troi_pct\tbrier\ttrades\tstatus\n"
-    )
+    header = "round\tcandidate\ttimestamp\tdescription\tsource\tmin_edge\tkelly\tsharpe\troi_pct\tbrier\ttrades\tstatus\n"
     if not os.path.exists(RESULTS_TSV_PATH):
         with open(RESULTS_TSV_PATH, "w", encoding="utf-8") as f:
             f.write(header)
@@ -574,8 +571,7 @@ def run_asi_evolve_daily(
         brier_df = ds.build_brier_dataset()
     except Exception as e:
         logger.warning(
-            "build_brier_dataset() raised %s — run polymarket_ingest with the "
-            "weather market parser first. Returning early.",
+            "build_brier_dataset() raised %s — run polymarket_ingest with the weather market parser first. Returning early.",
             e,
         )
         return {

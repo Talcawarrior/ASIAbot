@@ -1,4 +1,4 @@
-﻿"""asiabot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
+"""asiabot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
 
 import os
 from dataclasses import dataclass
@@ -56,7 +56,7 @@ class PolymarketConfig:
         # Initialize fee categories if not provided
         if self.fee_categories is None:
             self.fee_categories = {
-                "weather": 0.05,    # Weather markets: 5% fee
+                "weather": 0.05,  # Weather markets: 5% fee
             }
 
 
@@ -530,6 +530,13 @@ Config = _ConfigProxy()
 config = Config  # alias used by older modules
 
 
+# Hard per-bet cap ceiling. The evolution layers may tune max_bet_pct, and
+# deploy writes it (clamped) to strategy_params.json, but the live trader also
+# clamps here as a final safety floor so no persisted value can push real-money
+# bet sizing past this fraction of the portfolio.
+MAX_BET_PCT_CEILING = 0.013
+
+
 def apply_persisted_strategy_params() -> dict:
     """Overlay any persisted strategy params from data/strategy_params.json
     onto the in-memory bot_config (single source of truth).
@@ -560,9 +567,16 @@ def apply_persisted_strategy_params() -> dict:
             applied["kelly_fraction"] = s.kelly_fraction
         except (TypeError, ValueError):
             pass
-    # NOTE: max_bet_pct is intentionally NOT loaded from strategy_params.json.
-    # It MUST come ONLY from .env so that calculator.py, bet_placer.py, and
-    # utils/kelly.py all use the same cap via max_bet_cap().
+    # max_bet_pct: loaded from strategy_params.json (deployed by the evolution
+    # loop) but clamped to MAX_BET_PCT_CEILING as a final hard safety floor.
+    # Applying it to bot_config.strategy.max_bet_pct keeps calculator.py,
+    # bet_placer.py, and utils/kelly.py all consistent via max_bet_cap().
+    if "max_bet_pct" in persisted:
+        try:
+            s.max_bet_pct = min(float(persisted["max_bet_pct"]), MAX_BET_PCT_CEILING)
+            applied["max_bet_pct"] = s.max_bet_pct
+        except (TypeError, ValueError):
+            pass
     if "min_entry_price" in persisted:
         try:
             s.min_entry_price = float(persisted["min_entry_price"])
@@ -597,5 +611,3 @@ except Exception as _e:
 # NOTE: Fee rate is fetched lazily (not at import time) to avoid blocking startup.
 # Call fetch_and_apply_fee_rate() when needed, e.g., at bot startup.
 # The default fee_rate_weather (0.05) is used until then.
-
-

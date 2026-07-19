@@ -42,9 +42,7 @@ def _setup():
     """Create mock data in a clean DB."""
     _clean()
     with get_session() as session:
-        pf = Portfolio(
-            id=1, cash_balance=990.0, total_value=1000.0, current_value=990.0
-        )
+        pf = Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=990.0)
         session.add(pf)
 
         market = WeatherMarket(
@@ -157,6 +155,7 @@ def test_ladder_price_drops_trigger_fill():
 
             # Ladder fill check
             from datetime import datetime, timezone
+
             ladder = json.loads(bet.ladder_data) if isinstance(bet.ladder_data, str) else bet.ladder_data
             filled_amount = 0.0
             for rung in ladder:
@@ -218,11 +217,7 @@ def test_ladder_no_price_change_no_fill():
     _setup()
     try:
         with get_session() as session:
-            m = (
-                session.query(WeatherMarket)
-                .filter(WeatherMarket.id == "test-faz4-ladder")
-                .first()
-            )
+            m = session.query(WeatherMarket).filter(WeatherMarket.id == "test-faz4-ladder").first()
             m.yes_price = 0.35  # Same as entry
             session.commit()
 
@@ -233,12 +228,8 @@ def test_ladder_no_price_change_no_fill():
         with get_session() as session:
             bet = session.query(Bet).filter(Bet.market_id == "test-faz4-ladder").first()
             ladder = json.loads(bet.ladder_data)
-            assert ladder[1]["status"] == "pending", (
-                f"Level 2 should be pending: {ladder[1]}"
-            )
-            assert ladder[2]["status"] == "pending", (
-                f"Level 3 should be pending: {ladder[2]}"
-            )
+            assert ladder[1]["status"] == "pending", f"Level 2 should be pending: {ladder[1]}"
+            assert ladder[2]["status"] == "pending", f"Level 3 should be pending: {ladder[2]}"
             # Cash unchanged
             pf = session.query(Portfolio).filter(Portfolio.id == 1).first()
             assert pf is not None

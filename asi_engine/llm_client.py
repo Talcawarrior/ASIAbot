@@ -60,9 +60,7 @@ class LLMConfig:
         return bool(self.api_key)
 
 
-def get_client(
-    cfg: LLMConfig | None = None, *, layer: str = ""
-) -> tuple[Any, LLMConfig] | None:
+def get_client(cfg: LLMConfig | None = None, *, layer: str = "") -> tuple[Any, LLMConfig] | None:
     """Build and return (openai client, config), or None if not configured.
 
     Returns None when:
@@ -79,10 +77,7 @@ def get_client(
         # OpenAI-compatible endpoint. We do NOT send traffic to OpenAI.
         from openai import OpenAI  # type: ignore
     except ImportError:
-        logger.warning(
-            "openai SDK not installed — LLM hook disabled. "
-            "Install with: pip install openai"
-        )
+        logger.warning("openai SDK not installed — LLM hook disabled. Install with: pip install openai")
         return None
 
     client = OpenAI(
@@ -149,8 +144,7 @@ def chat_json(
         # budget was consumed by reasoning_content and content is empty.
         finish = getattr(resp.choices[0], "finish_reason", "?") if resp.choices else "?"
         logger.warning(
-            "[%s] LLM returned empty content (finish_reason=%s) — "
-            "consider increasing max_tokens",
+            "[%s] LLM returned empty content (finish_reason=%s) — consider increasing max_tokens",
             layer or "LLM",
             finish,
         )

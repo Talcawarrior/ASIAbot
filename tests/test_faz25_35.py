@@ -1,4 +1,4 @@
-﻿"""Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
+"""Tests for Faz 2.5-3.5: Ensemble fix + should_bet filter tightening."""
 
 import os
 import tempfile
@@ -43,11 +43,7 @@ def _setup_market(market_id="test-m1", threshold=30.0, yes_price=0.35):
     _clean()
     tomorrow = datetime.now() + timedelta(days=1)
     with get_session() as s:
-        s.add(
-            Portfolio(
-                id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0
-            )
-        )
+        s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
         s.add(
             WeatherMarket(
                 id=market_id,
@@ -129,11 +125,7 @@ def test_should_bet_rejects_low_edge():
         _clean()
         tomorrow = datetime.now() + timedelta(days=1)
         with get_session() as s:
-            s.add(
-                Portfolio(
-                    id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0
-                )
-            )
+            s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
             s.add(
                 WeatherMarket(
                     id="test-low-edge",
@@ -159,12 +151,8 @@ def test_should_bet_rejects_low_edge():
             _add_forecast("test-low-edge", src, val)
 
         r = _analyze_and_get("test-low-edge")
-        print(
-            f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}"
-        )
-        assert r["should_bet"] is False, (
-            f"Low edge ({r['edge']:.4f}) should be rejected!"
-        )
+        print(f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}")
+        assert r["should_bet"] is False, f"Low edge ({r['edge']:.4f}) should be rejected!"
         print("PASS: low edge rejected")
     finally:
         bot_config.strategy.min_edge = orig_min_edge
@@ -181,9 +169,7 @@ def test_should_bet_accepts_high_edge():
 
     r = _analyze_and_get("test-m1")
     print(f"  edge={r['edge']:.4f}, amount=, should_bet={r['should_bet']}")
-    assert r["should_bet"] is True, (
-        f"High edge ({r['edge']:.4f}) should be accepted! reason={r['reason']}"
-    )
+    assert r["should_bet"] is True, f"High edge ({r['edge']:.4f}) should be accepted! reason={r['reason']}"
     assert r["recommended_amount"] >= 1.0, "Amount too low: "
     print("PASS: high edge accepted")
 
@@ -193,9 +179,7 @@ def test_should_bet_rejects_few_sources():
     _add_forecast("test-m1", "gfs_seamless", 35.0)
 
     r = _analyze_and_get("test-m1")
-    print(
-        f"  sources={r['num_sources']}, should_bet={r['should_bet']}, reason={r['reason'][:60]}"
-    )
+    print(f"  sources={r['num_sources']}, should_bet={r['should_bet']}, reason={r['reason'][:60]}")
     assert r["should_bet"] is False, "1 source should be rejected!"
     assert "Az kaynak" in r["reason"]
     print("PASS: few sources rejected")
@@ -244,11 +228,7 @@ def test_ev_positive_check():
     # Forecasts [30.0, 30.1, 29.9] vs threshold 30 â†' estimated_prob â‰ˆ 0.50
     # yes_price=0.50 â†' edge â‰ˆ 0.00 â†' both YES/NO edges near zero â†' should reject
     with get_session() as s:
-        s.add(
-            Portfolio(
-                id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0
-            )
-        )
+        s.add(Portfolio(id=1, cash_balance=990.0, total_value=1000.0, current_value=1000.0))
         s.add(
             WeatherMarket(
                 id="test-ev",
@@ -274,12 +254,8 @@ def test_ev_positive_check():
         _add_forecast("test-ev", src, val)
 
     r = _analyze_and_get("test-ev")
-    print(
-        f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}"
-    )
-    assert r["should_bet"] is False, (
-        f"Zero edge (edge={r['edge']:.4f}) should be rejected!"
-    )
+    print(f"  edge={r['edge']:.4f}, should_bet={r['should_bet']}, reason={r['reason'][:80]}")
+    assert r["should_bet"] is False, f"Zero edge (edge={r['edge']:.4f}) should be rejected!"
     print("PASS: zero edge rejected")
 
 
@@ -287,9 +263,7 @@ def test_metoo_filter_has_lat_lon():
     import pathlib
 
     # Use latin-1 or ignore errors to handle non-utf8 characters in the source file
-    text = pathlib.Path("scrapers/meteo.py").read_text(
-        encoding="utf-8", errors="ignore"
-    )
+    text = pathlib.Path("scrapers/meteo.py").read_text(encoding="utf-8", errors="ignore")
     assert "WeatherMarket.latitude != 0" in text
     assert "WeatherMarket.longitude != 0" in text
     print("PASS: meteo lat/lon filter")
@@ -299,4 +273,3 @@ if __name__ == "__main__":
     import pytest
 
     pytest.main([__file__, "-v"])
-

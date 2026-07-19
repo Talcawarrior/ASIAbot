@@ -47,19 +47,11 @@ def test_save_below_threshold_is_skipped(tmp_path, monkeypatch):
     assert mtime_after == mtime_before
 
     # Save with delta = 0.0001 < 0.001 threshold must also not write.
-    assert (
-        ws.save_weights(
-            {"gfs_seamless": 0.5001, "ecmwf_ifs025": 0.5}, apply_floor=False
-        )
-        is False
-    )
+    assert ws.save_weights({"gfs_seamless": 0.5001, "ecmwf_ifs025": 0.5}, apply_floor=False) is False
     assert os.path.getmtime(path) == mtime_before
 
     # Save with delta = 0.01 > threshold must write.
-    assert (
-        ws.save_weights({"gfs_seamless": 0.51, "ecmwf_ifs025": 0.5}, apply_floor=False)
-        is True
-    )
+    assert ws.save_weights({"gfs_seamless": 0.51, "ecmwf_ifs025": 0.5}, apply_floor=False) is True
 
 
 def test_sialoop_loads_persisted_weights_on_init(tmp_path, monkeypatch):

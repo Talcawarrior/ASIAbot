@@ -1,4 +1,4 @@
-﻿"""Integration tests for the FastAPI app exposed by main.py.
+"""Integration tests for the FastAPI app exposed by main.py.
 
 These tests exercise the HTTP layer end-to-end (no mocks of the app itself)
 against the live `data/bot.db` (SQLite, WAL mode, read-only open). The aim
@@ -19,9 +19,7 @@ gracefully rather than failing collection.
 
 import pytest
 
-httpx = pytest.importorskip(
-    "httpx", reason="httpx not installed (needed for FastAPI TestClient)"
-)
+httpx = pytest.importorskip("httpx", reason="httpx not installed (needed for FastAPI TestClient)")
 from fastapi.testclient import TestClient  # noqa: E402
 
 
@@ -89,4 +87,3 @@ def test_dashboard_html_served(client):
     body = resp.text
     # Accept either the Next.js built page or the fallback message
     assert "asiabot" in body or "Dashboard" in body
-

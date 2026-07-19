@@ -67,9 +67,7 @@ class ResolvedMarketsConfig:
     base_url: str = BASE_URL
     timeout: float = DEFAULT_TIMEOUT
     # Rate limiter: minimum seconds between requests
-    min_interval_s: float = float(
-        os.environ.get("RESOLVEDMARKETS_MIN_INTERVAL", str(DEFAULT_MIN_INTERVAL_S))
-    )
+    min_interval_s: float = float(os.environ.get("RESOLVEDMARKETS_MIN_INTERVAL", str(DEFAULT_MIN_INTERVAL_S)))
     # Max retries on 429 / 5xx
     max_retries: int = 5
     # Where to cache snapshot responses (parquet per market_id + day)
@@ -94,8 +92,7 @@ class ResolvedMarketsClient:
         self.cfg = cfg or ResolvedMarketsConfig()
         if not self.cfg.api_key:
             logger.warning(
-                "ResolvedMarkets: no API key set. All /v1/ endpoints will return 401. "
-                "Get a free key at https://resolvedmarkets.com/api-keys."
+                "ResolvedMarkets: no API key set. All /v1/ endpoints will return 401. Get a free key at https://resolvedmarkets.com/api-keys."
             )
         self._session = requests.Session()
         self._last_request_at: float = 0.0
@@ -177,13 +174,9 @@ class ResolvedMarketsClient:
 
                 # 401 / 403 / 404 — fail fast
                 if resp.status_code in (401, 403):
-                    raise PermissionError(
-                        f"ResolvedMarkets auth error ({resp.status_code}): {resp.text[:200]}"
-                    )
+                    raise PermissionError(f"ResolvedMarkets auth error ({resp.status_code}): {resp.text[:200]}")
                 if resp.status_code == 404:
-                    raise FileNotFoundError(
-                        f"ResolvedMarkets 404 on {method} {path}: {resp.text[:200]}"
-                    )
+                    raise FileNotFoundError(f"ResolvedMarkets 404 on {method} {path}: {resp.text[:200]}")
 
                 resp.raise_for_status()
 
@@ -209,9 +202,7 @@ class ResolvedMarketsClient:
                     continue
                 raise
 
-        raise RuntimeError(
-            f"ResolvedMarkets {method} {path} failed after {self.cfg.max_retries + 1} attempts"
-        )
+        raise RuntimeError(f"ResolvedMarkets {method} {path} failed after {self.cfg.max_retries + 1} attempts")
 
     # -- Public endpoints ------------------------------------------------
 
@@ -356,9 +347,7 @@ class ResolvedMarketsClient:
             params["end"] = end
         if cursor:
             params["cursor"] = cursor
-        data = self._request(
-            "GET", f"/v1/markets/{condition_id}/snapshots", params=params
-        )
+        data = self._request("GET", f"/v1/markets/{condition_id}/snapshots", params=params)
         if isinstance(data, dict):
             records = data.get("snapshots", data.get("data", []))
             next_cursor = data.get("next_cursor", "") or ""
@@ -414,9 +403,7 @@ class ResolvedMarketsClient:
         df = pd.concat(frames, ignore_index=True)
         # Cache to disk for offline replay
         os.makedirs(self.cfg.cache_dir, exist_ok=True)
-        cache_path = os.path.join(
-            self.cfg.cache_dir, f"{condition_id}_{interval}.parquet"
-        )
+        cache_path = os.path.join(self.cfg.cache_dir, f"{condition_id}_{interval}.parquet")
         try:
             df.to_parquet(cache_path, index=False)
             logger.info("Cached %d snapshots to %s", len(df), cache_path)
@@ -492,9 +479,7 @@ def client_from_env() -> ResolvedMarketsClient:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s  %(name)-25s  %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-25s  %(message)s")
     client = client_from_env()
 
     print("\n=== Health check ===")

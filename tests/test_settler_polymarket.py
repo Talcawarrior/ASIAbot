@@ -144,9 +144,7 @@ class TestSettlementPolymarket:
 
     def test_resolved_yes(self):
         """Gamma returns YES -> YES bet wins, NO bet loses."""
-        market, bet_yes, bet_no, pf = _setup_market_with_bets(
-            yes_price=0.35, stake=10.0
-        )
+        market, bet_yes, bet_no, pf = _setup_market_with_bets(yes_price=0.35, stake=10.0)
         try:
             with patch("executor.settler.requests.get") as mock_get:
                 mock_get.return_value = _gamma_mock(
@@ -161,16 +159,8 @@ class TestSettlementPolymarket:
                 assert results["pending"] == 0
 
             with get_session() as session:
-                b_yes = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "YES")
-                    .first()
-                )
-                b_no = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "NO")
-                    .first()
-                )
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
 
                 # YES bet won
                 assert b_yes.status == "won"
@@ -186,11 +176,7 @@ class TestSettlementPolymarket:
                 # Lost bet: PnL = -(stake + entry_fee). entry_fee=0 for test bets.
                 assert b_no.realized_pnl == -10.0
 
-                mkt = (
-                    session.query(WeatherMarket)
-                    .filter(WeatherMarket.id == "test-poly-001")
-                    .first()
-                )
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "settled_win"
                 rd = json.loads(mkt.raw_data)
                 assert rd["source"] == "polymarket"
@@ -208,9 +194,7 @@ class TestSettlementPolymarket:
 
     def test_resolved_no(self):
         """Gamma returns NO -> NO bet wins, YES bet loses."""
-        market, bet_yes, bet_no, pf = _setup_market_with_bets(
-            yes_price=0.35, stake=10.0
-        )
+        market, bet_yes, bet_no, pf = _setup_market_with_bets(yes_price=0.35, stake=10.0)
         try:
             with patch("executor.settler.requests.get") as mock_get:
                 mock_get.return_value = _gamma_mock(
@@ -225,16 +209,8 @@ class TestSettlementPolymarket:
                 assert results["pending"] == 0
 
             with get_session() as session:
-                b_yes = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "YES")
-                    .first()
-                )
-                b_no = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "NO")
-                    .first()
-                )
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
 
                 assert b_yes.status == "lost"
                 assert b_yes.realized_pnl == -10.0  # -stake, entry_fee=0 for test bet
@@ -246,11 +222,7 @@ class TestSettlementPolymarket:
                 expected_pnl = round(expected_payout - 10.0, 2)
                 assert b_no.realized_pnl == expected_pnl
 
-                mkt = (
-                    session.query(WeatherMarket)
-                    .filter(WeatherMarket.id == "test-poly-001")
-                    .first()
-                )
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "settled_loss"
 
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
@@ -265,11 +237,7 @@ class TestSettlementPolymarket:
         try:
             # Capture pre-settlement state
             with get_session() as session:
-                mkt_before = (
-                    session.query(WeatherMarket)
-                    .filter(WeatherMarket.id == "test-poly-001")
-                    .first()
-                )
+                mkt_before = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt_before.status == "bet_placed"
 
             with patch("executor.settler.requests.get") as mock_get:
@@ -290,16 +258,10 @@ class TestSettlementPolymarket:
                 # Bet statuses unchanged
                 bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
-                    assert b.status in ("placed",), (
-                        f"Bet {b.id} status changed: {b.status}"
-                    )
+                    assert b.status in ("placed",), f"Bet {b.id} status changed: {b.status}"
 
                 # Market status unchanged
-                mkt = (
-                    session.query(WeatherMarket)
-                    .filter(WeatherMarket.id == "test-poly-001")
-                    .first()
-                )
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "bet_placed"
                 assert mkt.raw_data is None
 
@@ -351,20 +313,14 @@ class TestSettlementPolymarket:
                 bets = session.query(Bet).filter(Bet.market_id == "test-poly-001").all()
                 for b in bets:
                     assert b.status == "placed"
-                mkt = (
-                    session.query(WeatherMarket)
-                    .filter(WeatherMarket.id == "test-poly-001")
-                    .first()
-                )
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-poly-001").first()
                 assert mkt.status == "bet_placed"
         finally:
             _clean()
 
     def test_pnl_cash_reconciliation(self):
         """1 win + 1 loss: cash reflects win payout-fee only; total_realized_pnl sums both."""
-        market, bet_yes, bet_no, pf = _setup_market_with_bets(
-            yes_price=0.35, stake=10.0
-        )
+        market, bet_yes, bet_no, pf = _setup_market_with_bets(yes_price=0.35, stake=10.0)
         try:
             with patch("executor.settler.requests.get") as mock_get:
                 mock_get.return_value = _gamma_mock(
@@ -376,16 +332,8 @@ class TestSettlementPolymarket:
                 engine.settle_all()
 
             with get_session() as session:
-                b_yes = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "YES")
-                    .first()
-                )
-                b_no = (
-                    session.query(Bet)
-                    .filter(Bet.market_id == "test-poly-001", Bet.side == "NO")
-                    .first()
-                )
+                b_yes = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "YES").first()
+                b_no = session.query(Bet).filter(Bet.market_id == "test-poly-001", Bet.side == "NO").first()
                 pf_db = session.query(Portfolio).filter(Portfolio.id == 1).first()
 
                 # Win PnL (entry_fee=0 for test bets, settlement fee=0 mathematically)
@@ -397,14 +345,12 @@ class TestSettlementPolymarket:
 
                 # Cash should equal initial + FULL payout — fee at settlement is 0
                 # (mathematical zero at p→1). Entry fee was not set for test bets.
-                assert pf_db.cash_balance == round(1000.0 + payout, 2), (
-                    f"cash={pf_db.cash_balance} != {round(1000.0 + payout, 2)}"
-                )
+                assert pf_db.cash_balance == round(1000.0 + payout, 2), f"cash={pf_db.cash_balance} != {round(1000.0 + payout, 2)}"
 
                 expected_total = win_pnl + loss_pnl
-                assert pf_db.total_realized_pnl == pytest.approx(
-                    expected_total, rel=1e-3
-                ), f"total_realized_pnl={pf_db.total_realized_pnl} != {expected_total}"
+                assert pf_db.total_realized_pnl == pytest.approx(expected_total, rel=1e-3), (
+                    f"total_realized_pnl={pf_db.total_realized_pnl} != {expected_total}"
+                )
 
                 assert b_yes.realized_pnl == win_pnl
                 assert b_no.realized_pnl == loss_pnl

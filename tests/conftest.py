@@ -17,6 +17,7 @@ import pytest
 
 # ── Auto-backup before every test run ────────────────────────────────────
 
+
 def _pre_test_backup():
     try:
         db_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -26,10 +27,12 @@ def _pre_test_backup():
             os.makedirs(backup_dir, exist_ok=True)
             from datetime import datetime
             import shutil
+
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             shutil.copy2(db_path, os.path.join(backup_dir, f"bot_pre_test_{ts}.db"))
     except Exception:
         pass
+
 
 _pre_test_backup()
 
@@ -66,6 +69,7 @@ def _protect_production_db_session():
 
     # Initialize the temp DB
     from database.db import init_db
+
     init_db()
 
     yield
@@ -96,11 +100,13 @@ def _protect_production_db_function():
     # Just ensure database.db module uses the current config
     if "database.db" in sys.modules:
         import database.db as db_mod
+
         # Rebuild engine if it points to production
-        if hasattr(db_mod, 'engine') and str(db_mod.engine.url).endswith('bot.db'):
+        if hasattr(db_mod, "engine") and str(db_mod.engine.url).endswith("bot.db"):
             sys.modules.pop("database.db", None)
             sys.modules.pop("database.models", None)
             from database.db import init_db
+
             init_db()
 
     yield

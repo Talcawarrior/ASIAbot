@@ -30,8 +30,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from asi_engine.asi_evolve import run_asi_evolve_daily
-from asi_engine.karpathy_weekly import run_karpathy_weekly
+from asi_engine.karpathy_weekly import MAX_DD_LIMIT_PCT, run_karpathy_weekly
 from asi_engine.sia_hourly import run_sia_hourly
+from config.settings import MAX_BET_PCT_CEILING
 from utils.weights_store import save_strategy_params as _save_strategy_params
 from utils.weights_store import save_weights
 
@@ -63,9 +64,22 @@ def _load_json(path: str) -> dict[str, Any] | None:
         return None
 
 
-def find_global_best() -> tuple[
-    dict[str, Any] | None, dict[str, float] | None, str | None
-]:
+def _dd_ok(stats: dict[str, float], source: str) -> bool:
+    """Reject a candidate whose simulated max drawdown exceeds the hard limit.
+    Candidates without a max_dd_pct (e.g. SIA harness-only patches) pass."""
+    dd = stats.get("max_dd_pct", 0.0)
+    if dd > MAX_DD_LIMIT_PCT:
+        logger.warning(
+            "Skipping %s best — max_dd %.1f%% > %.1f%% limit",
+            source,
+            dd,
+            MAX_DD_LIMIT_PCT,
+        )
+        return False
+    return True
+
+
+def find_global_best() -> tuple[dict[str, Any] | None, dict[str, float] | None, str | None]:
     """Find the best hypothesis across all 3 layers.
 
     Returns (hypothesis_dict, stats_dict, source_layer_name).
@@ -78,44 +92,30 @@ def find_global_best() -> tuple[
     karpathy_best = _load_json(os.path.join(DATA_DIR, "karpathy_best.json"))
     if karpathy_best and "stats" in karpathy_best:
         stats = karpathy_best["stats"]
-        if stats.get("total_trades", 0) >= 5:
-            hyp = {
-                k: v
-                for k, v in karpathy_best.items()
-                if k != "stats" and k != "saved_at"
-            }
+        if stats.get("total_trades", 0) >= 5 and _dd_ok(stats, "karpathy_weekly"):
+            hyp = {k: v for k, v in karpathy_best.items() if k != "stats" and k != "saved_at"}
             candidates.append((hyp, stats, "karpathy_weekly"))
 
     asi_evolve_best = _load_json(os.path.join(DATA_DIR, "asi_evolve_best.json"))
     if asi_evolve_best and "stats" in asi_evolve_best:
         stats = asi_evolve_best["stats"]
-        if stats.get("total_trades", 0) >= 5:
-            hyp = {
-                k: v
-                for k, v in asi_evolve_best.items()
-                if k != "stats" and k != "saved_at"
-            }
+        if stats.get("total_trades", 0) >= 5 and _dd_ok(stats, "asi_evolve_daily"):
+            hyp = {k: v for k, v in asi_evolve_best.items() if k != "stats" and k != "saved_at"}
             candidates.append((hyp, stats, "asi_evolve_daily"))
 
     sia_hourly_best = _load_json(os.path.join(DATA_DIR, "sia_hourly_best.json"))
     if sia_hourly_best and "stats" in sia_hourly_best:
         stats = sia_hourly_best["stats"]
         # SIA's harness patches don't simulate trades — accept based on Brier alone
-        if "brier_score" in stats:
-            hyp = {
-                k: v
-                for k, v in sia_hourly_best.items()
-                if k != "stats" and k != "saved_at"
-            }
+        if "brier_score" in stats and _dd_ok(stats, "sia_hourly"):
+            hyp = {k: v for k, v in sia_hourly_best.items() if k != "stats" and k != "saved_at"}
             candidates.append((hyp, stats, "sia_hourly"))
 
     if not candidates:
         return None, None, None
 
     # Pick by Sharpe (desc), then Brier (asc)
-    candidates.sort(
-        key=lambda c: (-c[1].get("sharpe", -1e9), c[1].get("brier_score", 1.0))
-    )
+    candidates.sort(key=lambda c: (-c[1].get("sharpe", -1e9), c[1].get("brier_score", 1.0)))
     return candidates[0]
 
 
@@ -157,9 +157,18 @@ def deploy_best_to_live() -> dict[str, Any]:
         "min_edge": hyp.get("min_edge", 0.05),
         "kelly_fraction": hyp.get("kelly_fraction", 0.15),
     }
+    # Deploy the evolved per-bet cap, but clamp it to MAX_BET_PCT_CEILING so a
+    # runaway optimizer can never push real-money bet sizing past the hard limit.
+    # The live trader applies this (also clamped) via
+    # settings.apply_persisted_strategy_params → bot_config.strategy.max_bet_pct,
+    # keeping calculator.py / bet_placer.py / utils/kelly.py consistent.
+    evolved_max_bet = hyp.get("max_bet_pct")
+    if evolved_max_bet is not None:
+        try:
+            strategy_params["max_bet_pct"] = min(float(evolved_max_bet), MAX_BET_PCT_CEILING)
+        except (TypeError, ValueError):
+            pass
     # Preserve any extra keys the live trader reads from the existing file.
-    # NOTE: max_bet_pct is EXCLUDED — it comes from Config.MAX_BET_PCT (.env)
-    # and should never be overridden by SIA, as it controls the hard per-bet cap.
     existing = _load_json(LIVE_STRATEGY_PATH) or {}
     for k in ("min_entry_price", "inefficiency_min"):
         if k in existing:
@@ -240,9 +249,7 @@ def run_karpathy_layer(rounds: int = 6, use_llm: bool = False) -> dict[str, Any]
     return summary
 
 
-def run_asi_evolve_layer(
-    n_candidates: int = 20, use_llm: bool = False
-) -> dict[str, Any]:
+def run_asi_evolve_layer(n_candidates: int = 20, use_llm: bool = False) -> dict[str, Any]:
     """Run Layer 2 (ASI-Evolve daily) + auto-deploy."""
     logger.info("=== Layer 2: ASI-Evolve daily ===")
     try:
@@ -298,9 +305,7 @@ def run_full_cycle(
     start = datetime.now(UTC)
 
     k_summary = run_karpathy_layer(rounds=karpathy_rounds, use_llm=use_llm)
-    a_summary = run_asi_evolve_layer(
-        n_candidates=asi_evolve_candidates, use_llm=use_llm
-    )
+    a_summary = run_asi_evolve_layer(n_candidates=asi_evolve_candidates, use_llm=use_llm)
     s_summary = run_sia_layer(use_llm=use_llm)
 
     # Final deploy picks the global best across all 3 layers
@@ -378,9 +383,7 @@ if __name__ == "__main__":
         help="Which command to run",
     )
     parser.add_argument("--rounds", type=int, default=6, help="Karpathy rounds")
-    parser.add_argument(
-        "--candidates", type=int, default=20, help="ASI-Evolve candidates"
-    )
+    parser.add_argument("--candidates", type=int, default=20, help="ASI-Evolve candidates")
     parser.add_argument("--llm", action="store_true", help="Use LLM where available")
     args = parser.parse_args()
 

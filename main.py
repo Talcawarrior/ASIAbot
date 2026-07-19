@@ -1,4 +1,4 @@
-﻿"""asiabot entry point â€” CLI and bot launcher.
+"""asiabot entry point â€” CLI and bot launcher.
 
 Thin wrapper that imports the FastAPI app, BotState, and bot loops
 from their dedicated modules:
@@ -127,6 +127,7 @@ def run_cli():
     # Bot baÅŸlamadan Ã¶nce DB backup al
     try:
         from db_backup import create_backup
+
         create_backup("startup")
     except Exception:
         pass
@@ -225,12 +226,14 @@ def run_cli():
         # Silmeden Ã–NCE backup al
         try:
             from db_backup import create_backup
+
             create_backup("pre_reset_cli")
         except Exception:
             pass
         # Bets ve portfolio'yu parquet'a arÅŸivle
         try:
             from database.db_cleanup import archive_bets_and_portfolio
+
             archive_bets_and_portfolio()
         except Exception:
             pass
@@ -247,4 +250,3 @@ def run_cli():
 
 if __name__ == "__main__":
     run_cli()
-

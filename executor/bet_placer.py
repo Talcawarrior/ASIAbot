@@ -45,8 +45,7 @@ class BetPlacer:
         if Config.DRY_RUN:
             self.ready = False
             logger.info(
-                "DRY_RUN=true is enforced. BetPlacer will ONLY emit paper/simulated "
-                "orders; the live Polymarket CLOB client is not initialized."
+                "DRY_RUN=true is enforced. BetPlacer will ONLY emit paper/simulated orders; the live Polymarket CLOB client is not initialized."
             )
         else:
             self._init_polymarket_client()
@@ -70,9 +69,7 @@ class BetPlacer:
             )
             self.client.set_api_creds(self.client.create_or_derive_api_creds())
             self.ready = True
-            logger.warning(
-                "LIVE TRADING ARMED -- DRY_RUN=false and credentials present. Real orders will be sent to Polymarket."
-            )
+            logger.warning("LIVE TRADING ARMED -- DRY_RUN=false and credentials present. Real orders will be sent to Polymarket.")
         except Exception as e:
             logger.warning(f"Polymarket client kurulamadi (PAPER TRADE ACTIVE): {e}")
             self.ready = False
@@ -183,9 +180,7 @@ class BetPlacer:
             # Risk caps below still apply on top.
             flat_bet = float(getattr(self.risk_manager.config, "FLAT_BET_USD", 0.0) or 0.0)
             if flat_bet > 0.0:
-                logger.info(
-                    f"Flat-bet override active: ${flat_bet:.2f} per bet (was ${proposed_amount:.2f} from Kelly)."
-                )
+                logger.info(f"Flat-bet override active: ${flat_bet:.2f} per bet (was ${proposed_amount:.2f} from Kelly).")
                 proposed_amount = flat_bet
                 d.set_param("flat_bet_override", True)
 
@@ -197,21 +192,14 @@ class BetPlacer:
                 float(self.risk_manager.config.MAX_BET_PCT),
             )
             if proposed_amount > max_bet:
-                logger.warning(
-                    f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} "
-                    f"exceeds per-bet max ${max_bet:.2f} — clamping."
-                )
+                logger.warning(f"Risk cap: Market {market.id} amount ${proposed_amount:.2f} exceeds per-bet max ${max_bet:.2f} — clamping.")
                 proposed_amount = max_bet
             d.set_param("max_bet_cap", max_bet)
 
             # Cap 2: total exposure cap (TOTAL_EXPOSURE_PCT * conservative portfolio).
             # check_exposure_cap now dynamically computes conservative value
             # (cash + open_exposure) from DB, so no stale portfolio_value.
-            current_exposure = (
-                session.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                .filter(Bet.status.in_(self._OPEN_STATUSES))
-                .scalar()
-            ) or 0.0
+            current_exposure = (session.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(self._OPEN_STATUSES)).scalar()) or 0.0
             current_exposure = float(current_exposure)
             exposure_ok = self.risk_manager.check_exposure_cap(current_exposure, proposed_amount)
             conservative_value = self.risk_manager._conservative_portfolio_value()
@@ -267,11 +255,7 @@ class BetPlacer:
             city_ok = int(city_open_count) < city_cap
             d.check("city_cap", city_ok, city=market.city, open_count=int(city_open_count), max_city=city_cap)
             if not city_ok:
-                logger.warning(
-                    f"Risk cap: Market {market.id} rejected — city cap "
-                    f"({city_open_count}/{city_cap}) "
-                    f"reached for {market.city}."
-                )
+                logger.warning(f"Risk cap: Market {market.id} rejected — city cap ({city_open_count}/{city_cap}) reached for {market.city}.")
                 rejected = Bet(
                     market_id=analysis.market_id,
                     analysis_id=analysis_id,
@@ -309,8 +293,7 @@ class BetPlacer:
             # Formula from utils/formulas.py → bet_shares().
             shares = bet_shares(proposed_amount, fill_price)
             logger.info(
-                f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} "
-                f"(slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
+                f"Slippage adjustment: raw={raw_fill:.4f} → fill={fill_price:.4f} (slip={slip_est.slippage_pct:.2%}, model={slip_est.model_used})"
             )
             d.set_param("slippage_pct", slip_est.slippage_pct)
             d.set_param("slippage_model", slip_est.model_used)
@@ -421,9 +404,7 @@ class BetPlacer:
                     bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     market.status = "bet_placed"
-                    logger.info(
-                        f"LIVE BET OPENED: {market.id} | {analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}"
-                    )
+                    logger.info(f"LIVE BET OPENED: {market.id} | {analysis.recommended_side} ${bet.amount:.2f} @ {bet.price}")
                 except Exception as e:
                     bet.status = "failed"
                     bet.error_message = str(e)
@@ -437,11 +418,7 @@ class BetPlacer:
                 bet.status = "placed"
                 bet.placed_at = datetime.now(timezone.utc).replace(tzinfo=None)
                 market.status = "bet_placed"
-                logger.info(
-                    f"PAPER BET OPENED: {market.id} | "
-                    f"{analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} "
-                    f"({shares:.2f} shares)"
-                )
+                logger.info(f"PAPER BET OPENED: {market.id} | {analysis.recommended_side} ${bet.amount:.2f} @ {bet.price} ({shares:.2f} shares)")
 
             # Deduct stake from portfolio cash — via central accounting API.
             # Ladder: L1 is filled immediately; L2/L3 stay pending.
@@ -474,11 +451,7 @@ class BetPlacer:
             portfolio = session.query(Portfolio).filter(Portfolio.id == 1).first()
             if portfolio:
                 # Include unrealized PnL from other open bets in current_value
-                open_exposure = (
-                    session.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                    .filter(Bet.status.in_(OPEN_BET_STATUSES))
-                    .scalar()
-                ) or 0.0
+                open_exposure = (session.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()) or 0.0
                 portfolio.current_value = portfolio_total_value(portfolio.cash_balance or 0.0, float(open_exposure))
                 portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
             session.add(bet)
@@ -510,6 +483,13 @@ class BetPlacer:
         - Düşük edge + yakın vade = en düşük öncelik
         - Exposure cap dolana kadar en yüksek öncelikli bet'ler açılır
         """
+        from utils.adaptive_sizing import get_kelly_fraction
+
+        active_fraction = get_kelly_fraction()
+        logger.info(
+            "Active Kelly multiplier (adaptive): %.3f (applied to all pending bets)",
+            active_fraction,
+        )
         placed = 0
         markets_with_bets: set[str] = set()
 
@@ -563,7 +543,7 @@ class BetPlacer:
                 if target_date:
                     # Strip tzinfo from target_date if present to avoid
                     # "can't subtract offset-naive and offset-aware datetimes"
-                    td = target_date.replace(tzinfo=None) if getattr(target_date, 'tzinfo', None) else target_date
+                    td = target_date.replace(tzinfo=None) if getattr(target_date, "tzinfo", None) else target_date
                     days_left = max(0.0, (td - now).total_seconds() / 86400.0)
                 else:
                     days_left = 0.0
@@ -595,12 +575,16 @@ class BetPlacer:
                     markets_with_bets.add(mkt_id)
                     logger.info(
                         "Bet placed (priority=%.4f edge×days): analysis=%d market=%s",
-                        score, aid, mkt_id,
+                        score,
+                        aid,
+                        mkt_id,
                     )
                 else:
                     logger.debug(
                         "Bet rejected (priority=%.4f): analysis=%d market=%s",
-                        score, aid, mkt_id,
+                        score,
+                        aid,
+                        mkt_id,
                     )
             except Exception as e:
                 logger.error("Bet hatasi (analysis %d, priority=%.4f): %s", aid, score, e)

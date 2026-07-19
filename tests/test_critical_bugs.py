@@ -32,9 +32,7 @@ class TestTimezoneSafety:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # fast_mode_until de naive olmalı
-        fast_mode_until = (
-            datetime.now(timezone.utc) + timedelta(minutes=30)
-        ).replace(tzinfo=None)
+        fast_mode_until = (datetime.now(timezone.utc) + timedelta(minutes=30)).replace(tzinfo=None)
 
         # Bu karşılaştırma hatasız çalışmalı
         assert now < fast_mode_until or now > fast_mode_until
@@ -250,7 +248,8 @@ class TestDBProtection:
         """Test çalışırken production DB değişmemeli."""
         prod_path = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "data", "bot.db",
+            "data",
+            "bot.db",
         )
         if os.path.exists(prod_path):
             before_size = os.path.getsize(prod_path)
@@ -262,15 +261,14 @@ class TestDBProtection:
                 session.query(Bet).count()
             # DB boyutu değişmemeli
             after_size = os.path.getsize(prod_path)
-            assert before_size == after_size, (
-                f"Production DB size changed: {before_size} -> {after_size}"
-            )
+            assert before_size == after_size, f"Production DB size changed: {before_size} -> {after_size}"
 
     def test_backup_exists(self):
         """data/backups/ en az 1 backup dosyası içermeli."""
         backup_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)),
-            "data", "backups",
+            "data",
+            "backups",
         )
         if os.path.exists(backup_dir):
             backups = [f for f in os.listdir(backup_dir) if f.endswith(".db")]
@@ -374,9 +372,7 @@ class TestFeeRateConsistency:
 
         source = inspect.getsource(sl.adjust_edge_for_costs)
         # Hardcoded FEE_PCT kullanmamalı (artık bot_config'den okunmalı)
-        assert "bot_config" in source or "current_fee_rate" in source, (
-            "adjust_edge_for_costs should use bot_config.strategy.current_fee_rate"
-        )
+        assert "bot_config" in source or "current_fee_rate" in source, "adjust_edge_for_costs should use bot_config.strategy.current_fee_rate"
 
 
 # ── 8. API ENDPOINT SAĞLAMLIĞI ────────────────────────────────────────

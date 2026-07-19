@@ -6,9 +6,7 @@ from scrapers.polymarket import PolymarketScraper
 
 def test_all_icaos_have_coords():
     """Every ICAO in CITY_ICAO_MAP must have an entry in ICAO_COORDS."""
-    missing = [
-        code for code in Config.CITY_ICAO_MAP.values() if code not in Config.ICAO_COORDS
-    ]
+    missing = [code for code in Config.CITY_ICAO_MAP.values() if code not in Config.ICAO_COORDS]
     assert not missing, f"ICAOs missing ICAO_COORDS: {missing}"
 
 
@@ -16,9 +14,7 @@ def test_no_secondary_coord_dicts():
     """No other module should define its own coords dict."""
     from scrapers.meteo import MeteoFetcher
 
-    assert not hasattr(MeteoFetcher, "CITY_COORDS"), (
-        "MeteoFetcher still has CITY_COORDS"
-    )
+    assert not hasattr(MeteoFetcher, "CITY_COORDS"), "MeteoFetcher still has CITY_COORDS"
 
     import inspect
 

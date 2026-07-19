@@ -187,13 +187,9 @@ def run_update_prices(session=None):
         portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
         if portfolio:
             realized_pnl_total = (
-                sess.query(func.coalesce(func.sum(Bet.pnl), 0.0))
-                .filter(Bet.status.in_(("won", "lost", "settled", "closed_early")))
-                .scalar()
+                sess.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(("won", "lost", "settled", "closed_early"))).scalar()
             ) or 0.0
-            open_exposure = (
-                sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
-            ) or 0.0
+            open_exposure = (sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()) or 0.0
             # Conservative: cash + money locked in bets
             if portfolio.cash_balance is not None:
                 cash = float(portfolio.cash_balance)
@@ -214,6 +210,13 @@ def run_settle():
 
     engine = SettlementEngine()
     results = engine.settle_all()
+    # Adaptive Kelly: retrain sizing when enough new settled bets accumulate.
+    try:
+        from utils.adaptive_sizing import maybe_retrain_sizing
+
+        maybe_retrain_sizing()
+    except Exception as e:  # never let sizing block settlement
+        logger.warning("maybe_retrain_sizing skipped: %s", e)
     return f"Sonuçlandırılan -> Kazanan:{results['win']}, Kaybeden:{results['loss']}, Bekleyen:{results['pending']}"
 
 
@@ -292,14 +295,8 @@ def _partial_close_early(bet, sess, reason, current_price):
 
     portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
     if portfolio:
-        open_exposure = (
-            sess.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-            .scalar()
-        ) or 0.0
-        portfolio.total_value = portfolio_total_value(
-            float(portfolio.cash_balance or 0.0), float(open_exposure)
-        )
+        open_exposure = (sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()) or 0.0
+        portfolio.total_value = portfolio_total_value(float(portfolio.cash_balance or 0.0), float(open_exposure))
         portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
         portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
         portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -309,7 +306,13 @@ def _partial_close_early(bet, sess, reason, current_price):
         sess.add(portfolio)
     logger.info(
         "Partial TP bet=%s market=%s sold %.2f/%.2f shares (%.1f%%) realized=$%.2f fee=$%.2f (stays open)",
-        bet.id, bet.market_id, sold_shares, original_shares, fraction_to_sell * 100, realized, fee,
+        bet.id,
+        bet.market_id,
+        sold_shares,
+        original_shares,
+        fraction_to_sell * 100,
+        realized,
+        fee,
     )
     return True
 
@@ -354,12 +357,7 @@ def run_risk_management(session=None):
 
             # Check model reversal if analysis exists
             if not should_exit:
-                analysis = (
-                    sess.query(Analysis)
-                    .filter(Analysis.market_id == bet.market_id)
-                    .order_by(Analysis.analyzed_at.desc())
-                    .first()
-                )
+                analysis = sess.query(Analysis).filter(Analysis.market_id == bet.market_id).order_by(Analysis.analyzed_at.desc()).first()
                 rev_exit, rev_reason = rm.check_model_reversal(bet, analysis)
                 if rev_exit:
                     should_exit, reason = True, rev_reason
@@ -388,9 +386,7 @@ def run_risk_management(session=None):
                                 ladder = bet.ladder_data
                             if isinstance(ladder, list):
                                 filled_shares = sum(
-                                    float(r.get("shares", r.get("size", r.get("amount", 0))))
-                                    for r in ladder
-                                    if r.get("status") == "filled"
+                                    float(r.get("shares", r.get("size", r.get("amount", 0)))) for r in ladder if r.get("status") == "filled"
                                 )
                                 if filled_shares > 0:
                                     exit_shares = filled_shares
@@ -421,13 +417,9 @@ def run_risk_management(session=None):
                     portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
                     if portfolio:
                         open_exposure = (
-                            sess.query(func.coalesce(func.sum(Bet.amount), 0.0))
-                            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-                            .scalar()
+                            sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
                         ) or 0.0
-                        portfolio.total_value = portfolio_total_value(
-                            float(portfolio.cash_balance or 0.0), float(open_exposure)
-                        )
+                        portfolio.total_value = portfolio_total_value(float(portfolio.cash_balance or 0.0), float(open_exposure))
                         portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
                         portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
                         portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)

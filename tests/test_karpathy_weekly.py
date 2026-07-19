@@ -75,6 +75,7 @@ def test_evaluate_hypothesis_oos_returns_expected_keys():
         "brier_score",
         "total_pnl",
         "total_staked",
+        "max_dd_pct",
     }
     assert set(stats.keys()) == expected_keys
     assert isinstance(stats["total_trades"], int)

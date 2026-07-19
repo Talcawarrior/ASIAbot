@@ -1,4 +1,4 @@
-﻿"""asiabot Test Suite - Vibe Coding Test Framework
+"""asiabot Test Suite - Vibe Coding Test Framework
 
 Test katmanlarÄ±:
 1. Regression tests (en kritik)
@@ -14,4 +14,3 @@ KullanÄ±m:
     pytest tests/test_regression.py -v
     pytest tests/test_property_based.py -v
 """
-

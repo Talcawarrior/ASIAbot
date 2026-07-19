@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import time as _time
 from datetime import datetime, timezone
 
 import aiohttp
@@ -14,6 +15,7 @@ from database.models import Analysis, Portfolio, WeatherForecast, WeatherMarket
 from utils.price_sanity import is_valid_binary_price
 from utils.probability import compute_effective_min_edge
 from utils.probability import estimate_probability as _estimate_probability
+from utils.adaptive_sizing import get_kelly_fraction
 from utils.formulas import max_bet_cap
 from utils.kelly import kelly_fraction as _kelly_fraction
 from utils.slippage import (
@@ -25,7 +27,6 @@ from utils.slippage import (
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
 # Global rate-limit flag: ilk 429'te 5dk boyunca tüm Open-Meteo isteklerini durdur
-import time as _time
 _RATE_LIMITED_UNTIL = 0.0  # monotonic timestamp
 
 
@@ -88,9 +89,7 @@ class Calculator:
 
             # Price sanity check - skip invalid binary markets
             if not is_valid_binary_price(market.yes_price or 0, market.no_price or 0):
-                logger.debug(
-                    f"Market {market_id}: invalid prices yes={market.yes_price}, no={market.no_price}, skipping"
-                )
+                logger.debug(f"Market {market_id}: invalid prices yes={market.yes_price}, no={market.no_price}, skipping")
                 return None
 
             # Skip already-resolved markets (lookahead bias guard)
@@ -104,9 +103,7 @@ class Calculator:
             # asymmetric-payoff bleed where a single low-price loss wipes
             # out dozens of small wins).
             market_price = market.yes_price or 0.5
-            min_price = getattr(bot_config.strategy, "min_entry_price", None) or getattr(
-                bot_config, "MIN_ENTRY_PRICE", 0.01
-            )
+            min_price = getattr(bot_config.strategy, "min_entry_price", None) or getattr(bot_config, "MIN_ENTRY_PRICE", 0.01)
             if market_price < min_price:
                 logger.debug(f"Market {market_id}: price {market_price:.4f} < min_entry_price {min_price}, skipping")
                 return None
@@ -144,9 +141,7 @@ class Calculator:
             forecast_values = list(latest_by_source.values())
 
             if len(forecast_values) < bot_config.strategy.min_sources:
-                logger.info(
-                    f"Market {market_id}: Yetersiz kaynak ({len(forecast_values)}/{bot_config.strategy.min_sources})"
-                )
+                logger.info(f"Market {market_id}: Yetersiz kaynak ({len(forecast_values)}/{bot_config.strategy.min_sources})")
 
             # Compute weighted std early — needed for both consensus and per-model probs
             total_weight = sum(source_weights.get(s, 0.0) for s in latest_by_source)
@@ -155,10 +150,7 @@ class Calculator:
                     # Weighted average
                     avg = sum(latest_by_source[s] * source_weights.get(s, 0.0) for s in latest_by_source) / total_weight
                     # Weighted std
-                    std_val = math.sqrt(
-                        sum(source_weights.get(s, 0.0) * (latest_by_source[s] - avg) ** 2 for s in latest_by_source)
-                        / total_weight
-                    )
+                    std_val = math.sqrt(sum(source_weights.get(s, 0.0) * (latest_by_source[s] - avg) ** 2 for s in latest_by_source) / total_weight)
                 else:
                     # Fallback to simple average if no weights
                     avg = sum(forecast_values) / len(forecast_values)
@@ -216,7 +208,7 @@ class Calculator:
 
             if raw_edge > 0:
                 # YES tarafı
-                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
+                kelly_frac = self.kelly_criterion(estimated_prob, market_implied, get_kelly_fraction())
                 recommended_side = "YES"
             else:
                 # NO tarafı
@@ -225,7 +217,7 @@ class Calculator:
                 no_edge = no_prob - no_implied
 
                 if no_edge > 0:
-                    kelly_frac = self.kelly_criterion(no_prob, no_implied, bot_config.strategy.kelly_fraction)
+                    kelly_frac = self.kelly_criterion(no_prob, no_implied, get_kelly_fraction())
                     recommended_side = "NO"
                     raw_edge = no_edge
                 else:
@@ -237,9 +229,7 @@ class Calculator:
             # This ensures the should_bet gate uses realistic post-cost
             # edge, not the raw theoretical edge that assumes perfect
             # fills at market price.
-            entry_price_for_cost = (
-                market_implied if recommended_side == "YES" else (market.no_price or (1 - market_implied))
-            )
+            entry_price_for_cost = market_implied if recommended_side == "YES" else (market.no_price or (1 - market_implied))
 
             # Extract condition_id from market.raw_data for orderbook slippage
             condition_id = None
@@ -257,11 +247,7 @@ class Calculator:
             bankroll = portfolio.total_value if portfolio and portfolio.total_value else 1000.0
             prelim_kelly = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
 
-            net_edge = (
-                adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly)
-                if recommended_side
-                else 0.0
-            )
+            net_edge = adjust_edge_for_costs(raw_edge, entry_price_for_cost, bet_amount_usd=prelim_kelly) if recommended_side else 0.0
             slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
             # Bet miktarı — gerçek portföyden oku (using net_edge now)
@@ -277,9 +263,7 @@ class Calculator:
             # `current_price` zaten likiditeyi yansıtır.
             # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
             # değerini 0 yaparak bunu bypass edebilir.
-            liquidity_ok = (
-                market.liquidity or 0
-            ) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
+            liquidity_ok = (market.liquidity or 0) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
             effective_min_edge = self._compute_effective_min_edge(market, std_val)
 
             # ── Karpathy-search inefficiency gate ─────────────────────────
@@ -314,9 +298,7 @@ class Calculator:
 
             reason_parts = []
             if net_edge < effective_min_edge:
-                reason_parts.append(
-                    f"Net edge düşük: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
-                )
+                reason_parts.append(f"Net edge düşük: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})")
             if not inefficiency_ok:
                 reason_parts.append(f"İnefficiency düşük: edge {net_edge:.2%} < {inefficiency_min:.2%}")
             if len(forecast_values) < bot_config.strategy.min_sources:
@@ -327,12 +309,7 @@ class Calculator:
                 reason_parts.append(f"Düşük likidite: ${market.liquidity}")
 
             if not reason_parts:
-                reason = (
-                    f"BET AC! Edge={net_edge:.2%} "
-                    f"(raw={raw_edge:.2%}), "
-                    f"Side={recommended_side}, "
-                    f"slip={slippage_est.model_used}"
-                )
+                reason = f"BET AC! Edge={net_edge:.2%} (raw={raw_edge:.2%}), Side={recommended_side}, slip={slippage_est.model_used}"
             else:
                 reason = "PASS: " + ", ".join(reason_parts)
 
@@ -453,7 +430,6 @@ class WeatherEngine:
                         if resp.status == 429:
                             # Retry with exponential backoff for 429 rate limits
                             max_retries = 3
-                            base_delay = 5.0
                             for attempt in range(1, max_retries + 1):
                                 try:
                                     async with aiohttp.ClientSession() as session:
@@ -468,14 +444,19 @@ class WeatherEngine:
                                                     delay = min(max(delay, 5.0), 60.0)
                                                     logger.warning(
                                                         "Ensemble 429 for (%.4f, %.4f) attempt %d/%d - retrying in %.1fs",
-                                                        latitude, longitude, attempt, max_retries, delay
+                                                        latitude,
+                                                        longitude,
+                                                        attempt,
+                                                        max_retries,
+                                                        delay,
                                                     )
                                                     await asyncio.sleep(delay)
                                                     continue
                                                 else:
                                                     logger.error(
                                                         "Ensemble 429 for (%.4f, %.4f) - max retries exceeded",
-                                                        latitude, longitude
+                                                        latitude,
+                                                        longitude,
                                                     )
                                                     return None
                                             if resp.status != 200:
@@ -580,10 +561,7 @@ class WeatherEngine:
             if total_weight == 0:
                 return None
             weighted_mean = sum(self.model_weights.get(m, 0.0) * t for m, t in model_temps.items()) / total_weight
-            weighted_var = (
-                sum(self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps.items())
-                / total_weight
-            )
+            weighted_var = sum(self.model_weights.get(m, 0.0) * (t - weighted_mean) ** 2 for m, t in model_temps.items()) / total_weight
             weighted_std = max(weighted_var**0.5, 0.5)
 
             if db_session is not None and market_ids:

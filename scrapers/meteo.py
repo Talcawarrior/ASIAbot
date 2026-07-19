@@ -4,6 +4,7 @@ import asyncio
 import logging
 import threading
 import time
+import time as _time
 from datetime import UTC, datetime
 
 import requests
@@ -61,7 +62,6 @@ _LAST_CALL_AT: dict[str, float] = {}
 _THROTTLE_LOCK = threading.Lock()
 
 # Global rate-limit flag — 429'da tüm API isteklerini durdur
-import time as _time
 _RATE_LIMITED_UNTIL = 0.0  # monotonic timestamp
 
 
@@ -95,9 +95,7 @@ class MeteoFetcher:
             await client.aclose()
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_open_meteo(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict | None:
+    def _fetch_open_meteo(self, lat: float, lon: float, target_date: str) -> dict | None:
         global _RATE_LIMITED_UNTIL
         """Open-Meteo API (Ã¼cretsiz, key gerekmez).
 
@@ -156,9 +154,7 @@ class MeteoFetcher:
         return None
 
     @retry(max_attempts=3, delay=3, exceptions=(requests.RequestException,))
-    def _fetch_weatherapi(
-        self, lat: float, lon: float, target_date: str
-    ) -> dict | None:
+    def _fetch_weatherapi(self, lat: float, lon: float, target_date: str) -> dict | None:
         """WeatherAPI.com."""
         if not bot_config.meteo.weatherapi_key:
             return None
@@ -198,9 +194,7 @@ class MeteoFetcher:
         _cache_set(cache_key, None)
         return None
 
-    def fetch_for_markets(
-        self, market_ids: list[str], city: str, target_date: datetime, metric: str
-    ) -> int:
+    def fetch_for_markets(self, market_ids: list[str], city: str, target_date: datetime, metric: str) -> int:
         """Fetch weather data for a group of markets sharing the same city/date/metric.
 
         Coordinate resolution: city name → CITY_ICAO_MAP → ICAO_COORDS.
@@ -247,10 +241,7 @@ class MeteoFetcher:
                             session.add(forecast)
                         session.commit()
                     total_saved += len(market_ids)
-                    logger.info(
-                        f"[{source_name}] Persisted for {len(market_ids)} markets: "
-                        f"{city} {date_str} {metric}={predicted_value}"
-                    )
+                    logger.info(f"[{source_name}] Persisted for {len(market_ids)} markets: {city} {date_str} {metric}={predicted_value}")
             except Exception as e:
                 logger.error(f"[{source_name}] group fetch error: {e}")
                 continue
@@ -358,7 +349,10 @@ class MeteoFetcher:
                             else:
                                 # Son çare: tek model ile dene (8 model degil)
                                 count = self.fetch_for_markets(
-                                    mids[:3], city, target_date, metric  # max 3 market
+                                    mids[:3],
+                                    city,
+                                    target_date,
+                                    metric,  # max 3 market
                                 )
                                 total += count
 
@@ -370,9 +364,7 @@ class MeteoFetcher:
 
         return total
 
-    def fetch_for_market(
-        self, market_id: str, city: str, target_date: datetime, metric: str
-    ) -> int:
+    def fetch_for_market(self, market_id: str, city: str, target_date: datetime, metric: str) -> int:
         """Backward-compat shim: fetch weather for a single market.
 
         Delegates to :meth:`fetch_for_markets` with a single-element list.

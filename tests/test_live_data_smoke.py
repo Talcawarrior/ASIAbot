@@ -106,9 +106,7 @@ def test_polygon_ctf_v2_contract_live():
         code = client._call("eth_getCode", [str(CTF_EXCHANGE_V2), "latest"])
     except Exception as e:
         pytest.skip(f"Polygon RPC unavailable: {e}")
-    assert code and code != "0x", (
-        f"CTF Exchange V2 contract not found at {CTF_EXCHANGE_V2}"
-    )
+    assert code and code != "0x", f"CTF Exchange V2 contract not found at {CTF_EXCHANGE_V2}"
 
 
 def test_resolvedmarkets_health_live():

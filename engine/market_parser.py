@@ -140,8 +140,7 @@ class MarketParser:
         """
         # 1) Açık birim varsa (°F / °C / Fahrenheit / Celsius, sayıya bitişik)
         explicit = re.search(
-            r"(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|"
-            r"\d\s*°?\s*[Cc](?:elsius)?|°[Cc])",
+            r"(?:\d\s*°?\s*[Ff](?:ahrenheit)?|°[Ff]|" r"\d\s*°?\s*[Cc](?:elsius)?|°[Cc])",
             question,
         )
         if explicit:
@@ -160,9 +159,7 @@ class MarketParser:
         # 3) Varsayılan
         return "celsius"
 
-    def _extract_threshold(
-        self, question: str
-    ) -> tuple[float, str, float | None, float | None] | None:
+    def _extract_threshold(self, question: str) -> tuple[float, str, float | None, float | None] | None:
         """Sıcaklık eşiğini ve varsa aralığı bul.
 
         Returns
@@ -186,9 +183,7 @@ class MarketParser:
                 high_val = float(range_match.group(2))
                 unit_char = range_match.group(3).lower() if range_match.group(3) else ""
                 # Birim belirtilmemişse şehre göre karar ver
-                is_f = unit_char == "f" or (
-                    not unit_char and self._resolve_unit(question, city) == "fahrenheit"
-                )
+                is_f = unit_char == "f" or (not unit_char and self._resolve_unit(question, city) == "fahrenheit")
                 if is_f:
                     low_c = round((low_val - 32) * 5 / 9, 1)
                     high_c = round((high_val - 32) * 5 / 9, 1)
@@ -266,11 +261,7 @@ class MarketParser:
                 # current year. The "on" prefix pattern uses \s+ (regex
                 # whitespace), not a literal space, so detect it by checking
                 # the pattern start instead of substring.
-                if (
-                    pattern.startswith(r"\bon")
-                    or pattern.startswith("on")
-                    or "on " in pattern
-                ):
+                if pattern.startswith(r"\bon") or pattern.startswith("on") or "on " in pattern:
                     date_str = f"{date_str} {datetime.now().year}"
                 for fmt in [
                     "%B %d, %Y",
@@ -305,9 +296,7 @@ class MarketParser:
             ]
         ):
             return "temperature_max"
-        if any(
-            w in q for w in ["low temp", "min temp", "below", "under", "cold", "lowest"]
-        ):
+        if any(w in q for w in ["low temp", "min temp", "below", "under", "cold", "lowest"]):
             return "temperature_min"
         if any(w in q for w in ["rain", "precipitation", "rainfall"]):
             return "precipitation_mm"
@@ -358,10 +347,7 @@ class MarketParser:
             parsed = bool(city and threshold_result and target_date)
 
             if not parsed:
-                logger.warning(
-                    f"Market {market_id} tam parse edilemedi: "
-                    f"city={city}, threshold={threshold_result}, date={target_date}"
-                )
+                logger.warning(f"Market {market_id} tam parse edilemedi: city={city}, threshold={threshold_result}, date={target_date}")
 
             return parsed
 
@@ -369,13 +355,7 @@ class MarketParser:
         """Parse edilmemiş tüm marketleri parse et."""
         count = 0
         with get_session() as session:
-            unparsed = (
-                session.query(WeatherMarket)
-                .filter(
-                    WeatherMarket.city.is_(None) | WeatherMarket.target_date.is_(None)
-                )
-                .all()
-            )
+            unparsed = session.query(WeatherMarket).filter(WeatherMarket.city.is_(None) | WeatherMarket.target_date.is_(None)).all()
             market_ids = [m.id for m in unparsed]
 
         for mid in market_ids:

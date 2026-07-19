@@ -56,10 +56,7 @@ class TestParseMarket(unittest.TestCase):
         # "below" + "lowest" => temperature_min, "below" => LOW
         self.assertEqual(result["metric"], "temperature_min")
         self.assertEqual(result["market_type"], "LOW")
-        print(
-            f"Parse min OK: {result['id']} threshold={result['threshold']:.1f} "
-            f"metric={result['metric']} type={result['market_type']}"
-        )
+        print(f"Parse min OK: {result['id']} threshold={result['threshold']:.1f} metric={result['metric']} type={result['market_type']}")
 
     def test_reject_rain(self):
         raw = {
@@ -138,17 +135,13 @@ class TestParseMarket(unittest.TestCase):
 
     def test_extract_city_known(self):
         """Known city should return ICAO code."""
-        code = self.scraper._extract_city(
-            "Will New York have highest temperature above 90F?"
-        )
+        code = self.scraper._extract_city("Will New York have highest temperature above 90F?")
         self.assertEqual(code, "KLGA")
         print(f"City extraction OK: new york -> {code}")
 
     def test_extract_city_unknown(self):
         """Unknown city should return empty string."""
-        code = self.scraper._extract_city(
-            "Will Atlantis have highest temperature above 90F?"
-        )
+        code = self.scraper._extract_city("Will Atlantis have highest temperature above 90F?")
         self.assertEqual(code, "")
         print(f"City extraction unknown OK: -> '{code}'")
 

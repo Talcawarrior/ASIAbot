@@ -78,9 +78,7 @@ class BacktestSimulator:
                 if weight_sum <= 0:
                     continue
 
-                recalculated_prob = (
-                    sum(model_weights.get(m, 0.0) * float(prob) for m, prob in model_probs.items()) / weight_sum
-                )
+                recalculated_prob = sum(model_weights.get(m, 0.0) * float(prob) for m, prob in model_probs.items()) / weight_sum
 
                 # 2. Check if the market outcome matches the YES direction
                 outcome_yes = self._resolve_outcome(market)
@@ -193,9 +191,7 @@ class BacktestSimulator:
         """
         import random as _random
 
-        logger.info(
-            "ASI Backtester: No manual bets found. Running deep backtest over 'historical_calibrations' dataset..."
-        )
+        logger.info("ASI Backtester: No manual bets found. Running deep backtest over 'historical_calibrations' dataset...")
 
         model_weights = parameters["model_weights"]
         min_edge = parameters["min_edge"]

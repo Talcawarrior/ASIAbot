@@ -1,4 +1,4 @@
-﻿"""Analyzer Agent for asiabot.
+"""Analyzer Agent for asiabot.
 
 Analyzes experimental backtest logs and distills them into semantic, causal
 insights to write to the Cognition Base.
@@ -17,9 +17,7 @@ class AnalyzerAgent:
     def __init__(self, cognition_base: CognitionBase):
         self.cognition_base = cognition_base
 
-    def analyze_results(
-        self, run_round: int, hypothesis: str, backtest_results: dict, parameters: dict
-    ) -> CognitionNode:
+    def analyze_results(self, run_round: int, hypothesis: str, backtest_results: dict, parameters: dict) -> CognitionNode:
         """Analyze experimental results and produce a persistent Cognition Node.
 
         Generates structured causal descriptions explaining why the proposed
@@ -31,9 +29,7 @@ class AnalyzerAgent:
         pnl = backtest_results["pnl"]  # noqa: F841
         total_bets = backtest_results["total_bets"]  # noqa: F841
 
-        logger.info(
-            "ASI Analyzer: Formulating causal insights for Round %d...", run_round
-        )
+        logger.info("ASI Analyzer: Formulating causal insights for Round %d...", run_round)
 
         # Retrieve previous best node
         nodes = self.cognition_base.nodes
@@ -93,4 +89,3 @@ class AnalyzerAgent:
         )
 
         return node
-

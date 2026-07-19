@@ -1,4 +1,4 @@
-﻿"""Cognition Base for asiabot.
+"""Cognition Base for asiabot.
 
 Stores the persistent semantic knowledge, human priors, and distilled
 insights (Cognition Nodes) across evolutionary rounds.
@@ -173,4 +173,3 @@ class CognitionBase:
 
     def get_all_insights(self) -> list[dict]:
         return [node.to_dict() for node in self.nodes]
-

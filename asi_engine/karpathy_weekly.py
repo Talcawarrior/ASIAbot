@@ -142,6 +142,30 @@ def _weighted_mean_prob(row: pd.Series, weights: dict[str, float], models: list[
     return s / wsum
 
 
+# Hard risk constraint: any hypothesis whose simulated max drawdown exceeds
+# this percentage of peak equity is rejected at acceptance + deploy time.
+MAX_DD_LIMIT_PCT = 20.0
+
+
+def _max_drawdown_pct(pnls: list[float], init_bankroll: float) -> float:
+    """Max peak-to-trough drawdown of the cumulative equity curve, as a % of
+    the running peak. Non-compounding sim → equity = init + cumsum(pnls)."""
+    if not pnls or init_bankroll <= 0:
+        return 0.0
+    equity = init_bankroll
+    peak = init_bankroll
+    max_dd = 0.0
+    for p in pnls:
+        equity += p
+        if equity > peak:
+            peak = equity
+        if peak > 0:
+            dd = (peak - equity) / peak
+            if dd > max_dd:
+                max_dd = dd
+    return round(max_dd * 100.0, 4)
+
+
 def evaluate_hypothesis_oos(
     brier_df: pd.DataFrame,
     test_indices: list[int],
@@ -174,6 +198,7 @@ def evaluate_hypothesis_oos(
             "brier_score": 0.25,
             "total_pnl": 0.0,
             "total_staked": 0.0,
+            "max_dd_pct": 0.0,
         }
 
     test_df = brier_df.loc[brier_df.index.intersection(test_indices)]
@@ -186,6 +211,7 @@ def evaluate_hypothesis_oos(
             "brier_score": 0.25,
             "total_pnl": 0.0,
             "total_staked": 0.0,
+            "max_dd_pct": 0.0,
         }
 
     pnls: list[float] = []
@@ -332,6 +358,7 @@ def evaluate_hypothesis_oos(
             "brier_score": (sum(brier_errors) / len(brier_errors) if brier_errors else 0.25),
             "total_pnl": 0.0,
             "total_staked": 0.0,
+            "max_dd_pct": 0.0,
         }
 
     wins = sum(1 for p in pnls if p > 0)
@@ -342,6 +369,7 @@ def evaluate_hypothesis_oos(
     std_pnl = math.sqrt(var_pnl) if var_pnl > 0 else 1e-5
     sharpe = mean_pnl / std_pnl if std_pnl > 0 else 0.0
     brier = sum(brier_errors) / len(brier_errors) if brier_errors else 0.25
+    max_dd_pct = _max_drawdown_pct(pnls, INIT_BANKROLL)
 
     return {
         "sharpe": round(sharpe, 4),
@@ -351,6 +379,7 @@ def evaluate_hypothesis_oos(
         "brier_score": round(brier, 4),
         "total_pnl": round(total_pnl, 2),
         "total_staked": round(total_staked, 2),
+        "max_dd_pct": max_dd_pct,
     }
 
 
@@ -694,10 +723,7 @@ def _append_results_tsv(
     status: str,
 ) -> None:
     os.makedirs(os.path.dirname(RESULTS_TSV_PATH), exist_ok=True)
-    header = (
-        "round\ttimestamp\tdescription\tsource\tmin_edge\tkelly\t"
-        "mean_sharpe\tmean_roi\tmean_brier\ttotal_trades\tstatus\n"
-    )
+    header = "round\ttimestamp\tdescription\tsource\tmin_edge\tkelly\tmean_sharpe\tmean_roi\tmean_brier\ttotal_trades\tstatus\n"
     if not os.path.exists(RESULTS_TSV_PATH):
         with open(RESULTS_TSV_PATH, "w", encoding="utf-8") as f:
             f.write(header)
@@ -763,9 +789,7 @@ def add_per_model_probabilities(
     cached_pairs: set[tuple[str, str]] = set()
     if not forecasts_df.empty and "target_date" in forecasts_df.columns:
         forecasts_df = forecasts_df.copy()
-        forecasts_df["join_date"] = pd.to_datetime(
-            forecasts_df["target_date"], utc=True, errors="coerce"
-        ).dt.date.astype(str)
+        forecasts_df["join_date"] = pd.to_datetime(forecasts_df["target_date"], utc=True, errors="coerce").dt.date.astype(str)
         forecasts_df["variable_key"] = forecasts_df.get("variable", "").fillna("temperature_2m_max")
         forecasts_df = forecasts_df[forecasts_df["variable_key"].astype(str).str.contains("max", na=False)]
         # Snapshot the cached pairs BEFORE we append the dynamically-fetched
@@ -795,8 +819,7 @@ def add_per_model_probabilities(
         missing_pairs = needed_pairs - cached_pairs
         if missing_pairs:
             logger.info(
-                "Forecast join: %d (city, date) pairs needed, %d cached, "
-                "%d missing — fetching from Historical Forecast API",
+                "Forecast join: %d (city, date) pairs needed, %d cached, %d missing — fetching from Historical Forecast API",
                 len(needed_pairs),
                 len(cached_pairs),
                 len(missing_pairs),
@@ -854,9 +877,7 @@ def add_per_model_probabilities(
 
                 if fetched_frames:
                     fetched_df = pd.concat(fetched_frames, ignore_index=True)
-                    fetched_df["join_date"] = pd.to_datetime(
-                        fetched_df["date"], utc=True, errors="coerce"
-                    ).dt.date.astype(str)
+                    fetched_df["join_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce").dt.date.astype(str)
                     fetched_df["target_date"] = pd.to_datetime(fetched_df["date"], utc=True, errors="coerce")
                     fetched_df["fetched_at"] = pd.Timestamp.utcnow()
                     fetched_df["variable_key"] = fetched_df.get("variable", "temperature_2m_max")
@@ -889,9 +910,7 @@ def add_per_model_probabilities(
                         len(missing_by_city),
                     )
             except ImportError:
-                logger.warning(
-                    "data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts"
-                )
+                logger.warning("data_pipeline.weather_ensemble not importable — cannot dynamically fetch missing forecasts")
 
     # ----------------------------------------------------------------
     # Pivot forecasts wide and convert each model's temperature into a
@@ -932,9 +951,7 @@ def add_per_model_probabilities(
                     return 1.0 - p_high
                 return p_high
 
-            merged[col] = [
-                _to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()
-            ]
+            merged[col] = [_to_prob(row.get(model), row.get("market_type"), row.get("threshold")) for _, row in merged.iterrows()]
         brier_df = merged
         prob_cols_after = [c for c in brier_df.columns if c.startswith("prob_")]
         if prob_cols_after:
@@ -1051,8 +1068,7 @@ def run_karpathy_weekly(
     splits = ds.build_walk_forward_splits()
     if not splits:
         logger.warning(
-            "No walk-forward splits built — falling back to a single all-data "
-            "evaluation. This is NOT OOS but allows the loop to still run."
+            "No walk-forward splits built — falling back to a single all-data evaluation. This is NOT OOS but allows the loop to still run."
         )
         splits = [
             {
@@ -1126,9 +1142,15 @@ def run_karpathy_weekly(
         )
 
         # Acceptance: must beat incumbent on Sharpe (and not blow up Brier)
-        improved = mean_stats["sharpe"] > best_stats["sharpe"] and (
-            mean_stats["brier_score"] <= best_stats["brier_score"] * 1.10
-        )
+        improved = mean_stats["sharpe"] > best_stats["sharpe"] and (mean_stats["brier_score"] <= best_stats["brier_score"] * 1.10)
+        # Hard risk constraint: reject anything with excessive simulated drawdown.
+        if mean_stats.get("max_dd_pct", 0.0) > MAX_DD_LIMIT_PCT:
+            logger.info(
+                "  ✗ REJECTED — max_dd %.1f%% > %.1f%% limit",
+                mean_stats.get("max_dd_pct", 0.0),
+                MAX_DD_LIMIT_PCT,
+            )
+            improved = False
         if improved and mean_stats["total_trades"] >= 5:
             logger.info("  ✓ ACCEPTED — new best")
             best_hyp = hyp
@@ -1174,10 +1196,13 @@ def _mean_stats(per_split: list[dict[str, float]]) -> dict[str, float]:
             "brier_score": 0.25,
             "total_pnl": 0.0,
             "total_staked": 0.0,
+            "max_dd_pct": 0.0,
         }
     keys = ["sharpe", "roi_pct", "win_rate", "brier_score", "total_pnl", "total_staked"]
     out = {k: sum(s.get(k, 0.0) for s in per_split) / len(per_split) for k in keys}
     out["total_trades"] = int(sum(s.get("total_trades", 0) for s in per_split))
+    # Max drawdown is a risk metric — take the worst (max) across splits.
+    out["max_dd_pct"] = round(max((s.get("max_dd_pct", 0.0) for s in per_split), default=0.0), 4)
     out["sharpe"] = round(out["sharpe"], 4)
     out["roi_pct"] = round(out["roi_pct"], 4)
     out["brier_score"] = round(out["brier_score"], 4)

@@ -1,4 +1,4 @@
-﻿"""Researcher Agent for asiabot.
+"""Researcher Agent for asiabot.
 
 Responsible for generating new strategy hypotheses and parameter proposals
 by reviewing historical successes and failures stored in the Cognition Base.
@@ -104,10 +104,7 @@ class ResearcherAgent:
                     best_params,
                 )
             boost_model, trim_model = random.sample(models, 2)
-            rationale = (
-                "Random exploration (no Brier data available yet): picked "
-                f"'{boost_model}' to boost and '{trim_model}' to trim."
-            )
+            rationale = f"Random exploration (no Brier data available yet): picked '{boost_model}' to boost and '{trim_model}' to trim."
 
         if boost_model == trim_model:
             trim_model = random.choice([m for m in models if m != boost_model])
@@ -131,12 +128,8 @@ class ResearcherAgent:
         best_kelly = best_params.get("kelly_fraction", 0.15)
 
         # Ramped change
-        new_min_edge = round(
-            max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3
-        )
-        new_kelly = round(
-            max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3
-        )
+        new_min_edge = round(max(0.02, min(0.15, best_min_edge + random.choice([-0.01, 0.0, 0.01]))), 3)
+        new_kelly = round(max(0.05, min(0.25, best_kelly + random.choice([-0.02, 0.0, 0.02]))), 3)
 
         new_params = {
             "model_weights": adjusted_weights,
@@ -153,4 +146,3 @@ class ResearcherAgent:
 
         logger.info("ASI Researcher: Proposed Hypothesis -> %s", hypothesis)
         return hypothesis, new_params
-

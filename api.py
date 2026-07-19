@@ -1,4 +1,4 @@
-﻿"""FastAPI application for asiabot - Polymarket weather betting bot.
+"""FastAPI application for asiabot - Polymarket weather betting bot.
 
 Provides REST API endpoints for status, markets, signals, history, cleanup,
 and WebSocket push. The bot runs fetch -> parse -> forecast -> analyze ->
@@ -71,11 +71,11 @@ TR_MONTHS = {
 API_KEY = os.getenv("asiabot_API_KEY", "")
 if not API_KEY:
     API_KEY = secrets.token_urlsafe(32)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("WARNING: asiabot_API_KEY not set. Generated random key:")
     print(f"  {API_KEY}")
     print(f"Add to .env: asiabot_API_KEY={API_KEY}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 async def verify_api_key(x_api_key: str = Header(default="")):
@@ -255,22 +255,16 @@ def get_status():
         ) or 0.0
         daily_pnl = round(daily_pnl + daily_partial_tp, 2)
 
-        realized_pnl_db = (
-            db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()
-        ) or 0.0
+        realized_pnl_db = (db.query(func.coalesce(func.sum(Bet.pnl), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()) or 0.0
         # Partial TP: open betlerdeki realized_pnl'yi de ekle (partial_tp_done=True)
         partial_tp_realized = (
-            db.query(func.coalesce(func.sum(Bet.realized_pnl), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.partial_tp_done.is_(True))
-            .scalar()
+            db.query(func.coalesce(func.sum(Bet.realized_pnl), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.partial_tp_done.is_(True)).scalar()
         ) or 0.0
         realized_pnl_db = round(realized_pnl_db + partial_tp_realized, 2)
 
         # 2. Unrealized PnL (Open bets)
         open_statuses = OPEN_BET_STATUSES
-        unrealized_pnl_db = (
-            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
-        ) or 0.0
+        unrealized_pnl_db = (db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()) or 0.0
 
         # 3. Counts Ã¢â‚¬â€ win/loss based on PnL (includes closed_early)
         _all_closed = db.query(Bet.pnl).filter(Bet.status.in_(_closed_statuses)).all()
@@ -307,18 +301,14 @@ def get_status():
                 }
             )
 
-        exposure_db = (
-            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()
-        ) or 0.0
+        exposure_db = (db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(open_statuses)).scalar()) or 0.0
 
         initial_capital = state.config.INITIAL_PORTFOLIO
         total_pnl = realized_pnl_db + unrealized_pnl_db
 
         # Total amount staked in settled bets (sum of all bet amounts
         # regardless of win/loss). ROI = PnL / total_stake, NOT PnL / initial.
-        total_stake_settled = (
-            db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()
-        ) or 0.0
+        total_stake_settled = (db.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(_closed_statuses)).scalar()) or 0.0
 
         # Realized PnL from bets closed BEFORE today (for daily exposure cap)
         realized_before_today = (
@@ -351,12 +341,7 @@ def get_status():
 
         sharpe_ratio = 0.0
         max_drawdown_pct = 0.0
-        closed_bets = (
-            db.query(Bet.pnl, Bet.settled_at)
-            .filter(Bet.status.in_(_closed_statuses))
-            .order_by(Bet.settled_at.asc())
-            .all()
-        )
+        closed_bets = db.query(Bet.pnl, Bet.settled_at).filter(Bet.status.in_(_closed_statuses)).order_by(Bet.settled_at.asc()).all()
         if len(closed_bets) > 1:
             pnls = [float(b.pnl or 0.0) for b in closed_bets]
             mean_pnl = sum(pnls) / len(pnls)
@@ -468,8 +453,7 @@ def get_asi_weights():
             db.query(ModelPerformance)
             .join(
                 latest_perf,
-                (ModelPerformance.model_name == latest_perf.c.model_name)
-                & (ModelPerformance.recorded_at == latest_perf.c.max_date),
+                (ModelPerformance.model_name == latest_perf.c.model_name) & (ModelPerformance.recorded_at == latest_perf.c.max_date),
             )
             .all()
         )
@@ -604,13 +588,7 @@ def get_markets():
                 continue
             current_price = float(m.yes_price)
             model_prob = current_price
-            forecasts = (
-                db.query(WeatherForecast)
-                .filter(WeatherForecast.market_id == m.id)
-                .order_by(WeatherForecast.fetched_at.desc())
-                .limit(8)
-                .all()
-            )
+            forecasts = db.query(WeatherForecast).filter(WeatherForecast.market_id == m.id).order_by(WeatherForecast.fetched_at.desc()).limit(8).all()
             if forecasts:
                 latest_vals = [f.predicted_value for f in forecasts]
                 days_ahead = max((m.target_date - now).days, 1)
@@ -704,9 +682,7 @@ def get_signals():
     """Get all currently active (open) bets with live edge/price data."""
     db = get_db_session()
     try:
-        active_bets = (
-            db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).order_by(Bet.placed_at.desc().nullslast()).all()
-        )
+        active_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).order_by(Bet.placed_at.desc().nullslast()).all()
 
         # Pre-fetch all WeatherMarket data in one query
         market_ids = {bet.market_id for bet in active_bets if bet.market_id}
@@ -859,24 +835,14 @@ def get_history():
 
         # Partial TP: open betlerde partial_tp_done=True olanlar (iÅŸlem geÃ§miÅŸinde gÃ¶ster)
         partial_tp_bets = (
-            db.query(Bet)
-            .filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.partial_tp_done.is_(True))
-            .order_by(Bet.placed_at.desc())
-            .limit(100)
-            .all()
+            db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.partial_tp_done.is_(True)).order_by(Bet.placed_at.desc()).limit(100).all()
         )
 
         # History list: all settled + closed_early (most recent 300)
         all_closed_statuses = ["settled", "won", "lost", "closed_early"]
         # Use coalesce(settled_at, closed_at) for correct ordering
         close_date = func.coalesce(Bet.settled_at, Bet.closed_at)
-        settled_bets = (
-            db.query(Bet)
-            .filter(Bet.status.in_(all_closed_statuses))
-            .order_by(close_date.desc(), Bet.placed_at.desc())
-            .limit(300)
-            .all()
-        )
+        settled_bets = db.query(Bet).filter(Bet.status.in_(all_closed_statuses)).order_by(close_date.desc(), Bet.placed_at.desc()).limit(300).all()
 
         # Batch-load analyses for edge data (N+1 fix)
         bet_analysis_ids = [b.analysis_id for b in settled_bets if b.analysis_id]
@@ -1029,11 +995,7 @@ def get_equity_curve():
             )
 
         # Add today with current unrealized value
-        unrealized = (
-            db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-            .scalar()
-        ) or 0.0
+        unrealized = (db.query(func.coalesce(func.sum(Bet.unrealized_pnl), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()) or 0.0
         realized_now = running - initial  # all realized PnL accumulated
         today_val = initial + realized_now + float(unrealized)
         today = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1122,9 +1084,7 @@ def cleanup_old_data(_key: str = Depends(verify_api_key)):
         _ts = datetime.now(timezone.utc).replace(tzinfo=None)
         _today_start = _ts.replace(hour=0, minute=0, second=0, microsecond=0)
         stale_analyses = (
-            db.query(Analysis)
-            .filter(Analysis.should_bet.is_(True), Analysis.analyzed_at < _today_start)
-            .delete(synchronize_session=False)
+            db.query(Analysis).filter(Analysis.should_bet.is_(True), Analysis.analyzed_at < _today_start).delete(synchronize_session=False)
         )
         stale_bets = db.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES), Bet.placed_at < _today_start).all()
         cancelled = 0
@@ -1321,9 +1281,7 @@ def get_health_check():
                             "raw_edge_pct": (round((analysis.raw_edge or 0) * 100, 2) if analysis.raw_edge else None),
                             "net_edge_pct": (round((analysis.edge or 0) * 100, 2) if analysis.edge else None),
                             "slippage_pct": (
-                                round((analysis.slippage_pct or 0) * 100, 2)
-                                if hasattr(analysis, "slippage_pct") and analysis.slippage_pct
-                                else None
+                                round((analysis.slippage_pct or 0) * 100, 2) if hasattr(analysis, "slippage_pct") and analysis.slippage_pct else None
                             ),
                             "market_id": b.market_id,
                             "city": b.city,
@@ -1387,19 +1345,13 @@ def get_health_check():
         recent_losses = sum(
             1
             for b in settled_all
-            if b.pnl is not None
-            and b.pnl <= 0
-            and ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
+            if b.pnl is not None and b.pnl <= 0 and ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
         )
-        recent_total = sum(
-            1 for b in settled_all if ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
-        )
+        recent_total = sum(1 for b in settled_all if ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48)))
         recent_wins = sum(
             1
             for b in settled_all
-            if b.pnl is not None
-            and b.pnl > 0
-            and ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
+            if b.pnl is not None and b.pnl > 0 and ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
         )
         recent_win_rate = win_rate_pct(recent_wins, recent_total)
 
@@ -1407,11 +1359,7 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (
-                        f"Son 48 saatte {recent_losses} kayÃ„Â±p "
-                        f"(toplam {recent_total} sonuÃƒÂ§lanan). "
-                        f"Calibration bozuk olabilir."
-                    ),
+                    "message": (f"Son 48 saatte {recent_losses} kayÃ„Â±p (toplam {recent_total} sonuÃƒÂ§lanan). Calibration bozuk olabilir."),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
                 }
             )
@@ -1443,9 +1391,7 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (
-                        f"TÃƒÂ¼m net edge'ler %2.5 altÃ„Â±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÃ…Å¸Ã„Â±lamÃ„Â±yor."
-                    ),
+                    "message": (f"TÃƒÂ¼m net edge'ler %2.5 altÃ„Â±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÃ…Å¸Ã„Â±lamÃ„Â±yor."),
                     "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarÃ„Â±nÃ„Â± gÃƒÂ¶zden geÃƒÂ§ir."),
                 }
             )
@@ -1465,18 +1411,13 @@ def get_health_check():
                 {
                     "severity": "warning",
                     "message": (
-                        f"AÃ…Å¸Ã„Â±rÃ„Â± bahis: 24s'de {bets_opened_24h} aÃƒÂ§Ã„Â±lan, "
-                        f"{open_total} aÃƒÂ§Ã„Â±k. Risk yÃƒÂ¶netimi aÃ…Å¸Ã„Â±lÃ„Â±yor."
+                        f"AÃ…Å¸Ã„Â±rÃ„Â± bahis: 24s'de {bets_opened_24h} aÃƒÂ§Ã„Â±lan, {open_total} aÃƒÂ§Ã„Â±k. Risk yÃƒÂ¶netimi aÃ…Å¸Ã„Â±lÃ„Â±yor."
                     ),
                     "action": "min_edge'i yÃƒÂ¼kselt, Kelly fraction'Ã„Â± dÃƒÂ¼Ã…Å¸ÃƒÂ¼r.",
                 }
             )
 
-        recent_pnl = sum(
-            b.pnl or 0.0
-            for b in settled_all
-            if ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48))
-        )
+        recent_pnl = sum(b.pnl or 0.0 for b in settled_all if ((b.settled_at and b.settled_at >= h48) or (b.closed_at and b.closed_at >= h48)))
         if recent_pnl < 0 and recent_total >= 5:
             red_flags.append(
                 {
@@ -1486,13 +1427,14 @@ def get_health_check():
                 }
             )
 
-        # 6. Daily PnL Timeline â€” forward from today (17/07, 18/07, 19/07, ...)
-        # Shows 31 days: yesterday through 29 days ahead.
-        # Past days with data get real PnL bars; future days show $0.
+        # 6. Daily PnL Timeline - historical window (last 30 days + today).
+        # Past days with settled bets get real PnL bars; today is the last
+        # entry. Looks BACKWARD from today so early trading days (e.g. the
+        # bot's first day) are never dropped from the chart.
         from sqlalchemy import or_
 
         daily_pnl = []
-        for i in range(-1, 29):
+        for i in range(-30, 1):
             day_start = (now + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = (now + timedelta(days=i + 1)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_bets = (
@@ -1592,5 +1534,3 @@ async def websocket_endpoint(websocket: WebSocket, api_key: str = ""):
 # Re-export loop functions from bot_loop module so existing
 # callers (e.g. bot_lifespan in main.py) can import from here.
 from bot_loop import scan_and_bet_loop, settlement_loop  # noqa: E402, F401
-
-

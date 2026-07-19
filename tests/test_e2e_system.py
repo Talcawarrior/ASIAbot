@@ -1,4 +1,4 @@
-﻿"""End-to-End System Tests - TÃ¼m sistemi adÄ±m adÄ±m test eder.
+"""End-to-End System Tests - TÃ¼m sistemi adÄ±m adÄ±m test eder.
 
 Her bir adÄ±m bir Ã¶ncekinin sonucuna baÄŸlÄ±dÄ±r.
 Test sÄ±rasÄ± gerÃ§ek bot akÄ±ÅŸÄ±nÄ± takip eder.
@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta
 # STEP 1: BOT STARTUP & CONFIGURATION
 # ============================================================================
 
+
 class TestStep1_BotStartup:
     """AdÄ±m 1: Bot baÅŸlatma ve yapÄ±landÄ±rma."""
 
@@ -31,6 +32,7 @@ class TestStep1_BotStartup:
     def test_database_initializes(self):
         """VeritabanÄ± baÅŸlatÄ±lÄ±yor."""
         from database.db import init_db
+
         init_db()
         # BaÅŸarÄ±lÄ±ysa hata fÄ±rlatmaz
 
@@ -55,6 +57,7 @@ class TestStep1_BotStartup:
 # ============================================================================
 # STEP 2: MARKET FETCHING
 # ============================================================================
+
 
 class TestStep2_MarketFetching:
     """AdÄ±m 2: Market verilerinin Ã§ekilmesi."""
@@ -84,6 +87,7 @@ class TestStep2_MarketFetching:
 # ============================================================================
 # STEP 3: PROBABILITY CALCULATION
 # ============================================================================
+
 
 class TestStep3_ProbabilityCalculation:
     """AdÄ±m 3: OlasÄ±lÄ±k hesaplama."""
@@ -128,6 +132,7 @@ class TestStep3_ProbabilityCalculation:
 # STEP 4: EDGE CALCULATION (KRÄ°TÄ°K)
 # ============================================================================
 
+
 class TestStep4_EdgeCalculation:
     """AdÄ±m 4: Edge hesaplama - negatif edge engeli."""
 
@@ -135,12 +140,12 @@ class TestStep4_EdgeCalculation:
         """Negatif edge ile bahis AÃ‡ILMAZ."""
         # should_bet mantÄ±ÄŸÄ±
         test_cases = [
-            (-0.018, 0.01, False),   # -1.8% edge â†' False
-            (-0.05, 0.01, False),    # -5% â†' False
-            (0.0, 0.01, False),      # 0% â†' False
-            (0.005, 0.01, False),    # 0.5% < 1% â†' False
-            (0.01, 0.01, True),      # 1% = 1% â†' True
-            (0.02, 0.01, True),      # 2% > 1% â†' True
+            (-0.018, 0.01, False),  # -1.8% edge â†' False
+            (-0.05, 0.01, False),  # -5% â†' False
+            (0.0, 0.01, False),  # 0% â†' False
+            (0.005, 0.01, False),  # 0.5% < 1% â†' False
+            (0.01, 0.01, True),  # 1% = 1% â†' True
+            (0.02, 0.01, True),  # 2% > 1% â†' True
         ]
 
         for net_edge, min_edge, expected in test_cases:
@@ -163,21 +168,22 @@ class TestStep4_EdgeCalculation:
         from engine.calculator import Calculator
 
         source = inspect.getsource(Calculator.analyze_market)
-        lines = source.split('\n')
+        lines = source.split("\n")
 
         in_should_bet = False
         for line in lines:
-            if 'should_bet = (' in line:
+            if "should_bet = (" in line:
                 in_should_bet = True
-            if in_should_bet and 'abs(' in line:
+            if in_should_bet and "abs(" in line:
                 pytest.fail("should_bet'te abs() var!")
-            if in_should_bet and ')' in line and 'and' not in line:
+            if in_should_bet and ")" in line and "and" not in line:
                 in_should_bet = False
 
 
 # ============================================================================
 # STEP 5: RISK MANAGEMENT
 # ============================================================================
+
 
 class TestStep5_RiskManagement:
     """AdÄ±m 5: Risk yÃ¶netimi mekanizmalarÄ±."""
@@ -233,6 +239,7 @@ class TestStep5_RiskManagement:
 # STEP 6: BET PLACEMENT
 # ============================================================================
 
+
 class TestStep6_BetPlacement:
     """AdÄ±m 6: Bahis yerleÅŸtirme."""
 
@@ -246,6 +253,7 @@ class TestStep6_BetPlacement:
     def test_dry_run_mode(self):
         """DRY_RUN modunda gerÃ§ek bahis yapÄ±lmaz."""
         from config.settings import config
+
         assert config.DRY_RUN is True
 
     def test_max_bet_cap(self):
@@ -276,6 +284,7 @@ class TestStep6_BetPlacement:
 # ============================================================================
 # STEP 7: FEE CALCULATION
 # ============================================================================
+
 
 class TestStep7_FeeCalculation:
     """AdÄ±m 7: Fee hesaplama."""
@@ -318,6 +327,7 @@ class TestStep7_FeeCalculation:
 # STEP 8: SETTLEMENT
 # ============================================================================
 
+
 class TestStep8_Settlement:
     """AdÄ±m 8: Settlement hesaplama."""
 
@@ -346,6 +356,7 @@ class TestStep8_Settlement:
 # ============================================================================
 # STEP 9: PORTFOLIO CALCULATIONS
 # ============================================================================
+
 
 class TestStep9_PortfolioCalculations:
     """AdÄ±m 9: PortfÃ¶y hesaplamalarÄ±."""
@@ -384,12 +395,14 @@ class TestStep9_PortfolioCalculations:
 # STEP 10: API ENDPOINTS
 # ============================================================================
 
+
 class TestStep10_APIEndpoints:
     """AdÄ±m 10: API endpoint'leri."""
 
     def test_api_imports(self):
         """API modÃ¼lÃ¼ import edilebiliyor."""
         from api import app
+
         assert app is not None
 
     def test_status_endpoint(self):
@@ -433,29 +446,34 @@ class TestStep10_APIEndpoints:
 # STEP 11: SCAN LOOP INTEGRITY
 # ============================================================================
 
+
 class TestStep11_ScanLoopIntegrity:
     """AdÄ±m 11: Scan loop bÃ¼tÃ¼nlÃ¼ÄŸÃ¼."""
 
     def test_scan_loop_imports(self):
         """Scan loop import edilebiliyor."""
         from bot_loop import scan_and_bet_loop, settlement_loop
+
         assert scan_and_bet_loop is not None
         assert settlement_loop is not None
 
     def test_scan_interval_configured(self):
         """Scan interval yapÄ±landÄ±rÄ±lmÄ±ÅŸ."""
         from config.settings import config
+
         assert config.SCAN_INTERVAL > 0
 
     def test_settlement_interval_configured(self):
         """Settlement interval yapÄ±landÄ±rÄ±lmÄ±ÅŸ."""
         from config.settings import config
+
         assert config.SETTLEMENT_INTERVAL > 0
 
 
 # ============================================================================
 # STEP 12: COMPLETE FLOW (MOCK)
 # ============================================================================
+
 
 class TestStep12_CompleteFlow:
     """AdÄ±m 12: Tam akÄ±ÅŸ (mock ile)."""
@@ -480,6 +498,7 @@ class TestStep12_CompleteFlow:
 
         # Fee hesapla
         from utils.formulas import polymarket_fee
+
         fee = polymarket_fee(shares=100, price=0.55, fee_rate=0.05)
         assert fee >= 0
 
@@ -505,6 +524,7 @@ class TestStep12_CompleteFlow:
 # ============================================================================
 # STEP 13: SMART SCAN DETECTION
 # ============================================================================
+
 
 class TestStep13_SmartScan:
     """AdÄ±m 13: AkÄ±llÄ± tarama algÄ±lama."""
@@ -556,4 +576,3 @@ class TestStep13_SmartScan:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
-

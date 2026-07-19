@@ -22,9 +22,7 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                     last_exception = e
                     if attempt < max_attempts:
                         wait = delay * (backoff ** (attempt - 1))
-                        logger.warning(
-                            f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. Retrying in {wait}s..."
-                        )
+                        logger.warning(f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. Retrying in {wait}s...")
                         # Use asyncio.sleep if in async context, else time.sleep
                         try:
                             loop = asyncio.get_running_loop()
@@ -32,9 +30,7 @@ def retry(max_attempts=3, delay=2, backoff=2, exceptions=(Exception,)):
                         except RuntimeError:
                             time.sleep(wait)
                     else:
-                        logger.error(
-                            f"{func.__name__} FAILED after {max_attempts} attempts: {e}"
-                        )
+                        logger.error(f"{func.__name__} FAILED after {max_attempts} attempts: {e}")
             raise last_exception
 
         return wrapper
