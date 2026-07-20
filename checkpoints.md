@@ -153,6 +153,32 @@ python -c "import sys; sys.path.insert(0,'.'); import config.settings as s; prin
 > Değişiklik import zamanında okunur → **bot yeniden başlatılınca** devreye girer.
 > Etki: tek bahis portföyün %1'i (örn. $1000 → $10/bet, önceki $6).
 
+## C11. YES/NO fiyat bozulması (binary invariant) — regresyon
+**Soru:** `weather_markets.yes_price`/`no_price` binary market'ler için geçerli mi
+(yes+no≈1) ve parser kanonik `outcomePrices`'ı mı kullanıyor?
+**Kabul kriteri:**
+- `scrapers/polymarket.py` `_parse_market`: (a) `outcomePrices` alanını token
+  fiyatlarına tercih eder; (b) binary market'lerde (`outcomes == ["Yes","No"]`)
+  `abs(yes_price + no_price - 1.0) > 0.02` ise `no_price = 1 - yes_price`
+  olarak zorlar. Artık imkânsız çift (0.75/0.75, 0.002/0.001, 0.979/0.963)
+  üretmez.
+- Veritabanı backfill ile **1756 geçersiz open market → 0'a** indirildi
+  (1848 market `raw_data`'daki `outcomePrices`'tan düzeltildi).
+- Regresyon testi: `tests/test_polymarket_price_parse.py` (8 passed).
+- Commit: `cdb40b9` ("Fix stale binary-market prices: prefer outcomePrices,
+  enforce YES+NO=1 invariant"). Fix öncesi durum: 681 open market'in 668'inde
+  fiyat bozuktu; bot corrupt veriyle bahis kararı veriyordu (paper mod →
+  gerçek zarar yok).
+**Doğrulama:**
+```powershell
+python -m pytest tests/test_polymarket_price_parse.py -q   # 8 passed
+# DB'de gecersiz acik market sayisi (0 olmali):
+python -c "import sqlite3; c=sqlite3.connect('data/bot.db'); print(c.execute(\"SELECT COUNT(*) FROM weather_markets WHERE status='open' AND yes_price IS NOT NULL AND no_price IS NOT NULL AND abs(yes_price+no_price-1.0)>0.02\").fetchone()[0])"
+Select-String -Path scrapers/polymarket.py -Pattern "outcomePrices|1.0 - yes_price"
+```
+
+---
+
 ## Açık / izlenecek konular
 1. **Offsite aynı C: diski** → gerçek felaket kurtarma değil. Farklı disk
    mümkün olduğunda `OFFSITE_DIR` başka sürücüye alınmalı (D sürücüsü yasak).
@@ -163,3 +189,10 @@ python -c "import sys; sys.path.insert(0,'.'); import config.settings as s; prin
 3. **En yeni yedek ↔ canlı DB farkı** → son yedekten sonraki işlemler yedekte
    yok (RPO açığı). Scheduled yedek günde 1 + her startup'ta; sıklık yeterli
    görülürse değiştirmeyin.
+4. **Gamma API canlı fiyat çekme patlıyor** → `bot.log`'da
+   `Gamma API request failed ... ConnectionResetError(10054)` görüldü; fiyatlar
+   initial ingestion'dan beri tazelenemiyor. Backfill saklı `outcomePrices` ile
+   düzeltti ama canlı tazelik yok. Gamma API bağlantısı düzelince
+   `run_update_prices` / `_parse_market` (artık outcomePrices öncelikli) otomatik
+   tazeleyecek. **junbo'da da aynı fetch hatası var mı kontrol edilmeli**
+   (ayrı proje: `C:\Users\fdemir\Documents\New project\junbo`).
