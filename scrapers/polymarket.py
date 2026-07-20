@@ -253,6 +253,34 @@ class PolymarketScraper:
         if no_price is None:
             no_price = 0.5
 
+        # ── Price correction (binary markets) ───────────────────────────
+        # Polymarket's canonical traded price is `outcomePrices`; token
+        # mid-quotes can be stale/illiquid (both sides briefly at 0.75,
+        # summing to 1.5) and get cached. Prefer the canonical feed, and
+        # for a binary market (outcomes exactly ["Yes","No"]) enforce the
+        # invariant YES + NO ≈ 1.0 so we never act on an impossible pair.
+        _op = raw.get("outcomePrices")
+        if isinstance(_op, str):
+            try:
+                _op = json.loads(_op)
+            except (json.JSONDecodeError, ValueError, TypeError):
+                _op = None
+        if isinstance(_op, (list, tuple)) and len(_op) >= 2 and _op[0] and _op[1]:
+            try:
+                _op_yes = float(_op[0])
+                _op_no = float(_op[1])
+                if 0.0 < _op_yes < 1.0 and 0.0 < _op_no < 1.0:
+                    yes_price = _op_yes
+                    no_price = _op_no
+            except (TypeError, ValueError):
+                pass
+
+        _outcomes = raw.get("outcomes")
+        _is_binary = isinstance(_outcomes, (list, tuple)) and len(_outcomes) == 2 and sorted(str(o).upper() for o in _outcomes) == ["NO", "YES"]
+        if _is_binary and yes_price is not None and no_price is not None:
+            if abs(yes_price + no_price - 1.0) > 0.02:
+                no_price = max(0.01, min(0.99, 1.0 - yes_price))
+
         # Extract city name dynamically from ICAO map keys
         city_name = "Unknown"
         title = raw.get("title", "") or raw.get("question", "")
