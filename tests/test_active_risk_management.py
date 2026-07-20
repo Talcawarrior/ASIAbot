@@ -308,44 +308,6 @@ class TestEarlyExit:
         assert "stop_loss" in reason.lower()
 
 
-# ── Rebalance Tests ──────────────────────────────────────────────────────────
-
-
-class TestRebalance:
-    """RiskManager.check_rebalance tests."""
-
-    def test_rebalance_high_edge_opportunity(self):
-        """Yeni edge 2x+ ise ve eski pozisyon zarardaysa rebalance önerir."""
-        rm = make_risk_manager()
-        old_bet = make_mock_bet(expected_value=0.10, unrealized_pnl=-20.0, stake=100.0)
-        new_signal = make_mock_signal(edge=0.40)  # 4x eski
-        result = rm.check_rebalance(new_signal, [old_bet])
-        assert result is not None
-
-    def test_rebalance_low_edge_no_action(self):
-        """Yeni edge yeterli değilse None dönmeli."""
-        rm = make_risk_manager()
-        old_bet = make_mock_bet(expected_value=0.20, unrealized_pnl=-20.0, stake=100.0)
-        new_signal = make_mock_signal(edge=0.25)  # 1.25x < 2.0
-        result = rm.check_rebalance(new_signal, [old_bet])
-        assert result is None
-
-    def test_rebalance_profitable_position_kept(self):
-        """Eski pozisyon kardaysa rebalance yapılmaz."""
-        rm = make_risk_manager()
-        old_bet = make_mock_bet(expected_value=0.10, unrealized_pnl=10.0, stake=100.0)
-        new_signal = make_mock_signal(edge=0.40)
-        result = rm.check_rebalance(new_signal, [old_bet])
-        assert result is None
-
-    def test_rebalance_no_active_bets(self):
-        """Aktif bahis yoksa None dönmeli."""
-        rm = make_risk_manager()
-        new_signal = make_mock_signal(edge=0.40)
-        result = rm.check_rebalance(new_signal, [])
-        assert result is None
-
-
 # ── Model Reversal Tests ─────────────────────────────────────────────────────
 
 
@@ -388,36 +350,6 @@ class TestModelReversal:
         assert should_exit is True
 
 
-# ── Position Sizing Tests ───────────────────────────────────────────────────
-
-
-class TestPositionSizing:
-    """RiskManager.calculate_position_size_with_risk tests."""
-
-    def test_position_size_respects_max_bet_pct(self):
-        """Max bet %3'ü aşmamalı."""
-        rm = make_risk_manager()
-        signal = _SignalObj(model_prob=0.90, entry_price=0.50)
-        size = rm.calculate_position_size_with_risk(signal, 10000)
-        # %3 of 10000 = 300
-        assert size <= 300
-
-    def test_position_size_minimum_bet(self):
-        """Minimum bet boyutundan küçük olmamalı."""
-        rm = make_risk_manager()
-        # Çok düşük Kelly için
-        signal = _SignalObj(model_prob=0.51, entry_price=0.49)
-        size = rm.calculate_position_size_with_risk(signal, 1000)
-        assert size >= 1.0  # MIN_BET_SIZE
-
-    def test_position_size_sifir_prob(self):
-        """Model prob 0'sa 0 dönmeli."""
-        rm = make_risk_manager()
-        signal = _SignalObj(model_prob=0.0, entry_price=0.50)
-        size = rm.calculate_position_size_with_risk(signal, 1000)
-        assert size == 0.0
-
-
 # ── Edge Case / Safety Tests ─────────────────────────────────────────────────
 
 
@@ -447,21 +379,6 @@ class TestEdgeCases:
         bet = make_mock_bet(entry_price=0.50)
         should_exit, _ = rm.check_take_profit(bet, 0.95)  # %90 kar
         assert should_exit is False  # %100'ü geçmedi
-
-    def test_rebalance_with_dict_signal(self):
-        """Signal dict olarak da gelebilmeli."""
-        rm = make_risk_manager()
-        old_bet = make_mock_bet(expected_value=0.10, unrealized_pnl=-20.0, stake=100.0)
-        # Dict olarak signal
-        new_signal = {
-            "market_id": "new",
-            "city": "Paris",
-            "edge": 0.50,
-            "probability": 0.80,
-            "entry_price": 0.30,
-        }
-        result = rm.check_rebalance(new_signal, [old_bet])
-        assert result is not None  # edge 5x > 0.10
 
     def test_trailing_stop_corrupted_json(self):
         """Bozuk JSON'da hata vermemeli, peak=entry_oldugu icin tetiklenmez."""

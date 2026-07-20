@@ -14,5 +14,4 @@ async def test_polymarket_scraper_has_required_methods():
     scraper = PolymarketScraper()
     assert hasattr(scraper, "fetch_polymarket_events")
     assert hasattr(scraper, "fetch_and_save")
-    assert hasattr(scraper, "init_session")
     assert hasattr(scraper, "close_session")

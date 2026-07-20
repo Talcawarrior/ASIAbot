@@ -282,18 +282,7 @@ def roi_pct(pnl: float, stake: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# 11. Daily PnL
-# ---------------------------------------------------------------------------
-
-
-def daily_pnl(today_realized: float, open_bets: list) -> float:
-    """Today's total PnL = realised today + sum(unrealised on open bets)."""
-    unrealized_total = sum(getattr(b, "unrealized_pnl", 0) or 0 for b in open_bets)
-    return today_realized + float(unrealized_total)
-
-
-# ---------------------------------------------------------------------------
-# 12. Win rate
+# 11. Win rate
 # ---------------------------------------------------------------------------
 
 

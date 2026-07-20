@@ -12,7 +12,6 @@ Test cases:
 """
 
 import pytest
-from unittest.mock import Mock
 
 # Eklenecek modüller
 from engine.calculator import Calculator
@@ -29,7 +28,6 @@ from utils.formulas import (
     bet_shares,
     roi_pct,
     win_rate_pct,
-    daily_pnl,
 )
 from config.settings import bot_config
 
@@ -440,19 +438,6 @@ class TestPortfolioValues:
 
         expected = (wins / total_closed) * 100
         assert winrate == pytest.approx(expected, abs=0.01)
-
-    def test_daily_pnl(self):
-        """Daily PnL hesaplama."""
-        realized_today = 20.0
-        open_bets = [
-            Mock(unrealized_pnl=30.0),
-            Mock(unrealized_pnl=-10.0),
-        ]
-
-        pnl = daily_pnl(realized_today, open_bets)
-
-        expected = realized_today + 30.0 + (-10.0)
-        assert pnl == expected
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -26,10 +26,6 @@ class PolymarketScraper:
         self.keywords = bot_config.polymarket.weather_keywords
         self._async_client = None
 
-    async def init_session(self):
-        """Mock init session for test compatibility."""
-        pass
-
     async def close_session(self):
         """Close the AsyncHttpClient aiohttp session (if any)."""
         client = getattr(self, "_async_client", None)

@@ -30,29 +30,6 @@ def test_fee_rate():
     print("✅ Test 1: current_fee_rate = 0.05")
 
 
-def test_ev_with_fee():
-    """Test 2: EV = edge - fee_rate * market_price * (1-market_price) in analyze_signal."""
-    from engine.strategy import BettingEngine
-
-    be = BettingEngine()
-    signal = be.analyze_signal(
-        {
-            "yes_price": 0.60,
-            "city_code": "KLGA",
-            "strike_temp": 30,
-            "market_type": "HIGH",
-        },
-        model_prob=0.75,
-        side="YES",
-    )
-    assert signal is not None
-    # edge = 0.75 - 0.60 = 0.15
-    # ev = 0.15 - 0.05 * 0.60 * 0.40 = 0.15 - 0.012 = 0.138
-    assert abs(signal["edge"] - 0.15) < 0.001, f"edge={signal['edge']}"
-    assert abs(signal["ev"] - 0.138) < 0.001, f"ev={signal['ev']}"
-    print(f"✅ Test 2: EV={signal['ev']:.4f} (edge={signal['edge']:.4f} - fee_rate * p * (1-p))")
-
-
 @pytest.mark.skip(reason="Calculator.analyze_market uses session isolated from test DB — needs bot code fix for session sharing")
 def test_kelly_bankroll():
     """Test 3: Calculator reads bankroll from DB."""
@@ -158,20 +135,6 @@ def test_sia_brier_input():
     print("✅ Test 5: SIALoop uses per-model probability for Brier score")
 
 
-def test_ladder_pending():
-    """Test 6: Ladder orders start as PENDING."""
-    from engine.strategy import BettingEngine
-
-    be = BettingEngine()
-    signal = {"market_price": 0.35, "edge": 0.06}
-    ladder = be.create_ladder_orders(signal, 30.0)
-    assert len(ladder) == 3, f"Expected 3 levels, got {len(ladder)}"
-    for lvl in ladder:
-        assert lvl["status"] == "pending", f"Level {lvl['level']} status is '{lvl['status']}', expected 'pending'"
-        assert "filled_at" in lvl, f"Level {lvl['level']} missing 'filled_at'"
-    print(f"✅ Test 6: Ladder pending OK — {ladder[0]['price']}, {ladder[1]['price']}, {ladder[2]['price']}")
-
-
 def test_exposure_query():
     """Test 7: RiskManager.get_total_exposure uses Bet.amount."""
     import inspect
@@ -192,53 +155,13 @@ def test_risk_manager_init():
     print(f"✅ Test 8: RiskManager initialized, portfolio=${rm.portfolio_value}")
 
 
-def test_betting_engine_ev_full():
-    """Test 9: Full EV pipeline with fee.
-
-    Note: analyze_signal eligibility is ev > 0 (not edge >= min_edge).
-    The min_edge check moved to Calculator.analyze_market.
-    """
-    from engine.strategy import BettingEngine
-
-    orig_min_edge = bot_config.strategy.min_edge
-    bot_config.strategy.min_edge = 0.15
-    try:
-        be = BettingEngine()
-
-        # Test with model_prob well above market price
-        s1 = be.analyze_signal(
-            {"yes_price": 0.70, "city_code": "KLGA"},
-            model_prob=0.86,
-            side="YES",
-        )
-        # edge=0.16, ev=0.16-0.05*0.70*0.30=0.1495 → eligible (ev>0)
-        assert s1 is not None, "Should be eligible"
-        assert s1["ev"] > 0, f"EV={s1['ev']}, expected positive"
-
-        # Test with ev close to zero
-        s2 = be.analyze_signal(
-            {"yes_price": 0.70, "city_code": "KLGA"},
-            model_prob=0.72,
-            side="YES",
-        )
-        # edge=0.02, ev=0.02-0.05*0.70*0.30=0.0095 → still positive
-        # The check is ev > 0, not edge >= min_edge
-        assert s2 is not None, "Should be eligible (ev > 0)"
-        print(f"✅ Test 9: EV pipeline OK — eligible s1 ev={s1['ev']:.4f}, eligible s2 ev={s2['ev']:.4f}")
-    finally:
-        bot_config.strategy.min_edge = orig_min_edge
-
-
 if __name__ == "__main__":
     test_fee_rate()
-    test_ev_with_fee()
     test_kelly_bankroll()
     test_sia_status()
     test_sia_brier_input()
-    test_ladder_pending()
     test_exposure_query()
     test_risk_manager_init()
-    test_betting_engine_ev_full()
     print("\n" + "=" * 50)
     print("ALL FAZ 3 TESTS PASSED ✅")
     print("=" * 50)

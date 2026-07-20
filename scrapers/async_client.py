@@ -15,8 +15,6 @@ The public surface is intentionally tiny so the meteo + polymarket
 scrapers can be refactored one at a time:
 
     client = AsyncHttpClient()
-    data   = client.fetch(url, params=..., host=...)            # one call
-    data   = client.fetch_one_blocking(url, params=..., host=...)# sync shim
     datas  = client.fetch_many([(url, params, host), ...])      # parallel
 """
 
@@ -157,11 +155,10 @@ async def _async_fetch_one(
 
 # ---- Public client -----------------------------------------------------
 class AsyncHttpClient:
-    """Tiny wrapper exposing both async and sync entry points.
+    """Tiny wrapper for parallel batch fetching with cache + throttle.
 
-    Use ``fetch_many`` for parallel batch work and ``fetch_one_blocking``
-    as a drop-in replacement for the legacy ``requests.get(...).json()``
-    call sites that have not been refactored yet.
+    Use ``fetch_many`` for all call sites; it falls back to a synchronous
+    ``requests`` path when aiohttp is not installed.
     """
 
     def __init__(self, max_concurrent: int = MAX_CONCURRENT) -> None:
@@ -237,29 +234,7 @@ class AsyncHttpClient:
                     t.cancel()
             await session.close()
 
-    # ---- sync entry points --------------------------------------------
-    def fetch_one_blocking(self, url: str, params: dict | None = None, host: str = "") -> Any:
-        """Synchronous fetch with cache + throttle. Returns parsed JSON or None.
-
-        Uses aiohttp when available, falling back to ``requests`` so a
-        minimal-CI install without aiohttp still works (slower, no
-        parallelism, but functionally correct).
-        """
-        key = _cache_key(url, params)
-        hit, cached = _cache_get(key)
-        if hit:
-            return cached
-        if not _HAS_AIOHTTP:
-            return self._sync_fetch(url, params, host, key)
-        return asyncio.run(self._afetch_one_async(url, params, host, key))
-
-    async def _afetch_one_async(self, url: str, params: dict | None, host: str, key: tuple) -> Any:
-        results = await self._afetch([(url, params, host)])
-        value = results[0] if results else None
-        # Also cache here in case _afetch didn't cache (e.g. aiohttp-less path)
-        _cache_set(key, value)
-        return value
-
+    # ---- sync fallback (aiohttp-less installs only) --------------------
     def _sync_fetch(self, url: str, params: dict | None, host: str, key: tuple) -> Any:
         if host:
             _throttle(host)

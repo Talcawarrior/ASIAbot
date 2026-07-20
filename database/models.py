@@ -236,10 +236,6 @@ class ModelPerformance(Base):
     recorded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-# Compatibility Aliases
-Market = WeatherMarket
-
-
 class HistoricalCalibration(Base):
     """Historical calibration records for Karpathy search and backtesting."""
 

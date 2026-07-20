@@ -35,10 +35,8 @@ from database.db import (
     init_db,
 )
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
-from engine.calculator import WeatherEngine
-from engine.strategy import BettingEngine, RiskManager, SIALoop
+from engine.strategy import RiskManager, SIALoop
 from executor.settler import SettlementEngine
-from scrapers.polymarket import PolymarketScraper
 from utils.formulas import max_exposure_cap, portfolio_current_value, roi_pct, win_rate_pct
 from utils.price_sanity import safe_ev
 from utils.weights_store import load_weights
@@ -96,7 +94,6 @@ class BotState:
     def __init__(self):
         self.is_running = False
         self.locked = False
-        self.lock_reason = None
         self.last_scan = None
         self.total_signals = 0
         self.total_bets = 0
@@ -107,10 +104,7 @@ class BotState:
         # Config reference
         self.config = config
         self.db_session_factory = None
-        self.data_fetcher = None
-        self.weather_engine = None
         self.risk_manager = None
-        self.betting_engine = None
         self.settlement_engine = None
         self.sia_loop = None
         self.sia_last_run = None  # datetime of last SIA optimization
@@ -124,10 +118,7 @@ class BotState:
     def initialize_modules(self):
         """Initialize all modular components."""
         self.db_session_factory = get_db_session_factory()
-        self.data_fetcher = PolymarketScraper()
-        self.weather_engine = WeatherEngine(self.db_session_factory, self.config)
         self.risk_manager = RiskManager(None, self.config)
-        self.betting_engine = BettingEngine(None, self.risk_manager, self.weather_engine)
         self.settlement_engine = SettlementEngine()
         self.sia_loop = SIALoop(self.db_session_factory, self.config)
 

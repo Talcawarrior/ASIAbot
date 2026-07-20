@@ -21,9 +21,6 @@ logger = logging.getLogger("UTIL_SLIPPAGE")
 # ---------------------------------------------------------------------------
 # Default cost constants (mirrors strategy_params.json / karpathy_weekly.py)
 # ---------------------------------------------------------------------------
-FEE_PCT: float = 0.05  # Polymarket Weather category taker fee rate (5 %)
-# Correct formula: fee = C × feeRate × p × (1-p) = stake × feeRate × (1-p)
-# See utils/formulas.py → polymarket_fee() for the canonical implementation.
 GAS_COST_USD: float = 0.10  # Polygon gas per round-trip
 
 

@@ -360,13 +360,6 @@ OPEN_METEO_MODEL_MAP = {
     "meteofrance_seamless": "meteofrance_seamless",
 }
 
-METRIC_MAP = {
-    "temperature_max": "temperature_2m_max",
-    "temperature_min": "temperature_2m_min",
-    "temperature_2m_max": "temperature_2m_max",
-    "temperature_2m_min": "temperature_2m_min",
-}
-
 
 class WeatherEngine:
     """Weather engine consensus calculator (FastAPI / test compatibility wrapper)."""
