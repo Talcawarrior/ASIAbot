@@ -121,11 +121,21 @@ def log(msg: str):
 
 # ── Bot process bulma / oldurme ───────────────────────────────────────────
 def find_bot_pids():
-    """'main.py bot' calistiran tum python process'lerinin PID'lerini bulur."""
+    """Bu projenin 'main.py bot' calistiran python process'lerinin PID'lerini bulur.
+
+    Onemli: ayni kodu calistiran baska bot'lari (orn. junbo) YANLISLIKLA
+    oldurmemek icin, commandline BU projenin mutlak main.py yolunu icermeli.
+    junbo'nun commandline'i sadece 'main.py bot' oldugu icin eslesmez.
+    """
     pids = []
+    bot_main_abs = os.path.join(BOT_DIR, "main.py")
     if not IS_WINDOWS:
         try:
-            out = subprocess.check_output(["pgrep", "-f", "main.py.*bot"], text=True, stderr=subprocess.DEVNULL)
+            out = subprocess.check_output(
+                ["pgrep", "-f", f"{bot_main_abs}.*bot"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
             for line in out.splitlines():
                 line = line.strip()
                 if line.isdigit():
@@ -134,24 +144,29 @@ def find_bot_pids():
             pass
         return pids
 
-    # Windows: WMIC ile commandline icinde 'main.py' + 'bot' gecen PID'ler
+    # Windows: commandline icinde BU projenin mutlak main.py yolu gecen PID'ler
+    like_pat = f"*{bot_main_abs}*"
     try:
+        ps_cmd = (
+            "Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='pythonw.exe'\""
+            f" | Where-Object {{ $_.CommandLine -like '{like_pat}' -and $_.CommandLine -like '*bot*' }}"
+            " | Select-Object ProcessId | ConvertTo-Json -Compress"
+        )
         out = subprocess.check_output(
-            [
-                "wmic",
-                "process",
-                "where",
-                "name='python.exe' and commandline like '%main.py%bot%'",
-                "get",
-                "processid",
-            ],
+            ["powershell", "-NoProfile", "-Command", ps_cmd],
             text=True,
             stderr=subprocess.DEVNULL,
         )
-        for line in out.splitlines():
-            line = line.strip()
-            if line.isdigit():
-                pids.append(int(line))
+        out = out.strip()
+        if not out:
+            return pids
+        data = json.loads(out)
+        if isinstance(data, dict):
+            data = [data]
+        for item in data:
+            pid = item.get("ProcessId")
+            if isinstance(pid, int):
+                pids.append(pid)
     except Exception:
         pass
     return pids
@@ -261,7 +276,7 @@ def is_bot_healthy():
 
 # ── Bot baslatma ────────────────────────────────────────────────────────────
 def start_bot():
-    cmd = [sys.executable, "main.py", "bot"]
+    cmd = [sys.executable, os.path.join(BOT_DIR, "main.py"), "bot"]
     kwargs = {
         "cwd": BOT_DIR,
         "stdout": subprocess.DEVNULL,
@@ -333,8 +348,14 @@ def watchdog_loop():
                     time.sleep(CHECK_INTERVAL)
                     continue
 
-                if elapsed >= UNHEALTHY_TIMEOUT:
-                    log(f"{UNHEALTHY_TIMEOUT}s sagliksiz -> yeniden baslatma karari")
+                # Yonetilen bot yoksa (ilk acilis / watchdog yeni basladi)
+                # 120s beklemeden hemen baslat.
+                immediate = proc is None
+                if immediate or elapsed >= UNHEALTHY_TIMEOUT:
+                    if immediate:
+                        log("Yonetilen bot yok -> hemen baslatiliyor")
+                    else:
+                        log(f"{UNHEALTHY_TIMEOUT}s sagliksiz -> yeniden baslatma karari")
                     proc = restart_bot(proc)
                     restart_count += 1
                     unhealthy_since = None

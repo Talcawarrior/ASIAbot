@@ -49,9 +49,14 @@ _USER_AGENT = "asiabot/1.0 (+tier3-12)"
 
 
 # ---- Cache -------------------------------------------------------------
-# (url, frozen-params) -> result-or-None. We remember failures (None)
-# too so a 429-storm does not get retried by every market in the scan.
-_CACHE: dict[tuple, Any] = {}
+# (url, frozen-params) -> (result-or-None, expires_at). We remember
+# failures (None) too so a 429-storm does not get retried by every market
+# in the scan. Successful entries live for a couple of minutes (long enough
+# to dedupe identical requests within a single scan); failures expire faster
+# so a transient 429 does not suppress fetches for the whole run.
+_CACHE_TTL_S = 120.0
+_CACHE_FAILURE_TTL_S = 30.0
+_CACHE: dict[tuple, tuple[Any, float]] = {}
 _CACHE_LOCK = threading.Lock()
 
 
@@ -62,17 +67,24 @@ def _cache_key(url: str, params: dict | None) -> tuple:
 
 
 def _cache_get(key: tuple) -> tuple[bool, Any]:
-    """Return (hit, value). hit=True even when the cached value is None
-    so callers can short-circuit failed fetches."""
+    """Return (hit, value). ``hit`` is False once the entry has expired so
+    callers re-fetch. A live ``None`` value (cached failure) still reports
+    ``hit=True`` until it expires, short-circuiting repeated 429s."""
     with _CACHE_LOCK:
-        if key in _CACHE:
-            return True, _CACHE[key]
-        return False, None
+        entry = _CACHE.get(key)
+        if entry is None:
+            return False, None
+        value, expires_at = entry
+        if time.monotonic() > expires_at:
+            _CACHE.pop(key, None)
+            return False, None
+        return True, value
 
 
 def _cache_set(key: tuple, value: Any) -> None:
+    ttl = _CACHE_TTL_S if value is not None else _CACHE_FAILURE_TTL_S
     with _CACHE_LOCK:
-        _CACHE[key] = value
+        _CACHE[key] = (value, time.monotonic() + ttl)
 
 
 def cache_clear() -> None:
