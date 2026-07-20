@@ -141,6 +141,10 @@ def create_backup(label="auto", category=None):
     size_kb = os.path.getsize(gz_path) / 1024
     print(f"Backup created: {os.path.basename(gz_path)} ({size_kb:.0f} KB)")
 
+    # Verify the freshly written backup is restorable before we trust it.
+    if not verify_backup(gz_path):
+        print(f"WARNING: freshly written backup failed integrity_check: {gz_path}")
+
     # Retention: per category (label family), keep newest N.
     _cleanup_old(category or safe)
 
@@ -160,6 +164,9 @@ def copy_to_offsite(backup_path: str, offsite_dir: str | None = None) -> str | N
     to ``offsite_dir`` (defaults to OFFSITE_DIR, a sibling of the project).
     Returns the copied path, or None if there is nothing to copy.
     No encryption — plain portable copy, as configured.
+
+    Offsite copies are pruned per category (same N as local) so the DR
+    directory cannot grow unbounded.
     """
     offsite_dir = offsite_dir or OFFSITE_DIR
     if not backup_path.endswith(".gz") or not os.path.exists(backup_path):
@@ -168,7 +175,29 @@ def copy_to_offsite(backup_path: str, offsite_dir: str | None = None) -> str | N
     dest = os.path.join(offsite_dir, os.path.basename(backup_path))
     shutil.copy2(backup_path, dest)
     print(f"Offsite copy: {os.path.basename(dest)} -> {offsite_dir}")
+    # Derive category from the filename: bot_<category>_*.db.gz
+    base = os.path.basename(backup_path)
+    parts = base.split("_")
+    cat = parts[1] if len(parts) > 2 else "auto"
+    _cleanup_offsite(cat)
     return dest
+
+
+def _cleanup_offsite(category: str):
+    """Prune offsite copies per category, keeping the newest N (same as local).
+
+    Without this the offsite DR directory grows without bound — every bot
+    restart and every test run appends a new .gz and nothing is ever deleted.
+    """
+    if not os.path.isdir(OFFSITE_DIR):
+        return
+    pattern = os.path.join(OFFSITE_DIR, f"bot_{_safe_label(category)}_*.db.gz")
+    backups = sorted(glob.glob(pattern))
+    for old in backups[: max(0, len(backups) - MAX_BACKUPS_PER_CATEGORY)]:
+        try:
+            os.unlink(old)
+        except OSError:
+            pass
 
 
 def _cleanup_old(category: str):

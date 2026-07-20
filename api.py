@@ -1471,6 +1471,12 @@ def get_health_check():
             )
         # Ascending order already: 17/07, 18/07, 19/07, ... (no reverse needed)
 
+        # Trim leading days with no settled/closed bets so the chart's leftmost
+        # bar is the bot's first real trading day (e.g. 16/7) instead of ~30
+        # empty days back. Trailing empties (e.g. today, not settled yet) stay.
+        _first = next((i for i, d in enumerate(daily_pnl) if d["total"] > 0), 0)
+        daily_pnl = daily_pnl[_first:]
+
         # 7. Overall verdict
         if not red_flags or all(f["severity"] == "info" for f in red_flags):
             verdict = "healthy"

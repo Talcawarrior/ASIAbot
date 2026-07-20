@@ -2,12 +2,14 @@
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import func
 
 from database.db import get_session, get_session_or
 from database.models import OPEN_BET_STATUSES, Analysis, Bet, Portfolio, WeatherMarket
+from executor.bet_placer import BetPlacer
 from utils.formulas import (
     polymarket_fee,
     portfolio_total_value,
@@ -120,6 +122,27 @@ def run_update_prices(session=None):
         price_map = {}
         if market_ids:
             markets = sess.query(WeatherMarket).filter(WeatherMarket.id.in_(market_ids)).all()
+            # Refresh LIVE Polymarket prices for markets that have open bets, so
+            # the dashboard AND the 0.98 auto-close rule see current prices
+            # instead of the stale cached price left by the analyze step.
+            try:
+                from executor.settler import SettlementEngine as _SE
+
+                _se = _SE()
+                for _m in markets:
+                    try:
+                        _data = _se._call_gamma_api(_m)
+                        if _data and _data.get("outcomePrices"):
+                            _prices = _se._parse_outcome_prices(_m, _data["outcomePrices"])
+                            if _prices:
+                                _m.yes_price = float(_prices[0])
+                                _m.no_price = float(_prices[1])
+                                _m.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
+                    except Exception as _e:  # keep stale price on any failure
+                        logger.warning("Live price refresh failed for %s: %s", _m.id, _e)
+                    time.sleep(0.05)
+            except Exception as _e:
+                logger.warning("Bulk live price refresh error: %s", _e)
             for m in markets:
                 price_map[m.id] = {
                     "yes": float(m.yes_price) if m.yes_price is not None else 0.5,
@@ -241,7 +264,7 @@ def run_report():
         return report
 
 
-def _partial_close_early(bet, sess, reason, current_price):
+def _partial_close_early(bet, sess, reason, current_price, market=None, placer=None):
     """Kısmi take-profit: ana parayı kurtaracak kadar sat, kalan pozisyonu
     açık tut (trailing stop ile "free ride"). Bet status AKTİF kalır — bu
     tam kapanma DEĞİLDİR.
@@ -280,6 +303,16 @@ def _partial_close_early(bet, sess, reason, current_price):
 
     # Credit net proceeds to cash (central accounting)
     credit_sale(sess, proceeds_net, f"partial_tp:{bet.market_id}:{reason}")
+
+    # Execute the real (or paper) sell for the sold fraction so the position is
+    # actually reduced on Polymarket, not just shrunk in the DB.
+    if placer is not None and market is not None:
+        try:
+            sell_order = placer.exit_position(market, bet.side, current_price, sold_shares, reason)
+            if sell_order and sell_order.get("orderID"):
+                bet.tx_hash = str(sell_order.get("orderID"))
+        except Exception as e:  # never break the partial-close bookkeeping
+            logger.warning("partial exit sell failed (paper-safe): %s", e)
 
     # Shrink the open position; keep status active
     bet.shares = remaining_shares
@@ -326,6 +359,7 @@ def run_risk_management(session=None):
 
     with get_session_or(session) as sess:
         rm = RiskManager(db_session=sess, cfg=bot_config)
+        placer = None  # lazily created only when an early exit actually fires
         bets = sess.query(Bet).filter(Bet.status.in_(OPEN_BET_STATUSES)).all()
 
         if not bets:
@@ -363,9 +397,11 @@ def run_risk_management(session=None):
                     should_exit, reason = True, rev_reason
 
             if should_exit:
+                if placer is None:
+                    placer = BetPlacer()
                 if reason.startswith("partial_take_profit"):
                     # Partial TP: recover principal, keep remainder open (trailing stop)
-                    _partial_close_early(bet, sess, reason, current_price)
+                    _partial_close_early(bet, sess, reason, current_price, market=market, placer=placer)
                     partial_count += 1
                 else:
                     from utils.accounting import credit_sale
@@ -413,6 +449,12 @@ def run_risk_management(session=None):
 
                     # Credit net proceeds (after fee) to cash via central accounting.
                     credit_sale(sess, proceeds_net, f"early_exit:{bet.market_id}:{reason}")
+
+                    # Execute the real (or paper) sell on Polymarket so the position
+                    # is actually closed, not just booked in the DB.
+                    sell_order = placer.exit_position(market, bet.side, current_price, exit_shares, reason)
+                    if sell_order and sell_order.get("orderID"):
+                        bet.tx_hash = str(sell_order.get("orderID"))
 
                     portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
                     if portfolio:

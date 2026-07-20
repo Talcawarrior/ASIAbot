@@ -591,3 +591,64 @@ class BetPlacer:
                 continue
 
         return placed
+
+    def exit_position(self, market, side: str, price: float, size: float, reason: str = "early_exit") -> dict | None:
+        """Erken çıkışta pozisyonu Polymarket'te SAT (gerçek) veya kağıt simüle et.
+
+        Canlı modda (DRY_RUN=false VE LIVE_TRADING_ENABLED=true) gerçek bir SELL
+        emri gönderir. Kağıt modunda (varsayılan) yalnızca simüle edilmiş bir
+        satış kaydı döndürür ve hiçbir gerçek emir göndermez — böylece 10 günlük
+        kağıt modu boyunca yan etkisiz kalır, ama canlı moda geçince gerçekten satar.
+
+        Dönüş: Polymarket order dict'i (içinde orderID) veya kağıt kaydı; hata
+        durumunda None.
+        """
+        side = (side or "YES").upper()
+        price_f = max(0.01, min(0.99, float(price)))
+        size_f = float(size)
+        if size_f <= 0:
+            logger.warning("exit_position atlandi: market %s icin pozitif olmayan size", getattr(market, "id", "?"))
+            return None
+
+        # HARD GUARD: place_bet ile ayni — sadece LIVE_TRADING_ENABLED=true ise gercek satis.
+        _live_allowed = (not Config.DRY_RUN) and os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
+        if self.ready and _live_allowed:
+            try:
+                from py_clob_client.order_builder.constants import (
+                    SELL,  # pylint: disable=import-error,no-name-in-module
+                )
+
+                order = self.client.create_and_post_order(
+                    {
+                        "token_id": self._get_token_id(market, side),
+                        "price": price_f,
+                        "size": size_f,
+                        "side": SELL,
+                    }
+                )
+                logger.info(
+                    "LIVE BET CLOSED: %s | %s %.4f shares @ %.4f (reason=%s) orderID=%s",
+                    getattr(market, "id", "?"),
+                    side,
+                    size_f,
+                    price_f,
+                    reason,
+                    order.get("orderID"),
+                )
+                return order
+            except Exception as e:
+                logger.error("Live exit failed market %s: %s", getattr(market, "id", "?"), e)
+                return None
+        else:
+            now_ts = int(datetime.now(timezone.utc).replace(tzinfo=None).timestamp())
+            paper_id = f"paper_sell_{getattr(market, 'id', '?')}_{now_ts}"
+            logger.info(
+                "PAPER BET CLOSED: %s | %s %.4f shares @ %.4f (reason=%s) [%s]",
+                getattr(market, "id", "?"),
+                side,
+                size_f,
+                price_f,
+                reason,
+                paper_id,
+            )
+            return {"orderID": paper_id, "side": "SELL", "paper": True}

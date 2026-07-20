@@ -80,7 +80,7 @@ class StrategyConfig:
     # private weather feed (e.g. ECMWF-direct) gives a structural edge.
     min_edge: float = 0.05  # 5% edge minimum (must exceed 2% fee_drag + margin)
     max_bet_amount: float = 3.0  # Maximum $3 per bet (binde 3 of $1,000)
-    max_bet_pct: float = 0.006  # Max bet as % of portfolio (single source of truth)
+    max_bet_pct: float = 0.010  # Max bet as % of portfolio (single source of truth)
     min_bet_size: float = 1.0  # Minimum bet size in USD
     total_exposure_pct: float = 0.25  # Max total exposure as % of portfolio
     min_liquidity: float = 0.0  # Liquidity check disabled: Polymarket public-search

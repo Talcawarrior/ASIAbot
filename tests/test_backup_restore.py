@@ -34,9 +34,12 @@ def live_db(tmp_path, monkeypatch):
     monkeypatch.setattr("db_backup.DB_PATH", str(db_path))
     monkeypatch.setattr("db_backup.DB_DIR", str(tmp_path))
     monkeypatch.setattr("db_backup.BACKUP_DIR", str(tmp_path / "backups"))
+    # Keep test runs from polluting the real offsite DR directory.
+    monkeypatch.setattr("db_backup.OFFSITE_DIR", str(tmp_path / "offsite"))
     import db_backup as _dbmod
 
     monkeypatch.setattr(_dbmod, "BACKUP_DIR", str(tmp_path / "backups"))
+    monkeypatch.setattr(_dbmod, "OFFSITE_DIR", str(tmp_path / "offsite"))
     return str(db_path)
 
 
@@ -106,3 +109,30 @@ def test_offsite_copy_to_separate_directory(live_db, tmp_path, monkeypatch):
     gz_files = [f for f in os.listdir(offsite) if f.endswith(".db.gz")]
     assert len(gz_files) == 1  # latest compressed backup copied offsite
     assert os.path.exists(os.path.join(str(offsite), gz_files[0]))
+
+
+def test_offsite_retention_truncates(live_db, monkeypatch, tmp_path):
+    """Offsite DR copies must be pruned per category, not grow unbounded.
+
+    Regression: copy_to_offsite previously never deleted anything, so the
+    offsite directory accumulated every restart/test backup forever (1.27 GB).
+    """
+    import db_backup as _dbmod
+
+    monkeypatch.setattr("db_backup.MAX_BACKUPS_PER_CATEGORY", 3)
+    offsite = tmp_path / "offsite2"
+    monkeypatch.setattr(_dbmod, "OFFSITE_DIR", str(offsite))
+    monkeypatch.setattr("db_backup.OFFSITE_DIR", str(offsite))
+
+    for _ in range(6):
+        create_backup("scheduled")
+
+    offsite_files = [f for f in os.listdir(offsite) if f.startswith("bot_scheduled_") and f.endswith(".db.gz")]
+    assert len(offsite_files) == 3  # offsite pruned, newest 3 kept
+
+
+def test_written_backup_passes_integrity(live_db):
+    """A freshly written backup must pass integrity_check (verified at write time)."""
+    path = create_backup("startup")
+    assert path is not None
+    assert verify_backup(path) is True

@@ -1255,7 +1255,15 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                       <BarChart data={h.daily_pnl_timeline} margin={{ top: 5, right: 12, left: 10, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
-                        <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v}`} width={50} />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: TEXT_MUTED }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={56}
+                          domain={[0, "auto"]}
+                          allowDecimals={false}
+                          tickFormatter={(v: number) => `$${Math.round(v)}`}
+                        />
                         <Tooltip content={<PnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                         <Bar dataKey="pnl" radius={[4, 4, 0, 0]} barSize={36}>
                           {h.daily_pnl_timeline.map((entry, i) => (
