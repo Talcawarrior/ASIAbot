@@ -140,11 +140,32 @@ class SettlementEngine:
             .all()
         )
 
-        if not open_bets:
-            market.status = "expired"
-            return None
-
         now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        # Even with no OPEN bets on this market (e.g. every position was
+        # closed early), the market ITSELF still resolves on Polymarket 1-2
+        # days after its target_date. We must still fetch that official
+        # resolution and persist it (market.raw_data.outcome) so the SIA
+        # model-performance scoring can compare our stored per-model prediction
+        # against the real outcome. Without this, the outcome is lost forever
+        # and models can never be evaluated on the majority of bets.
+        if not open_bets:
+            outcome = self._fetch_market_resolution(market)
+            if outcome is None and market.target_date and (now_naive - market.target_date) > timedelta(hours=48):
+                outcome = self._fetch_market_resolution(market, force=True)
+            if outcome is not None:
+                logger.info(
+                    "Market %s resolved (no open bets — likely closed early): outcome=%s — recorded for model scoring",
+                    market.id,
+                    outcome,
+                )
+                market.status = "expired"
+                # No open bets to settle, but the outcome is now recorded for
+                # SIA model scoring — report a zero-gain settlement (not pending).
+                return {"won": 0, "lost": 0, "pnl": 0.0}
+            # Unresolved: leave status unchanged so the next cycle retries
+            # (don't permanently expire a market whose outcome we can still capture).
+            return None
 
         # ── Fetch resolution from Gamma API ────────────────────────────────
         outcome = self._fetch_market_resolution(market)

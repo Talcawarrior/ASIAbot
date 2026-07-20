@@ -318,6 +318,74 @@ class TestSettlementPolymarket:
         finally:
             _clean()
 
+    def test_closed_early_market_records_outcome(self):
+        """A market whose only bet was closed early (not in OPEN_BET_STATUSES)
+        must still have its Polymarket resolution fetched and persisted to
+        market.raw_data.outcome, so SIA can score the original per-model
+        prediction against the real outcome.
+
+        Regression: previously such markets were marked 'expired' without ever
+        fetching the resolution, so the outcome was lost forever and models
+        could never be evaluated on the majority of bets.
+        """
+        _clean()
+        target = datetime.now() - timedelta(days=1)
+        with get_session() as session:
+            pf = Portfolio(id=1, cash_balance=1000.0, total_value=1000.0, current_value=1000.0)
+            session.add(pf)
+            market = WeatherMarket(
+                id="test-closed-early-001",
+                question="Test market",
+                city="TestCity",
+                city_code="TEST",
+                metric="temperature_max",
+                threshold=30.0,
+                target_date=target,
+                yes_price=0.35,
+                no_price=0.65,
+                status="bet_placed",
+                latitude=40.0,
+                longitude=-70.0,
+                market_type="HIGH",
+            )
+            session.add(market)
+            bet = Bet(
+                market_id="test-closed-early-001",
+                side="YES",
+                amount=10.0,
+                price=0.35,
+                entry_price=0.35,
+                shares=10.0 / 0.35,
+                status="closed_early",
+                unrealized_pnl=0.0,
+            )
+            session.add(bet)
+            session.commit()
+        try:
+            with patch("executor.settler.requests.get") as mock_get:
+                mock_get.return_value = _gamma_mock(outcome_prices=["1", "0"])
+                from executor.settler import SettlementEngine
+
+                engine = SettlementEngine()
+                results = engine.settle_all()
+                # No open bets to settle, but the market resolved successfully.
+                assert results["win"] == 0
+                assert results["loss"] == 0
+                assert results["pending"] == 0
+
+            with get_session() as session:
+                mkt = session.query(WeatherMarket).filter(WeatherMarket.id == "test-closed-early-001").first()
+                assert mkt.raw_data is not None
+                rd = json.loads(mkt.raw_data)
+                assert rd["outcome"] == "YES"
+                assert mkt.status == "expired"
+
+                # The closed_early bet must NOT be touched by settlement.
+                bet_db = session.query(Bet).filter(Bet.market_id == "test-closed-early-001").first()
+                assert bet_db.status == "closed_early"
+        finally:
+            _clean()
+
     def test_pnl_cash_reconciliation(self):
         """1 win + 1 loss: cash reflects win payout-fee only; total_realized_pnl sums both."""
         market, bet_yes, bet_no, pf = _setup_market_with_bets(yes_price=0.35, stake=10.0)
