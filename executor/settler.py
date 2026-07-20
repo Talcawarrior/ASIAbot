@@ -93,6 +93,37 @@ class SettlementEngine:
                     )
                     pending_count += 1
 
+            # ── Record outcomes for already-expired markets ──────────────
+            # Closed_early markets were previously marked "expired" WITHOUT
+            # capturing Polymarket's resolution (old settler code returned
+            # early before fetching it). The loop above only touches
+            # open/bet_placed markets, so those outcomes would be lost
+            # forever — and SIA could never score the predictions we made.
+            # Re-fetch + persist the resolution here, every cycle, so model
+            # performance scoring can use them. Lightweight: no alerts, no
+            # PnL, no status change; markets already holding an outcome are
+            # skipped.
+            expired_missing = (
+                session.query(WeatherMarket)
+                .filter(
+                    WeatherMarket.status == "expired",
+                    func.date(WeatherMarket.target_date) <= func.date(now_naive),
+                    func.date(WeatherMarket.target_date) >= func.date(now_naive - timedelta(days=10)),
+                )
+                .all()
+            )
+            for market in expired_missing:
+                raw = market.raw_data
+                if raw:
+                    try:
+                        if json.loads(raw).get("outcome") in ("YES", "NO"):
+                            continue  # already recorded
+                    except Exception:
+                        pass
+                # Fetch + persist resolution if Polymarket has resolved it;
+                # if not yet resolved, raw_data is left untouched for next cycle.
+                self._fetch_market_resolution(market)
+
             session.commit()
 
         # Post-settlement portfolio sync
