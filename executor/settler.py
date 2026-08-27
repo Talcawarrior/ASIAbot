@@ -57,11 +57,10 @@ class SettlementEngine:
                 session.query(WeatherMarket)
                 .filter(
                     WeatherMarket.status.in_(open_statuses),
-                    # Compare DATE only: settle as soon as it's the target day,
-                    # not waiting for 23:59 UTC. Polymarket resolution is checked
-                    # separately in _settle_market().
                     func.date(WeatherMarket.target_date) <= func.date(now_naive),
                 )
+                .order_by(WeatherMarket.target_date.asc())
+                .limit(50)
                 .all()
             )
 
@@ -164,6 +163,24 @@ class SettlementEngine:
                 "Market %s not yet resolved by Polymarket, will retry",
                 market.id,
             )
+            # Log what our cheap sources expect (for stale >24h debugging)
+            try:
+                from utils.weather_sources import settlement_actual
+
+                tgt2 = market.target_date.date() if hasattr(market.target_date, "date") else None
+                if tgt2 and market.city_code and market.latitude and market.longitude:
+                    actual2, src2 = settlement_actual(market.city_code, market.latitude, market.longitude, tgt2)
+                    if actual2 is not None:
+                        logger.info(
+                            "Pending verify %s %s: %s %.1fC (%s) - Poly still pending",
+                            market.city_code,
+                            tgt2,
+                            src2,
+                            actual2,
+                            market.market_type,
+                        )
+            except Exception:
+                pass
             return None  # pending, try again next cycle
 
         logger.info(
@@ -171,6 +188,48 @@ class SettlementEngine:
             market.id,
             outcome,
         )
+
+        # ── Independent settlement verification (VC / IEM) ───────────────
+        # Logs whether our cheap sources (IEM for US, VC global) agree with Poly's WU.
+        # Does NOT override Poly's official outcome, just for monitoring / fallback.
+        try:
+            from utils.weather_sources import settlement_actual
+
+            tgt = market.target_date.date() if hasattr(market.target_date, "date") else None
+            if tgt and market.city_code and market.latitude and market.longitude:
+                actual, src = settlement_actual(market.city_code, market.latitude, market.longitude, tgt)
+                if actual is not None:
+                    # Determine expected outcome from our actual
+                    expected = None
+                    mtype = (market.market_type or "HIGH").upper()
+                    thr = float(market.threshold or 0)
+                    lo = market.threshold_low
+                    hi = market.threshold_high
+                    if mtype == "RANGE" and lo is not None and hi is not None:
+                        expected = "YES" if float(lo) <= actual <= float(hi) else "NO"
+                        win_s = f"[{lo}-{hi}]"
+                    elif mtype == "HIGH":
+                        expected = "YES" if actual >= thr else "NO"
+                        win_s = f">={thr}"
+                    elif mtype == "LOW":
+                        expected = "YES" if actual <= thr else "NO"
+                        win_s = f"<={thr}"
+                    else:
+                        win_s = str(thr)
+                    if expected:
+                        match = "OK" if expected == outcome else "SAPMA"
+                        logger.info(
+                            "Settlement verify %s %s: %s %.1fC (%s) vs Poly %s (win %s) -> %s",
+                            market.city_code,
+                            tgt,
+                            src,
+                            actual,
+                            win_s,
+                            outcome,
+                            match,
+                        )
+        except Exception as _ve:
+            logger.debug("Settlement verify skipped for %s: %s", market.id, _ve)
 
         # ── Settle bets ────────────────────────────────────────────────────
         total_market_pnl = 0.0
@@ -286,19 +345,36 @@ class SettlementEngine:
         return outcome
 
     def _call_gamma_api(self, market) -> dict | None:
-        """Make GET request to Gamma API and return parsed JSON."""
-        try:
-            url = f"{GAMMA_API_BASE}/markets/{market.id}"
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-            return resp.json()
-        except requests.RequestException as e:
-            logger.warning(
-                "Gamma API request failed for %s: %s",
-                market.id,
-                e,
-            )
-            return None
+        """Make GET request to Gamma API with retry/backoff + Warp proxy.
+
+        Gamma API geo-blocks/rate-limits the datacenter IP (ConnectionResetError
+        10054).  Route through Cloudflare Warp SOCKS5 proxy on localhost:40000
+        and retry 3x with exponential backoff on 429 / connection resets.
+        """
+        import time as _time
+
+        url = f"{GAMMA_API_BASE}/markets/{market.id}"
+        proxies = {"http": "socks5://127.0.0.1:40000", "https": "socks5://127.0.0.1:40000"}
+        for attempt in range(1, 4):
+            # Throttle Gamma to avoid 429 (50 markets at once)
+            _time.sleep(0.35 * attempt)
+            try:
+                resp = requests.get(url, timeout=20, proxies=proxies)
+                if resp.status_code == 429:
+                    logger.warning("Gamma 429 for %s - attempt %d/3, backoff %ds", market.id, attempt, attempt * 2)
+                    _time.sleep(attempt * 2)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except requests.RequestException as e:
+                logger.warning(
+                    "Gamma API request failed for %s (attempt %d/3): %s",
+                    market.id,
+                    attempt,
+                    e,
+                )
+                _time.sleep(attempt * 2)
+        return None
 
     @staticmethod
     def _parse_outcome_prices(market, raw_prices) -> list | None:

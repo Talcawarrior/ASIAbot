@@ -1,4 +1,4 @@
-﻿"""asiabot entry point â€” CLI and bot launcher.
+"""asiabot entry point â€” CLI and bot launcher.
 
 Thin wrapper that imports the FastAPI app, BotState, and bot loops
 from their dedicated modules:
@@ -26,11 +26,12 @@ setup_logging()
 
 # Import app, state, and loop functions from split modules.
 from api import app, scan_and_bet_loop, settlement_loop, state  # noqa: E402
+from bot_loop import forecast_collector_loop, t_horizon_report_loop  # noqa: E402
 
 logger = __import__("logging").getLogger(__name__)
 
 
-# â”€â”€ Port conflict prevention â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# --------------------------------------------------------------------------------
 def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
     """Kill any process listening on *port* so we can bind to it.
 
@@ -127,6 +128,7 @@ def run_cli():
     # Bot baÅŸlamadan Ã¶nce DB backup al
     try:
         from db_backup import create_backup
+
         create_backup("startup")
     except Exception:
         pass
@@ -151,9 +153,11 @@ def run_cli():
         "bet": run_place_bets,
         "settle": run_settle,
         "report": run_report,
+        "collect": lambda: __import__("data_pipeline.t_horizon_collector", fromlist=["collect_once"]).collect_once(),
+        "t_report": lambda: __import__("data_pipeline.t_horizon_report", fromlist=["run_daily_job"]).run_daily_job(),
     }
     if args.command == "bot":
-        # â”€â”€ Start bot: API + Dashboard + Background loops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # --------------------------------------------------------------------------------
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
         _dash = os.path.join(_base, "dashboard", "out")
@@ -185,7 +189,9 @@ def run_cli():
             state.locked = False
             state.tasks["scan_and_bet"] = asyncio.create_task(scan_and_bet_loop(state))
             state.tasks["settlement"] = asyncio.create_task(settlement_loop(state))
-            logger.info("Bot loops started (scan_and_bet + settlement)")
+            state.tasks["forecast_collector"] = asyncio.create_task(forecast_collector_loop(state))
+            state.tasks["t_horizon_report"] = asyncio.create_task(t_horizon_report_loop(state))
+            logger.info("Bot loops started (scan_and_bet + settlement + forecast_collector + t_horizon_report)")
             yield
             # Shutdown
             logger.info("LIFESPAN SHUTDOWN - Stopping bot loops")
@@ -202,7 +208,7 @@ def run_cli():
         _ensure_port_free(config.PORT, config.HOST)
         uvicorn.run(app, host=config.HOST, port=config.PORT)
     elif args.command == "run":
-        # â”€â”€ Mount Next.js static dashboard (must be LAST â€” catch-all) â”€â”€â”€â”€â”€â”€
+        # --------------------------------------------------------------------------------
         _base = os.path.dirname(os.path.abspath(__file__))
         _out = os.path.join(_base, "out")
         _dash = os.path.join(_base, "dashboard", "out")
@@ -225,12 +231,14 @@ def run_cli():
         # Silmeden Ã–NCE backup al
         try:
             from db_backup import create_backup
+
             create_backup("pre_reset_cli")
         except Exception:
             pass
         # Bets ve portfolio'yu parquet'a arÅŸivle
         try:
             from database.db_cleanup import archive_bets_and_portfolio
+
             archive_bets_and_portfolio()
         except Exception:
             pass
@@ -247,4 +255,3 @@ def run_cli():
 
 if __name__ == "__main__":
     run_cli()
-

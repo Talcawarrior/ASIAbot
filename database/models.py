@@ -1,4 +1,4 @@
-﻿"""Database models for asiabot based on state machine architecture."""
+"""Database models for asiabot based on state machine architecture."""
 
 import enum
 from datetime import datetime, timezone
@@ -33,8 +33,9 @@ class BetStatus(enum.Enum):
     WON = "won"
     LOST = "lost"
 
+    # --------------------------------------------------------------------------------
 
-# â”€â”€ Open bet statuses â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 # These status values all mean "bet is still active / not yet settled":
 #   "active"  â€” being monitored by risk management
 #   "open"    â€” initial state when a bet is created (default)
@@ -57,12 +58,8 @@ class WeatherMarket(Base):
     metric = Column(String)  # "temperature_max"
     threshold = Column(Float)  # 95.0 (primary threshold, °C)
     threshold_unit = Column(String)  # "fahrenheit" or "celsius"
-    threshold_low = Column(
-        Float, nullable=True
-    )  # range lower bound (°C), e.g. "88-89°F" ' 31.1
-    threshold_high = Column(
-        Float, nullable=True
-    )  # range upper bound (°C), e.g. "88-89°F" ' 31.7
+    threshold_low = Column(Float, nullable=True)  # range lower bound (°C), e.g. "88-89°F" ' 31.1
+    threshold_high = Column(Float, nullable=True)  # range upper bound (°C), e.g. "88-89°F" ' 31.7
     target_date = Column(DateTime)  # 2025-07-04
     latitude = Column(Float)  # Latitude
     longitude = Column(Float)  # Longitude
@@ -186,9 +183,7 @@ class Bet(Base):
     order_id = Column(String)
     tx_hash = Column(String)
     error_message = Column(String)  # Hata varsa
-    entry_fee = Column(
-        Float, default=0.0
-    )  # Polymarket taker fee at entry (feeRate Ã— stake Ã— (1-p))
+    entry_fee = Column(Float, default=0.0)  # Polymarket taker fee at entry (feeRate Ã— stake Ã— (1-p))
 
     placed_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     settled_at = Column(DateTime)
@@ -265,3 +260,32 @@ class HistoricalCalibration(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+
+class ForecastArchive(Base):
+    """t0/t1/t2 horizon forecasts for WU consistency reporting.
+
+    Her gun 00 UTC'de her sehir icin t0=bugun, t1=yarin, t2=2 gun sonra
+    tahminleri VC/WeatherAPI/OpenWeather/NWS kaynaklarindan cekilir.
+    Kesisen gunler (ornegin bugunun t2'si = yarinin t1'i) karsilastirilarak
+    hangi kaynagin WU gercekleseni ile uyumlu oldugu raporlanir.
+    Wethr.net / polyweather.today dahil degil (istenmedi).
+    """
+
+    __tablename__ = "forecast_archive"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    city_code = Column(String, nullable=False)  # ICAO e.g. LTFM
+    city = Column(String, nullable=True)
+    target_date = Column(DateTime, nullable=False)  # Hangi gun icin tahmin
+    horizon = Column(Integer, nullable=False)  # 0=today, 1=tomorrow, 2=2days
+    source = Column(String, nullable=False)  # visual_crossing, weatherapi, openweather, nws
+    station_code = Column(String, nullable=True)  # WU station if applicable
+    predicted_max = Column(Float, nullable=True)
+    predicted_min = Column(Float, nullable=True)
+    fetched_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # Settlement dogrulama (gun sonunda doldurulur)
+    actual_max = Column(Float, nullable=True)
+    actual_min = Column(Float, nullable=True)
+    actual_source = Column(String, nullable=True)  # VC / IEM
+    is_match = Column(Boolean, nullable=True)  # |pred - actual| <= 0.5C
+    raw_data = Column(Text, nullable=True)

@@ -1,4 +1,4 @@
-﻿"""asiabot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
+"""asiabot - Polymarket Weather Prediction Bot - Configuration Dataclasses & Legacy Config."""
 
 import os
 from dataclasses import dataclass
@@ -56,7 +56,7 @@ class PolymarketConfig:
         # Initialize fee categories if not provided
         if self.fee_categories is None:
             self.fee_categories = {
-                "weather": 0.05,    # Weather markets: 5% fee
+                "weather": 0.05,  # Weather markets: 5% fee
             }
 
 
@@ -66,7 +66,83 @@ class MeteoConfig:
 
     openmeteo_url: str = "https://api.open-meteo.com/v1/forecast"
     weatherapi_key: str = os.getenv("WEATHERAPI_KEY", "")
+    weatherapi_keys: list = None  # type: ignore[assignment]
     weatherapi_url: str = "https://api.weatherapi.com/v1"
+    openweather_key: str = os.getenv("OPENWEATHER_API_KEY", "")
+    openweather_url: str = "https://api.openweathermap.org/data/2.5"
+    vc_api_key: str = os.getenv("VC_API_KEY", "")
+    vc_api_keys: list = None  # type: ignore[assignment]
+    vc_url: str = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline"
+    nws_url: str = "https://api.weather.gov"
+    aviation_url: str = "https://aviationweather.gov/api/data"
+    iem_url: str = "https://mesonet.agron.iastate.edu/cgi-bin/request/asos.py"
+
+    def __post_init__(self):
+        raw_vc = os.getenv("VC_API_KEYS", "")
+        if raw_vc:
+            self.vc_api_keys = [k.strip() for k in raw_vc.split(",") if k.strip()]
+        elif self.vc_api_key:
+            self.vc_api_keys = [self.vc_api_key]
+        else:
+            self.vc_api_keys = []
+        self._vc_idx = 0
+        raw_wapi = os.getenv("WEATHERAPI_KEYS", "")
+        if raw_wapi:
+            # Deduplicate preserving order
+            seen = set()
+            uniq = []
+            for k in raw_wapi.split(","):
+                k = k.strip()
+                if k and k not in seen:
+                    seen.add(k)
+                    uniq.append(k)
+            self.weatherapi_keys = uniq
+        elif self.weatherapi_key:
+            self.weatherapi_keys = [self.weatherapi_key]
+        else:
+            self.weatherapi_keys = []
+        self._wapi_idx = 0
+        raw_owm = os.getenv("OPENWEATHER_API_KEYS", "")
+        if raw_owm:
+            seen = set()
+            uniq = []
+            for k in raw_owm.split(","):
+                k = k.strip()
+                if k and k not in seen:
+                    seen.add(k)
+                    uniq.append(k)
+            self.openweather_keys = uniq
+        elif self.openweather_key:
+            self.openweather_keys = [self.openweather_key]
+        else:
+            self.openweather_keys = []
+        self._owm_idx = 0
+
+    def next_vc_key(self) -> str:
+        if not self.vc_api_keys:
+            return self.vc_api_key
+        key = self.vc_api_keys[self._vc_idx % len(self.vc_api_keys)]
+        self._vc_idx = (self._vc_idx + 1) % len(self.vc_api_keys)
+        return key
+
+    def rotate_vc_key(self) -> str:
+        self._vc_idx = (self._vc_idx + 1) % max(len(self.vc_api_keys), 1)
+        return self.next_vc_key()
+
+    def next_wapi_key(self) -> str:
+        if not getattr(self, "weatherapi_keys", None):
+            return self.weatherapi_key
+        keys = self.weatherapi_keys
+        if not keys:
+            return self.weatherapi_key
+        key = keys[self._wapi_idx % len(keys)]
+        self._wapi_idx = (self._wapi_idx + 1) % len(keys)
+        return key
+
+    def rotate_wapi_key(self) -> str:
+        keys = getattr(self, "weatherapi_keys", [])
+        self._wapi_idx = (self._wapi_idx + 1) % max(len(keys), 1)
+        return self.next_wapi_key()
 
 
 @dataclass
@@ -87,8 +163,8 @@ class StrategyConfig:
     # markets don't expose a `liquidity` field reliably
     # (it's always 0). The current_price already reflects
     # real market depth.
-    # â”€â”€ Orderbook depth filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # Minimum USD depth (at our fill price Â±2 ticks) required to place a bet.
+    # ── Orderbook depth filter ──────────────────────────────────────────
+    # Minimum USD depth (at our fill price ±2 ticks) required to place a bet.
     # 0.0 = disabled (current default, relies on entry price filter).
     # Recommended: 50.0 (require $50 of depth near our fill).
     # The depth is checked from the live orderbook via ResolvedMarkets API.
@@ -106,7 +182,7 @@ class StrategyConfig:
     edge_escalation_multiplier: float = 2.0
     min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
 
-    # â”€â”€ Polymarket Dynamic Fee Rate (fetched from API) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Polymarket Dynamic Fee Rate (fetched from API) ──────────────────
     # Default: 5% (Weather category). Fetch from Polymarket API at startup.
     # If API fails, fallback to this default.
     fee_rate_weather: float = 0.05
@@ -118,7 +194,7 @@ class StrategyConfig:
     # calibrated. Forecasts degrade past 3 days.
     max_days_ahead: int = 2
 
-    # â”€â”€ Karpathy-search-discovered levers (asymmetric-payoff fix) â”€â”€â”€â”€â”€â”€â”€â”€
+    # --------------------------------------------------------------------------------
     # These were tuned by `scripts/karpathy_search.py` against 90 days /
     # 15 cities of historical_calibrations data. The defaults below are
     # deliberately permissive (min_entry_price=0.01 = accept anything,
@@ -139,15 +215,15 @@ class StrategyConfig:
     min_entry_price: float = 0.01
     inefficiency_min: float = -1.0  # negative = gate disabled (accept all)
 
-    # â”€â”€ Slippage model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # "flat"   â€” fixed slippage_pct from strategy_params.json
-    # "tiered" â€” 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
-    # "orderbook" â€” live depth-based (future, falls back to tiered)
+    # ── Slippage model ──────────────────────────────────────────────────
+    # "flat"   — fixed slippage_pct from strategy_params.json
+    # "tiered" — 3-tier by entry price (<0.05: 3%, 0.05-0.10: 1%, >0.10: 0.5%)
+    # "orderbook" — live depth-based (future, falls back to tiered)
     slippage_model: str = "orderbook"
     slippage_pct: float = 0.005  # used when slippage_model="flat"
     gas_cost_usd: float = 0.10  # Polygon gas per round-trip
 
-    # â”€â”€ Flat bet override & Daily loss limit (synced from Config) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # --------------------------------------------------------------------------------
     flat_bet_usd: float = 0.0  # 0 = use Kelly sizing, >0 = fixed $ per bet
     daily_loss_limit: float = 0.05  # 5% daily max loss
 
@@ -171,8 +247,9 @@ class RiskConfig:
 
     # Risk management loop interval (seconds)
 
+    # --------------------------------------------------------------------------------
 
-# â”€â”€ Large constant dicts (module-level, shared by all) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 _ICAO_COORDS = {
     # Turkey (4)
     "LTAC": (39.9891, 32.8236),
@@ -320,15 +397,15 @@ _CITY_ICAO_MAP = {
 
 @dataclass
 class BotConfig:
-    """Combined configurations â€” single source of truth for ALL config."""
+    """Combined configurations — single source of truth for ALL config."""
 
-    # â”€â”€ Portfolio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Portfolio ───────────────────────────────────────────────────────
     initial_portfolio: float = 1000.0
     max_exposure_pct: float = 0.25
     city_cap: int = 4
     weather_fee_rate: float = 0.05
 
-    # â”€â”€ Intervals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Intervals -----------------------------------------------------------------------
     scan_interval: int = 900  # 15 dakika (Open-Meteo rate limit iÃ§in)
     settlement_interval: int = 120
     sia_interval: int = 86400
@@ -338,34 +415,34 @@ class BotConfig:
     midnight_scan_interval: int = 60  # seconds between scans after midnight
     midnight_scan_window: int = 60  # minutes after midnight to use fast scan
 
-    # â”€â”€ API URLs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- API URLs ------------------------------------------------------------------------
     polymarket_gamma_api: str = "https://gamma-api.polymarket.com"
     polymarket_clob_api: str = "https://clob.polymarket.com"
     open_meteo_api: str = "https://api.open-meteo.com/v1"
 
-    # â”€â”€ Database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Database ------------------------------------------------------------------------
     db_path: str = ""  # set from .env in __post_init__
     db_echo: bool = False
 
-    # â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Logging -------------------------------------------------------------------------
     log_level: str = "INFO"
     log_file: str = ""  # set from .env in __post_init__
     log_format: str = "%(asctime)s | %(levelname)-8s | %(name)-15s | %(message)s"
 
-    # â”€â”€ Runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Runtime -------------------------------------------------------------------------
     dry_run: bool = True
     temp_unit: str = "celsius"
     host: str = "127.0.0.1"
     port: int = 8091
 
-    # â”€â”€ Model weights â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Model weights -------------------------------------------------------------------
     model_weights: dict = None  # type: ignore[assignment]
 
-    # â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Constants -----------------------------------------------------------------------
     icao_coords: dict = None  # type: ignore[assignment]
     city_icao_map: dict = None  # type: ignore[assignment]
 
-    # â”€â”€ Nested configs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Nested configs ------------------------------------------------------------------
     polymarket: PolymarketConfig = None  # type: ignore[assignment]
     meteo: MeteoConfig = None  # type: ignore[assignment]
     strategy: StrategyConfig = None  # type: ignore[assignment]
@@ -377,7 +454,7 @@ class BotConfig:
         self.strategy = self.strategy or StrategyConfig()
         self.risk = self.risk or RiskConfig()
 
-        # â”€â”€ Override from .env (single source: .env > dataclass defaults) â”€â”€
+        # --------------------------------------------------------------------------------
         self.initial_portfolio = float(os.getenv("INITIAL_PORTFOLIO", str(self.initial_portfolio)))
         self.max_exposure_pct = float(os.getenv("MAX_EXPOSURE_PCT", str(self.max_exposure_pct)))
         self.strategy.total_exposure_pct = self.max_exposure_pct
@@ -398,24 +475,26 @@ class BotConfig:
         self.db_path = _resolve_path(os.getenv("DB_PATH") or "", "data/bot.db")
         self.log_file = _resolve_path(os.getenv("LOG_FILE") or "", "logs/bot.log")
 
-        # â”€â”€ Constants (large dicts) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # --------------------------------------------------------------------------------
         if self.model_weights is None:
             self.model_weights = {
-                "gfs_seamless": 0.30,
-                "ecmwf_ifs025": 0.25,
-                "gem_global": 0.15,
-                "icon_global": 0.10,
-                "jma_seamless": 0.08,
-                "cma_grapes_global": 0.05,
-                "ukmo_seamless": 0.04,
-                "meteofrance_seamless": 0.03,
+                "gfs_seamless": 0.25,
+                "ecmwf_ifs025": 0.20,
+                "gem_global": 0.12,
+                "icon_global": 0.08,
+                "jma_seamless": 0.06,
+                "cma_grapes_global": 0.04,
+                "ukmo_seamless": 0.03,
+                "meteofrance_seamless": 0.02,
+                "visual_crossing": 0.12,
+                "nws": 0.08,
             }
         if self.icao_coords is None:
             self.icao_coords = _ICAO_COORDS
         if self.city_icao_map is None:
             self.city_icao_map = _CITY_ICAO_MAP
 
-        # â”€â”€ Strategy: override from .env â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # --------------------------------------------------------------------------------
         s = self.strategy
         s.max_bet_pct = float(os.getenv("MAX_BET_PCT", str(s.max_bet_pct)))
         s.min_bet_size = float(os.getenv("MIN_BET_SIZE", str(s.min_bet_size)))
@@ -424,8 +503,9 @@ class BotConfig:
         s.min_entry_price = float(os.getenv("MIN_ENTRY_PRICE", str(s.min_entry_price)))
         s.flat_bet_usd = float(os.getenv("FLAT_BET_USD", str(s.flat_bet_usd)))
 
+    # --------------------------------------------------------------------------------
 
-# â”€â”€ Config backward-compatibility proxy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 # All reads/writes go through bot_config (single source of truth).
 # This eliminates the dual Config / bot_config drift problem.
 
@@ -500,7 +580,7 @@ class _ConfigProxy:
         else:
             object.__setattr__(self, name, value)
 
-    # â”€â”€ Convenience methods â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ---- Convenience methods -------------------------------------------------------------
 
     @property
     def daily_loss_limit_amount(self) -> float:
@@ -523,8 +603,9 @@ class _ConfigProxy:
     def get_daily_loss_limit(cls, portfolio_value: float) -> float:
         return portfolio_value * bot_config.strategy.daily_loss_limit
 
+    # --------------------------------------------------------------------------------
 
-# â”€â”€ Singleton instances (bot_config FIRST, then Config proxy) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 bot_config = BotConfig()
 Config = _ConfigProxy()
 config = Config  # alias used by older modules
@@ -597,5 +678,3 @@ except Exception as _e:
 # NOTE: Fee rate is fetched lazily (not at import time) to avoid blocking startup.
 # Call fetch_and_apply_fee_rate() when needed, e.g., at bot startup.
 # The default fee_rate_weather (0.05) is used until then.
-
-

@@ -1,6 +1,5 @@
-"""Matematiksel olasılık, Kelly kriteri hesaplayıcısı ve WeatherEngine konsensüs birleşimi."""
+"""Matematiksel olasilik, Kelly kriteri hesaplayicisi ve WeatherEngine konsensus birlesimi."""
 
-import asyncio
 import json
 import logging
 import math
@@ -21,11 +20,13 @@ from utils.slippage import (
     adjust_kelly_for_slippage,
     estimate_slippage,
 )
+from utils.model_blacklist import get_blacklisted_models
 
 logger = logging.getLogger("ENGINE_CALCULATOR")
 
-# Global rate-limit flag: ilk 429'te 5dk boyunca tüm Open-Meteo isteklerini durdur
-import time as _time
+# Global rate-limit flag: ilk 429'te 5dk boyunca tum Open-Meteo isteklerini durdur
+import time as _time  # noqa: E402
+
 _RATE_LIMITED_UNTIL = 0.0  # monotonic timestamp
 
 
@@ -41,7 +42,7 @@ class Calculator:
         range_low: float | None = None,
         range_high: float | None = None,
     ) -> float:
-        """Tahmin değerlerinden, market tipine göre YES olasılığını hesapla.
+        """Tahmin degerlerinden, market tipine gore YES olasiligini hesapla.
 
         Delegates to :func:`utils.probability.estimate_probability`.
         """
@@ -79,7 +80,7 @@ class Calculator:
         with get_session_or(session) as session:
             market = session.query(WeatherMarket).filter_by(id=market_id).first()
             if not market:
-                logger.warning(f"Market bulunamadı: {market_id}")
+                logger.warning(f"Market bulunamadi: {market_id}")
                 return None
 
             if not all([market.city, market.threshold, market.target_date, market.metric]):
@@ -98,30 +99,6 @@ class Calculator:
                 logger.debug(f"Market {market_id}: target_date {market.target_date} already passed, skipping")
                 return None
 
-            # Skip markets with no real liquidity (price too low for paper realism)
-            # The min_entry_price threshold is a Karpathy-search-discovered
-            # lever that filters out long-shot bets (the source of the
-            # asymmetric-payoff bleed where a single low-price loss wipes
-            # out dozens of small wins).
-            market_price = market.yes_price or 0.5
-            min_price = getattr(bot_config.strategy, "min_entry_price", None) or getattr(
-                bot_config, "MIN_ENTRY_PRICE", 0.01
-            )
-            if market_price < min_price:
-                logger.debug(f"Market {market_id}: price {market_price:.4f} < min_entry_price {min_price}, skipping")
-                return None
-
-            # Karpathy-search-discovered inefficiency gate. Only bet when
-            # the market price is mispriced in our favour by at least
-            # `inefficiency_min`. We approximate the "naive fair price" by
-            # the simple average of the YES/NO prices (0.5 midpoint adjusted
-            # by yes_price deviation), and the inefficiency is the residual
-            # after we compute our own estimate_probability below.
-            #
-            # This is a soft gate — we evaluate it AFTER we know our own
-            # estimate, then check the implied market inefficiency.
-            inefficiency_min = getattr(bot_config.strategy, "inefficiency_min", -1.0)
-
             # En son tahminleri al — query by market.metric directly.
             forecasts = (
                 session.query(WeatherForecast)
@@ -133,13 +110,47 @@ class Calculator:
                 .all()
             )
 
-            # Her kaynaktan en son tahmini al + ağırlıkları topla
+            # Her kaynaktan en son tahmini al + agirliklari topla
             latest_by_source = {}
             source_weights = {}
             for f in forecasts:
                 if f.source not in latest_by_source:
-                    latest_by_source[f.source] = f.predicted_value
+                    # Calibration: correct systematic per-city/model bias
+                    # (MBE from historical_calibrations). Falls back to raw
+                    # when no calibration data exists.
+                    try:
+                        from utils.calibration import calibrate_forecast
+
+                        raw_val = f.predicted_value
+                        cal_val = calibrate_forecast(
+                            market.city_code or "",
+                            market.metric or "",
+                            f.source,
+                            raw_val,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - never break forecasting
+                        logger.debug("Calibration skipped for %s: %s", f.source, exc)
+                        cal_val = f.predicted_value
+                    latest_by_source[f.source] = cal_val
                     source_weights[f.source] = f.model_weight or 0.0
+
+            # ── Model blacklist filter ────────────────────────────────────
+            # Remove unreliable model-city pairs identified by backtest.
+            blacklisted = get_blacklisted_models(market.city_code or "", market.metric or "temperature_max")
+            if blacklisted:
+                removed = []
+                for bl_model in blacklisted:
+                    if bl_model in latest_by_source:
+                        removed.append(bl_model)
+                        del latest_by_source[bl_model]
+                        source_weights.pop(bl_model, None)
+                if removed:
+                    logger.info(
+                        "Blacklist [%s]: removed %s (%d models remain)",
+                        market.city_code,
+                        ", ".join(removed),
+                        len(latest_by_source),
+                    )
 
             forecast_values = list(latest_by_source.values())
 
@@ -147,6 +158,37 @@ class Calculator:
                 logger.info(
                     f"Market {market_id}: Yetersiz kaynak ({len(forecast_values)}/{bot_config.strategy.min_sources})"
                 )
+
+            # days_ahead: use calendar days (>=0) and treat "today" as 1 day
+            # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
+            # NOTE: date-bazli fark kullan (datetime farki degil) — Polymarket
+            # endDate'i gun icinde (12:00 UTC) oldugu icin target_date saat
+            # bilgisi tasir; saat farki .days degerini kaydirip "0 gun" gibi
+            # gosterebilir. Date bazli hesap saatten bagimsiz dogru gunu verir.
+            days_ahead = (market.target_date.date() - datetime.now(timezone.utc).date()).days
+
+            # ── Lead-time based dynamic weighting ───────────────────────
+            # Research shows ECMWF HRES outperforms GFS at all lead times,
+            # but the advantage is most pronounced at short lead times.
+            # 0-48h:  ECMWF 1.3x boost, GFS 0.7x penalty
+            # 48-120h: ECMWF 1.1x boost, GFS 0.9x penalty
+            # 120h+:  No adjustment (both degrade similarly)
+            ECMWF_MODELS = {"ecmwf_ifs025", "ecmwf_ifs04"}
+            GFS_MODELS = {"gfs_seamless"}
+            if days_ahead <= 2:
+                # Short lead time: ECMWF boost, GFS penalty
+                for s in source_weights:
+                    if s in ECMWF_MODELS:
+                        source_weights[s] *= 1.3
+                    elif s in GFS_MODELS:
+                        source_weights[s] *= 0.7
+            elif days_ahead <= 5:
+                # Medium lead time: mild ECMWF boost
+                for s in source_weights:
+                    if s in ECMWF_MODELS:
+                        source_weights[s] *= 1.1
+                    elif s in GFS_MODELS:
+                        source_weights[s] *= 0.9
 
             # Compute weighted std early — needed for both consensus and per-model probs
             total_weight = sum(source_weights.get(s, 0.0) for s in latest_by_source)
@@ -167,12 +209,9 @@ class Calculator:
                 avg = forecast_values[0] if forecast_values else 0.5
                 std_val = None
 
-            # days_ahead: use calendar days (>=0) and treat "today" as 1 day
-            # so that (target_date=23:59:59, now=04:21) -> 0 still means "today".
-            days_ahead = (market.target_date - datetime.now(timezone.utc).replace(tzinfo=None)).days
             days_ahead_for_check = max(days_ahead, 1)
 
-            # Olasılık hesapla — weighted mean/std ile (market_type-aware)
+            # Olasilik hesapla — weighted mean/std ile (market_type-aware)
             # RANGE markets: pass explicit bucket bounds if stored
             range_low = None
             range_high = None
@@ -191,7 +230,7 @@ class Calculator:
                 range_high=range_high,
             )
 
-            # Per-model probabilities for SIA weight optimization
+            # Per-model probabilities
             model_temps = {src: float(val) for src, val in latest_by_source.items() if val is not None}
             total_std = float(std_val) if std_val is not None else 2.0
             model_probs = {}
@@ -211,26 +250,17 @@ class Calculator:
                 }
             )
 
-            market_implied = market.yes_price or 0.5
+            market_implied = market.yes_price if market.yes_price is not None else 0.5
             raw_edge = estimated_prob - market_implied
 
             if raw_edge > 0:
-                # YES tarafı
+                # YES tarafi
                 kelly_frac = self.kelly_criterion(estimated_prob, market_implied, bot_config.strategy.kelly_fraction)
                 recommended_side = "YES"
             else:
-                # NO tarafı
-                no_prob = 1 - estimated_prob
-                no_implied = market.no_price or (1 - market_implied)
-                no_edge = no_prob - no_implied
-
-                if no_edge > 0:
-                    kelly_frac = self.kelly_criterion(no_prob, no_implied, bot_config.strategy.kelly_fraction)
-                    recommended_side = "NO"
-                    raw_edge = no_edge
-                else:
-                    kelly_frac = 0
-                    recommended_side = None
+                # YES-only: model_prob <= market_implied ise bahis acilmaz
+                kelly_frac = 0
+                recommended_side = None
 
             # ── Slippage + fee adjusted edge ────────────────────────────
             # Net edge = raw edge − slippage − fee_drag.
@@ -264,67 +294,78 @@ class Calculator:
             )
             slippage_est = estimate_slippage(entry_price_for_cost, condition_id=condition_id)
 
-            # Bet miktarı — gerçek portföyden oku (using net_edge now)
+            # Bet miktari — gercek portfoyden oku (using net_edge now)
             raw_kelly_amount = min(kelly_frac * bankroll, max_bet_cap(bankroll, Config.MAX_BET_PCT))
             # Reduce Kelly size by estimated slippage cost
             recommended_amount = adjust_kelly_for_slippage(raw_kelly_amount, entry_price_for_cost)
 
-            # Bet açılmalı mı?
+            # Bet acilmali mi?
             # NOTE: Polymarket'te public-search'ten gelen marketlerin
-            # `liquidity` alanı genelde 0 (price bize zaten gerçek bilgi veriyor),
-            # bu yüzden likidite kontrolünü kaldırıyoruz — gerçek piyasa sinyali
-            # `volume` veya `volume24hr` alanlarından biridir; bunlar da yoksa
-            # `current_price` zaten likiditeyi yansıtır.
-            # Yine de kullanıcı isterse `bot_config.strategy.min_liquidity`
-            # değerini 0 yaparak bunu bypass edebilir.
+            # `liquidity` alani genelde 0 (price bize zaten gercek bilgi veriyor),
+            # bu yuzden likidite kontrolunu kaldiriyoruz — gercek piyasa sinyali
+            # `volume` veya `volume24hr` alanlarindan biridir; bunlar da yoksa
+            # `current_price` zaten likiditeyi yansitir.
+            # Yine de kullanici isterse `bot_config.strategy.min_liquidity`
+            # degerini 0 yaparak bunu bypass edebilir.
             liquidity_ok = (
                 market.liquidity or 0
             ) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
             effective_min_edge = self._compute_effective_min_edge(market, std_val)
 
-            # ── Karpathy-search inefficiency gate ─────────────────────────
-            # The "inefficiency" is the residual between our estimated
-            # probability and the price-implied naive probability. In the
-            # backtest harness this is the same construction (naive ensemble
-            # average + independent noise). In the live system we don't
-            # observe the inefficiency directly, but a good proxy is the
-            # edge itself: an edge of `e` means the market is mispriced by
-            # `e` in our favour. The Karpathy search found that requiring
-            # `inefficiency_min` of -0.124 (i.e. accept even slightly
-            # adverse inefficiency as long as other gates pass) gave the
-            # best risk-adjusted return. We translate that to a *minimum
-            # absolute edge* requirement on top of effective_min_edge.
-            #
-            # For a positive inefficiency_min (e.g. +0.067), we require the
-            # edge to be at least that large. For negative values, the gate
-            # is effectively disabled (we already require min_edge > 0).
-            if inefficiency_min > 0:
-                inefficiency_ok = abs(raw_edge) >= inefficiency_min
-            else:
-                inefficiency_ok = True
+            # 8-hour pre-settlement guard
+            settlement_hours_left = None
+            try:
+                if market.target_date:
+                    _res = market.target_date
+                    if getattr(_res, "tzinfo", None) is None:
+                        _res = _res.replace(tzinfo=timezone.utc)
+                    settlement_hours_left = (_res - datetime.now(timezone.utc)).total_seconds() / 3600.0
+            except Exception:
+                pass
+            settlement_ok = settlement_hours_left is None or settlement_hours_left > 8
 
             should_bet = (
-                net_edge >= effective_min_edge  # Negatif edge ile bahis AÇILMAZ
-                and inefficiency_ok
+                recommended_side == "YES"  # YES-only: asla NO
+                and net_edge >= effective_min_edge  # post-cost edge gate
                 and len(forecast_values) >= bot_config.strategy.min_sources
                 and 0 <= days_ahead <= bot_config.strategy.max_days_ahead
                 and liquidity_ok
+                and settlement_ok
                 and recommended_amount > 1.0
             )
 
             reason_parts = []
+            if recommended_side != "YES":
+                reason_parts.append("YES-only mode: NO side rejected")
             if net_edge < effective_min_edge:
                 reason_parts.append(
-                    f"Net edge düşük: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
+                    f"Net edge dusuk: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
                 )
-            if not inefficiency_ok:
-                reason_parts.append(f"İnefficiency düşük: edge {net_edge:.2%} < {inefficiency_min:.2%}")
             if len(forecast_values) < bot_config.strategy.min_sources:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
-                reason_parts.append(f"Çok uzak: {days_ahead} gün")
+                reason_parts.append(f"Cok uzak: {days_ahead} gun")
             if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
-                reason_parts.append(f"Düşük likidite: ${market.liquidity}")
+                reason_parts.append(f"Dusuk likidite: ${market.liquidity}")
+            if not settlement_ok:
+                reason_parts.append(f"Settlement'a {settlement_hours_left:.1f}s kaldi (8s min)")
+
+            avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
+
+            # ── Sigma-based bucket ladder for RANGE markets ─────────────────
+            # If this is a RANGE market, compute which adjacent buckets to bet on
+            # based on ensemble spread (sigma). This implements the ladder strategy:
+            # sigma <= 1.0°C  -> ±0.5°C (single bucket, center only)
+            # sigma 1.0-2.0°C -> ±1.0°C (3 buckets: center, +1, -1)
+            # sigma 2.0-3.5°C -> ±2.0°C (5 buckets: center, ±1, ±2)
+            # sigma > 3.5°C   -> SKIP (models disagree too much)
+            ladder_buckets = []
+            ladder_reason = ""
+            if (market.market_type or "").upper() == "RANGE" and std_val is not None:
+                ladder_buckets, ladder_reason = self._compute_bucket_ladder(market, avg_val, std_val, market_implied)
+                if not ladder_buckets:
+                    should_bet = False
+                    reason_parts.append(ladder_reason)
 
             if not reason_parts:
                 reason = (
@@ -333,10 +374,11 @@ class Calculator:
                     f"Side={recommended_side}, "
                     f"slip={slippage_est.model_used}"
                 )
+                if ladder_buckets:
+                    bucket_str = ", ".join(f"{b[0]:.1f}-{b[1]:.1f}" for b in ladder_buckets)
+                    reason += f" | LADDER: {bucket_str} ({ladder_reason})"
             else:
                 reason = "PASS: " + ", ".join(reason_parts)
-
-            avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
 
             analysis = Analysis(
                 market_id=market_id,
@@ -370,6 +412,85 @@ class Calculator:
         """Time-to-close-scaled min_edge. Delegates to utils.probability."""
         return compute_effective_min_edge(market, std=std)
 
+    def _compute_bucket_ladder(
+        self,
+        market,
+        ensemble_mean: float,
+        ensemble_std: float,
+        market_price: float,
+    ) -> tuple[list[tuple[float, float]], str]:
+        """Compute which RANGE buckets to bet on based on ensemble spread (sigma).
+
+        Returns (list of (bucket_low, bucket_high), reason_string).
+        Ladder logic:
+        - sigma <= 1.0°C  -> center bucket only (±0.5°C)
+        - sigma 1.0-2.0°C -> center ±1 bucket (±1.0°C, 3 buckets total)
+        - sigma 2.0-3.5°C -> center ±2 buckets (±2.0°C, 5 buckets total)
+        - sigma > 3.5°C   -> empty list, models disagree too much
+        """
+        sigma = ensemble_std
+
+        # Determine bucket width from market thresholds
+        # For RANGE markets, threshold_low/high define the bucket boundaries
+        if market.threshold_low is not None and market.threshold_high is not None:
+            bucket_width = market.threshold_high - market.threshold_low
+            center = (market.threshold_low + market.threshold_high) / 2
+        else:
+            # Fallback: assume 1°C buckets centered on threshold
+            bucket_width = 1.0
+            center = market.threshold or ensemble_mean
+
+        if sigma <= 1.0:
+            # Tight spread: only center bucket
+            half = bucket_width / 2
+            buckets = [(center - half, center + half)]
+            reason = f"sigma={sigma:.2f} <= 1.0 -> center only"
+        elif sigma <= 2.0:
+            # Medium spread: center ±1 bucket
+            buckets = [
+                (center - bucket_width, center),
+                (center - bucket_width / 2, center + bucket_width / 2),
+                (center, center + bucket_width),
+            ]
+            reason = f"sigma={sigma:.2f} in (1.0, 2.0] -> 3 buckets"
+        elif sigma <= 3.5:
+            # Wide spread: center ±2 buckets
+            buckets = [
+                (center - 2 * bucket_width, center - bucket_width),
+                (center - bucket_width, center),
+                (center - bucket_width / 2, center + bucket_width / 2),
+                (center, center + bucket_width),
+                (center + bucket_width, center + 2 * bucket_width),
+            ]
+            reason = f"sigma={sigma:.2f} in (2.0, 3.5] -> 5 buckets"
+        else:
+            # Too uncertain
+            buckets = []
+            reason = f"sigma={sigma:.2f} > 3.5 -> SKIP (models disagree)"
+
+        # Filter buckets that have positive edge vs market price
+        # For each bucket, estimate probability and check edge
+        from utils.probability import estimate_probability
+
+        filtered = []
+        for lo, hi in buckets:
+            p = estimate_probability(
+                mean=ensemble_mean,
+                std=ensemble_std,
+                threshold=0,  # not used for RANGE
+                days_ahead=1,
+                market_type="RANGE",
+                range_low=lo,
+                range_high=hi,
+            )
+            # We need the market price for this specific bucket
+            # Since we don't have per-bucket prices in the market object,
+            # we use the overall market price as proxy
+            if p > market_price * 1.15:  # 15% edge threshold
+                filtered.append((lo, hi))
+
+        return filtered, reason
+
 
 # WeatherEngine kept for seamless FastAPI / backward compatibility
 OPEN_METEO_MODEL_MAP = {
@@ -401,7 +522,7 @@ class WeatherEngine:
         # Local cache for the current session to avoid redundant fetches (e.g. max/min overlap)
         self._forecast_cache = {}
 
-    # _compute_effective_min_edge Calculator sınıfında (satır 364) tanımlı.
+    # _compute_effective_min_edge Calculator sinifinda (satir 364) tanimli.
 
     async def get_multi_model_forecast(
         self,
@@ -413,12 +534,16 @@ class WeatherEngine:
         db_session=None,
         metric: str = "temperature_2m_max",
     ) -> dict | None:
+        # `_time` and `_RATE_LIMITED_UNTIL` are module-level globals; the
+        # 429 pause must mutate the global so it persists across calls.
+        global _RATE_LIMITED_UNTIL
         if not city_code or (latitude == 0 and longitude == 0):
             return None
         if target_date is None:
             target_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Global rate-limit kontrolü
+        global _RATE_LIMITED_UNTIL, _time
+        # Global rate-limit kontrolu
         if _time.monotonic() < _RATE_LIMITED_UNTIL:
             logger.debug("Rate-limited, skipping API call for %s", city_code)
             return None
@@ -448,50 +573,15 @@ class WeatherEngine:
             }
 
             try:
-                async with aiohttp.ClientSession() as session:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
                     async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         if resp.status == 429:
-                            # Retry with exponential backoff for 429 rate limits
-                            max_retries = 3
-                            base_delay = 5.0
-                            for attempt in range(1, max_retries + 1):
-                                try:
-                                    async with aiohttp.ClientSession() as session:
-                                        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                                            if resp.status == 429:
-                                                if attempt < max_retries:
-                                                    retry_after = resp.headers.get("Retry-After")
-                                                    try:
-                                                        delay = float(retry_after) if retry_after else 5.0 * (2 ** (attempt - 1))
-                                                    except (TypeError, ValueError):
-                                                        delay = 5.0 * (2 ** (attempt - 1))
-                                                    delay = min(max(delay, 5.0), 60.0)
-                                                    logger.warning(
-                                                        "Ensemble 429 for (%.4f, %.4f) attempt %d/%d - retrying in %.1fs",
-                                                        latitude, longitude, attempt, max_retries, delay
-                                                    )
-                                                    await asyncio.sleep(delay)
-                                                    continue
-                                                else:
-                                                    logger.error(
-                                                        "Ensemble 429 for (%.4f, %.4f) - max retries exceeded",
-                                                        latitude, longitude
-                                                    )
-                                                    return None
-                                            if resp.status != 200:
-                                                return None
-                                            data = await resp.json()
-                                            self._forecast_cache[cache_key] = data
-                                            break  # Success
-                                except Exception as e:
-                                    logger.error("get_multi_model_forecast fetch error (attempt %d): %s", attempt, e)
-                                    if attempt == max_retries:
-                                        return None
-                                    await asyncio.sleep(5.0 * attempt)
-                                    continue
-                            else:
-                                # All retries exhausted
-                                return None
+                            # Global rate-limit: tum dongu boyunca API'yi engelle
+                            _RATE_LIMITED_UNTIL = _time.monotonic() + 300  # 5dk
+                            logger.warning("Ensemble 429 — all API calls paused for 5min")
+                            return None
+                        if resp.status != 200:
+                            return None
                         data = await resp.json()
                         self._forecast_cache[cache_key] = data
             except Exception as e:
@@ -559,6 +649,8 @@ class WeatherEngine:
                 return None
 
             for internal_name in self.model_weights.keys():
+                if internal_name in ("visual_crossing", "nws"):
+                    continue  # handled below via dedicated APIs
                 api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
                 # Use the metric requested to pick the right daily data key
                 # although we fetch both max and min.
@@ -571,6 +663,32 @@ class WeatherEngine:
                     temps = daily_data[key]
                     if target_idx < len(temps) and temps[target_idx] is not None:
                         model_temps[internal_name] = temps[target_idx]
+
+            # ── Visual Crossing second opinion (global, 15d, free 1000/d) ──
+            try:
+                from utils.weather_sources import vc_daily as _vc_daily
+
+                if bot_config.meteo.vc_api_key:
+                    tgt_date = target_date.date() if isinstance(target_date, datetime) else target_date
+                    vc = _vc_daily(latitude, longitude, tgt_date)
+                    if vc:
+                        val = vc["tmax"] if "max" in metric.lower() else vc["tmin"]
+                        if val is not None:
+                            model_temps["visual_crossing"] = float(val)
+            except Exception as _e:
+                logger.debug("VC second opinion skipped: %s", _e)
+
+            # ── NWS grid forecast (US only, 7d, key yok) ──────────────────
+            try:
+                from utils.weather_sources import nws_forecast_max as _nws_max
+
+                # Rough US bbox check
+                if -130 < longitude < -60 and 20 < latitude < 50:
+                    nws_val = _nws_max(latitude, longitude)
+                    if nws_val is not None and "max" in metric.lower():
+                        model_temps["nws"] = float(nws_val)
+            except Exception as _e2:
+                logger.debug("NWS second opinion skipped: %s", _e2)
 
             if not model_temps:
                 return None
@@ -589,8 +707,22 @@ class WeatherEngine:
             if db_session is not None and market_ids:
                 from database.models import WeatherForecast
 
+                # Dedup: skip (market, source) rows we already have for this
+                # date/metric so repeated hourly fetches don't append duplicates.
+                existing_keys = {
+                    (f.market_id, f.source)
+                    for f in db_session.query(WeatherForecast).filter(
+                        WeatherForecast.market_id.in_(market_ids),
+                        WeatherForecast.source.in_(list(model_temps.keys())),
+                        WeatherForecast.target_date == target_date,
+                        WeatherForecast.metric == metric,
+                    )
+                }
+                now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
                 for mid in market_ids:
                     for mn, tmp in model_temps.items():
+                        if (mid, mn) in existing_keys:
+                            continue
                         db_session.add(
                             WeatherForecast(
                                 market_id=mid,
@@ -602,7 +734,7 @@ class WeatherEngine:
                                 source=mn,
                                 predicted_value=float(tmp),
                                 model_weight=self.model_weights.get(mn, 0.0),
-                                fetched_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                                fetched_at=now_utc,
                                 raw_data=str({"model": mn, "temp": tmp, "ensemble": True}),
                             )
                         )
@@ -628,6 +760,3 @@ class WeatherEngine:
         except Exception as e:
             logger.error("get_multi_model_forecast error: %s", e)
             return None
-
-    def update_model_weights(self, new_weights: dict):
-        self.model_weights = new_weights

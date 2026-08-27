@@ -138,9 +138,7 @@ class PolymarketScraper:
                     m.setdefault("event_slug", slug)
                     all_events.append(m)
 
-        logger.info(
-            f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)"
-        )
+        logger.info(f"Toplam {len(all_events)} market çekildi ({len(seen_slugs)} event, {len(queries)} sorgu)")
         return all_events
 
     async def fetch_polymarket_events(self, limit: int = 100) -> list[dict]:
@@ -158,16 +156,17 @@ class PolymarketScraper:
         and humidity markets are explicitly rejected.
         """
         question = (
-            market.get("question", "")
-            + " "
-            + market.get("description", "")
-            + " "
-            + market.get("title", "")
+            market.get("question", "") + " " + market.get("description", "") + " " + market.get("title", "")
         ).lower()
-        # 1) Must mention a known city (any key from CITY_ICAO_MAP)
-        city_match = any(
-            city_key in question for city_key in config.CITY_ICAO_MAP.keys()
-        )
+        # 1) Must mention a known city (any key from CITY_ICAO_MAP) OR a
+        #    regex-detectable city pattern (so new cities get auto-captured)
+        city_match = any(city_key in question for city_key in config.CITY_ICAO_MAP.keys())
+        if not city_match:
+            # Auto-detect unknown-city patterns like "temperature in Kigali on..."
+            for pattern in self._CITY_DETECT_PATTERNS:
+                if re.search(pattern, question, re.IGNORECASE):
+                    city_match = True
+                    break
         if not city_match:
             return False
         # 2) Must contain a strong weather term (reject sports/politics that
@@ -205,29 +204,47 @@ class PolymarketScraper:
 
     def _parse_market(self, raw: dict) -> dict:
         """Ham marketi yapılandırılmış veriye çevir."""
-        # 1) YES/NO price — handle both /markets (tokens[]) and
-        #    /public-search (lastTradePrice / bestBid / bestAsk) formats.
+        # 1) YES/NO price — outcomePrices is PRIMARY (always sums to 1.0).
+        #    tokens[] and lastTradePrice are fallbacks only.
         yes_price = None
         no_price = None
-        for token in raw.get("tokens", []) or []:
-            outcome = (token.get("outcome", "") or "").upper()
+
+        # PRIMARY: outcomePrices (Gamma API — always [YES, NO] summing to 1.0)
+        op = raw.get("outcomePrices", "")
+        if op:
             try:
-                p = float(token.get("price", 0) or 0)
-            except (TypeError, ValueError):
-                p = None
-            if outcome == "YES" and p is not None:
-                yes_price = p
-            elif outcome == "NO" and p is not None:
-                no_price = p
-        # Fallback: public-search fields
+                parsed_op = json.loads(op) if isinstance(op, str) else op
+                if isinstance(parsed_op, list) and len(parsed_op) >= 2:
+                    yp = float(parsed_op[0]) if parsed_op[0] else None
+                    np_ = float(parsed_op[1]) if parsed_op[1] else None
+                    if yp is not None and np_ is not None:
+                        yes_price = yp
+                        no_price = np_
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
+
+        # FALLBACK: tokens[] (skip price=0 or price=1 — means no orderbook)
+        if yes_price is None or no_price is None:
+            for token in raw.get("tokens", []) or []:
+                outcome = (token.get("outcome", "") or "").upper()
+                try:
+                    p = float(token.get("price", 0) or 0)
+                except (TypeError, ValueError):
+                    p = None
+                if p is not None and 0 < p < 1:
+                    if outcome == "YES" and yes_price is None:
+                        yes_price = p
+                    elif outcome == "NO" and no_price is None:
+                        no_price = p
+
+        # FALLBACK: public-search fields
         if yes_price is None:
             for key in ("lastTradePrice", "bestBid", "yes_price", "yesPrice"):
                 v = raw.get(key)
                 if v is not None:
                     try:
                         p = float(v)
-                        # bestBid=0 means "no orderbook", not actual price
-                        if p > 0:
+                        if 0 < p < 1:
                             yes_price = p
                             break
                     except (TypeError, ValueError):
@@ -238,26 +255,38 @@ class PolymarketScraper:
                 if v is not None:
                     try:
                         p = float(v)
-                        # bestAsk=1 means "no orderbook", not actual price
-                        if p < 1:
+                        if 0 < p < 1:
                             no_price = p
                             break
                     except (TypeError, ValueError):
                         pass
+
+        # DERIVE missing side
         if no_price is None and yes_price is not None:
-            no_price = max(0.0, min(1.0, 1.0 - yes_price))
-        # Fallback: outcomePrices (Gamma API v2 format — tokens empty)
-        if yes_price is None:
-            op = raw.get("outcomePrices", "")
-            if op:
-                try:
-                    parsed_op = json.loads(op) if isinstance(op, str) else op
-                    if isinstance(parsed_op, list) and len(parsed_op) >= 2:
-                        yes_price = float(parsed_op[0]) if parsed_op[0] else None
-                        if no_price is None:
-                            no_price = float(parsed_op[1]) if parsed_op[1] else None
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
+            no_price = max(0.0, min(1.0, round(1.0 - yes_price, 4)))
+        if yes_price is None and no_price is not None:
+            yes_price = max(0.0, min(1.0, round(1.0 - no_price, 4)))
+
+        # VALIDATE: YES + NO must sum to ~1.0. If not, trust outcomePrices.
+        if yes_price is not None and no_price is not None:
+            total = yes_price + no_price
+            if abs(total - 1.0) > 0.05:
+                # Prices don't sum to 1.0 — recalculate from outcomePrices or derive
+                op2 = raw.get("outcomePrices", "")
+                if op2:
+                    try:
+                        parsed_op2 = json.loads(op2) if isinstance(op2, str) else op2
+                        if isinstance(parsed_op2, list) and len(parsed_op2) >= 2:
+                            yes_price = float(parsed_op2[0])
+                            no_price = float(parsed_op2[1])
+                    except Exception:
+                        pass
+                # If still bad, derive NO from YES
+                if yes_price is not None and no_price is not None:
+                    total2 = yes_price + no_price
+                    if abs(total2 - 1.0) > 0.05:
+                        no_price = round(1.0 - yes_price, 4)
+
         if yes_price is None:
             yes_price = 0.5
         if no_price is None:
@@ -266,11 +295,7 @@ class PolymarketScraper:
         # Extract city name dynamically from ICAO map keys
         city_name = "Unknown"
         title = raw.get("title", "") or raw.get("question", "")
-        question = (
-            raw.get("question", "")
-            or raw.get("description", "")
-            or raw.get("title", "")
-        )
+        question = raw.get("question", "") or raw.get("description", "") or raw.get("title", "")
         title_lower = (title or "").lower()
         question_lower = (question or "").lower()
         for k in config.CITY_ICAO_MAP.keys():
@@ -293,11 +318,7 @@ class PolymarketScraper:
         threshold, threshold_unit, threshold_low, threshold_high = (
             threshold_result if threshold_result else (0.0, "celsius", None, None)
         )
-        metric = (
-            "temperature_max"
-            if "highest" in question_lower or "above" in question_lower
-            else "temperature_min"
-        )
+        metric = "temperature_max" if "highest" in question_lower or "above" in question_lower else "temperature_min"
         city_code = self._extract_city(question)
         market_type = self._determine_market_type(question)
         coords = self.get_city_coords(city_code) if city_code else None
@@ -334,16 +355,48 @@ class PolymarketScraper:
         try:
             raw_markets = self._fetch_raw_markets()
         except Exception as e:
-            raise Exception(f"Polymarket API hatası: {e}")
+            logger.warning(
+                "Polymarket API hatasi (Gamma blocked/timeout): %s - 0 market, bot devam ediyor",
+                e,
+            )
+            return 0
 
         weather_markets = [m for m in raw_markets if self._is_weather_market(m)]
         logger.info(f"{len(weather_markets)} hava durumu marketi bulundu")
+
+        # Auto-detect NEW_ cities and record them to a file for the operator
+        new_cities: dict[str, int] = {}
+        for raw in weather_markets:
+            q = (raw.get("question", "") + " " + raw.get("description", "") + " " + raw.get("title", "")).lower()
+            for pattern in self._CITY_DETECT_PATTERNS:
+                m = re.search(pattern, q, re.IGNORECASE)
+                if m:
+                    cn = m.group(1).strip().title()
+                    if len(cn) > 2 and cn.lower() not in self._CITY_STOPWORDS:
+                        new_cities[cn] = new_cities.get(cn, 0) + 1
+        if new_cities:
+            self._record_new_cities(new_cities)
 
         saved = 0
         with get_session() as session:
             for raw in weather_markets:
                 try:
                     parsed = self._parse_market(raw)
+
+                    # VALIDATE: YES + NO must sum to 1.0 — fix if not
+                    yp = parsed.get("yes_price", 0)
+                    np_ = parsed.get("no_price", 0)
+                    if yp is not None and np_ is not None:
+                        total = yp + np_
+                        if abs(total - 1.0) > 0.05:
+                            logger.warning(
+                                "Price sum=%.2f != 1.0 for market %s (YES=%.4f NO=%.4f) — deriving NO from YES",
+                                total,
+                                parsed["id"],
+                                yp,
+                                np_,
+                            )
+                            parsed["no_price"] = round(1.0 - yp, 4)
 
                     # Markets without ICAO coordinates → no_coords status
                     has_coords = parsed["latitude"] != 0.0 or parsed["longitude"] != 0.0
@@ -357,21 +410,15 @@ class PolymarketScraper:
                         )
 
                     # Upsert
-                    existing = (
-                        session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
-                    )
+                    existing = session.query(WeatherMarket).filter_by(id=parsed["id"]).first()
 
                     # Skip markets with missing target_date or zero threshold
                     if parsed["target_date"] is None:
-                        logger.warning(
-                            f"Skipping market {parsed['id']}: no target_date parsed"
-                        )
+                        logger.warning(f"Skipping market {parsed['id']}: no target_date parsed")
                         continue
                     threshold_c = parsed["threshold"]
                     if threshold_c == 0.0:
-                        logger.warning(
-                            f"Skipping market {parsed['id']}: threshold is 0.0"
-                        )
+                        logger.warning(f"Skipping market {parsed['id']}: threshold is 0.0")
                         continue
                     # Sanity guard: Celsius değer -40..55 aralığında değilse atla
                     if threshold_c < -40 or threshold_c > 55:
@@ -494,14 +541,98 @@ class PolymarketScraper:
                     continue
         return None
 
+    # Regex patterns for auto-detecting cities not in config
+    # Matches patterns like "in Chicago on", "Chicago on", "Chicago, IL", "temperature in London"
+    _CITY_DETECT_PATTERNS = [
+        r"\bin\s+([A-Z][a-z]+)\s+on\s",  # "in Chicago on"
+        r"\bin\s+([A-Z][a-z]+)\s+(?:on|at|for)\s",  # "in Chicago at"
+        r"\b([A-Z][a-z]+)\s+on\s+\w+\s+\d{1,2}",  # "Chicago on August 27"
+        r"\b([A-Z][a-z]+)\s+\d{1,2}(?:st|nd|rd|th)?\s+(?:°|deg)",  # "Chicago 27°"
+        r"temperature\s+in\s+([A-Z][a-z]+)",  # "temperature in London"
+        r"\b([A-Z][a-z]+)\s*,\s*[A-Z]{2}\b",  # "Chicago, IL" or "Paris, FR"
+    ]
+
+    _CITY_STOPWORDS = {
+        "on",
+        "at",
+        "for",
+        "in",
+        "the",
+        "of",
+        "be",
+        "will",
+        "what",
+        "how",
+        "many",
+        "which",
+        "highest",
+        "lowest",
+        "average",
+        "temperature",
+        "weather",
+        "station",
+        "stations",
+        "day",
+        "days",
+        "degree",
+        "degrees",
+        "fahrenheit",
+        "celsius",
+        "heat",
+        "cold",
+        "record",
+        "records",
+        "broken",
+        "all-time",
+        "august",
+        "july",
+        "september",
+        "june",
+        "may",
+    }
+
     def _extract_city(self, text: str) -> str:
         if not text:
             return ""
         text_lower = text.lower()
+        # 1) Config'deki bilinen şehirler (hızlı yol)
         for city_name, icao_code in config.CITY_ICAO_MAP.items():
             if city_name in text_lower:
                 return icao_code
+        # 2) Config dışı şehirleri regex ile tespit et (yeni şehirler otomatik yakala)
+        for pattern in self._CITY_DETECT_PATTERNS:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                city_name = match.group(1).strip().title()
+                if len(city_name) > 2 and city_name.lower() not in self._CITY_STOPWORDS:
+                    # Yeni şehir tespit edildi - "NEW_" prefix ile kaydet, config'e eklenecek
+                    logger.info(
+                        "Auto-detected new city: %s from pattern '%s' in text: %s...", city_name, pattern, text[:100]
+                    )
+                    return f"NEW_{city_name}"
         return ""
+
+    def _record_new_cities(self, cities: dict[str, int]) -> None:
+        """Persist auto-detected cities to data/detected_new_cities.json."""
+        try:
+            from config.settings import BASE_DIR
+            import os
+
+            path = os.path.join(BASE_DIR, "data", "detected_new_cities.json")
+            existing = {}
+            if os.path.exists(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                except Exception:
+                    existing = {}
+            for cn, cnt in cities.items():
+                existing[cn] = existing.get(cn, 0) + cnt
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=2, ensure_ascii=False)
+            logger.info("New cities recorded to %s: %s", path, sorted(cities.keys()))
+        except Exception as e:
+            logger.warning("Could not record new cities: %s", e)
 
     def _extract_strike(self, question: str) -> float:
         if not question:
@@ -528,17 +659,9 @@ class PolymarketScraper:
 
     def _determine_market_type(self, question: str) -> str:
         question_lower = question.lower()
-        if (
-            "above" in question_lower
-            or "higher" in question_lower
-            or "over" in question_lower
-        ):
+        if "above" in question_lower or "higher" in question_lower or "over" in question_lower:
             return "HIGH"
-        if (
-            "below" in question_lower
-            or "lower" in question_lower
-            or "under" in question_lower
-        ):
+        if "below" in question_lower or "lower" in question_lower or "under" in question_lower:
             return "LOW"
         if "or below" in question_lower or "or higher" in question_lower:
             if "or below" in question_lower:
