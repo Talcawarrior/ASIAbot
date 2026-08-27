@@ -30,18 +30,34 @@ WAPI_KEY = bot_config.meteo.weatherapi_key
 OWM_KEY = bot_config.meteo.openweather_key
 
 
+# 429 yiyen (gunluk limiti dolan) VC key'leri - bu oturumda tekrar denenmez
+_BAD_VC_KEYS: set[str] = set()
+
+
 def _vc_range(lat: float, lon: float, start: date, end: date) -> dict:
     keys = getattr(bot_config.meteo, "vc_api_keys", None) or ([VC_KEY] if VC_KEY else [])
     if not keys:
         return {}
+    # 429 yemis key'leri atla; kalanlari round-robin ile baslat (1. key'e takilma)
+    usable = [k for k in keys if k not in _BAD_VC_KEYS]
+    if not usable:
+        _BAD_VC_KEYS.clear()
+        usable = keys
+    # round-robin baslangic noktasi: meteo._vc_idx'i kullan
+    try:
+        start_idx = bot_config.meteo._vc_idx % len(usable)  # type: ignore[attr-defined]
+    except Exception:
+        start_idx = 0
+    rotated = usable[start_idx:] + usable[:start_idx]
     url = f"{bot_config.meteo.vc_url}/{lat},{lon}/{start}/{end}"
-    for attempt, key in enumerate(keys):
+    for attempt, key in enumerate(rotated):
         try:
             r = requests.get(
                 url, params={"key": key, "unitGroup": "metric", "include": "days", "contentType": "json"}, timeout=30
             )
             if r.status_code == 429:
-                logger.warning("VC 429 key %d/%d - rotating", attempt + 1, len(keys))
+                logger.warning("VC 429 key %d/%d - blacklist + rotating", attempt + 1, len(rotated))
+                _BAD_VC_KEYS.add(key)
                 time.sleep(1)
                 continue
             if r.status_code != 200:
@@ -236,20 +252,16 @@ def collect_once() -> int:
 
     cities = list(bot_config.icao_coords.items())  # (icao, (lat,lon))
     # Sadece acik Poly marketi olan sehirleri topla - 64 -> ~20'ye duser, VC 1000 limit korunur
+    # Not: her zaman weather_markets'tan acik sehirleri al (ForecastArchive'den degil),
+    # yoksa yeni acilan sehirler ikinci calismadan itibaren hic toplanmaz.
     try:
-        with get_session() as _sess:
-            open_icaos = {r[0] for r in _sess.query(ForecastArchive.city_code).distinct().all()}
-            # Ilk calismada ForecastArchive bos ise weather_markets'ten al
-            if not open_icaos:
-                from database.models import WeatherMarket
+        from database.models import WeatherMarket
 
-                open_icaos = {
-                    r[0]
-                    for r in _sess.query(WeatherMarket.city_code)
-                    .filter(WeatherMarket.status == "open")
-                    .distinct()
-                    .all()
-                }
+        with get_session() as _sess:
+            open_icaos = {
+                r[0]
+                for r in _sess.query(WeatherMarket.city_code).filter(WeatherMarket.status == "open").distinct().all()
+            }
             if open_icaos:
                 cities = [(icao, coord) for icao, coord in cities if icao in open_icaos]
     except Exception:
