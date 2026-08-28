@@ -4,7 +4,9 @@ repos:
     hooks:
       - id: ruff
         args: [--fix]
+        exclude: '\.(md|json|yaml|yml|toml|ini|cfg|txt|ts|tsx|js|css|html|bat|ps1)$'
       - id: ruff-format
+        exclude: '\.(md|json|yaml|yml|toml|ini|cfg|txt|ts|tsx|js|css|html|bat|ps1)$'
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.15.0

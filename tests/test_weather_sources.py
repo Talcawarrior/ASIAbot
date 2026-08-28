@@ -183,7 +183,7 @@ class TestTHorizonCollector:
     def test_vc_range_no_keys_returns_empty(self):
         from data_pipeline import t_horizon_collector as tc
 
-        with patch.object(tc.bot_config.meteo, "vc_api_keys", []):
+        with patch.object(tc.bot_config.meteo, "vc_api_keys", []), patch.object(tc, "VC_KEY", ""):
             assert tc._vc_range(41.0, 28.0, date(2026, 8, 25), date(2026, 8, 26)) == {}
 
     def test_openweather_range_aggregates_max(self):

@@ -1,87 +1,87 @@
-﻿# GeliÅŸtirici NotlarÄ± â€” asiabot Bot
+# GeliŞtirici Notları — asiabot Bot
 
-## ZORUNLU: Her Kod DeÄŸiÅŸikliÄŸi SonrasÄ±
+## ZORUNLU: Her Kod DeğiŞikliği Sonrası
 
 ```bash
 python quick_check.py          # 7 test, ~78 saniye
 python quick_check.py --fast   # sadece lint + import, ~15 saniye
 ```
 
-Bu testleri **her commit Ã¶ncesi** ve **bot restart Ã¶ncesi** Ã§alÄ±ÅŸtÄ±r.
-Test geÃ§mezse commit yapma, push etme.
+Bu testleri **her commit öncesi** ve **bot restart öncesi** çalıŞtır.
+Test geçmezse commit yapma, push etme.
 
 ---
 
-## Test KatmanlarÄ±
+## Test Katmanları
 
-| # | AraÃ§ | Ne yapar | Dosya |
+| # | Araç | Ne yapar | Dosya |
 |---|------|----------|-------|
 | 1 | **RUFF** | Undefined names (F821), bare except (E722), unused imports (F401) | quick_check.py |
 | 2 | **PYLINT** | Code quality: broad except, reimport, fstring logging | quick_check.py |
-| 3 | **MYPY** | Type annotations, Optional hatalarÄ± | quick_check.py |
+| 3 | **MYPY** | Type annotations, Optional hataları | quick_check.py |
 | 4 | **CRITICAL** | 26 regression test: timezone, API, scraper, DB, backup, take profit | test_critical_bugs.py |
-| 5 | **UNIT+RISK** | 104 test: formÃ¼l, kelly, risk manager, take profit | 3 test dosyasÄ± |
-| 6 | **REGRESSION** | 27 test: bilinen bug'larÄ±n tekrarlamamasÄ± | test_regression.py |
-| 7 | **IMPORT** | TÃ¼m kritik modÃ¼ller import edilebilir | quick_check.py |
+| 5 | **UNIT+RISK** | 104 test: formül, kelly, risk manager, take profit | 3 test dosyası |
+| 6 | **REGRESSION** | 27 test: bilinen bug'ların tekrarlamaması | test_regression.py |
+| 7 | **IMPORT** | Tüm kritik modüller import edilebilir | quick_check.py |
 
 ---
 
-## Bilinen Kritik Hatalar ve Ã‡Ã¶zÃ¼mleri
+## Bilinen Kritik Hatalar ve Çözümleri
 
-### B3 â€” max_bet_pct 10x Fark
+### B3 — max_bet_pct 10x Fark
 - `config/settings.py`: `max_bet_pct = 0.003` (%0.3)
 - `utils/kelly.py`: `max_bet_pct = 0.03` (%3)
-- **Ã‡Ã¶zÃ¼m**: `kelly.py` artÄ±k `bot_config.strategy.max_bet_pct` okuyor
+- **Çözüm**: `kelly.py` artık `bot_config.strategy.max_bet_pct` okuyor
 
-### B4 â€” Fee Rate TutarsÄ±zlÄ±ÄŸÄ±
-- `config/settings.py`: `fee_drag = 0.02` (Ã¶lÃ¼ kod)
+### B4 — Fee Rate Tutarsızlığı
+- `config/settings.py`: `fee_drag = 0.02` (ölü kod)
 - `utils/slippage.py`: `FEE_PCT = 0.05` (hardcoded)
 - `strategy.py`: `current_fee_rate` (dinamik)
-- **Ã‡Ã¶zÃ¼m**: strategy.py artÄ±k `current_fee_rate` kullanÄ±yor. `slippage.py` de gÃ¼ncellendi.
+- **Çözüm**: strategy.py artık `current_fee_rate` kullanıyor. `slippage.py` de güncellendi.
 
-### B5 â€” min_edge Ã‡ifte Kontrol
+### B5 — min_edge Çifte Kontrol
 - `calculator.py`: `effective_min_edge` (dinamik, time-to-close)
-- `strategy.py`: dÃ¼z `min_edge` (sabit %5)
-- **Ã‡Ã¶zÃ¼m**: strategy.py'deki min_edge check kaldÄ±rÄ±ldÄ±, calculator'a bÄ±rakÄ±ldÄ±.
+- `strategy.py`: düz `min_edge` (sabit %5)
+- **Çözüm**: strategy.py'deki min_edge check kaldırıldı, calculator'a bırakıldı.
 
 ### Timezone Crash (bot_loop.py)
-- `fast_mode_until` timezone-aware, `now` naive â†’ crash
-- **Ã‡Ã¶zÃ¼m**: `fast_mode_until` artÄ±k `.replace(tzinfo=None)` yapÄ±yor
+- `fast_mode_until` timezone-aware, `now` naive -> crash
+- **Çözüm**: `fast_mode_until` artık `.replace(tzinfo=None)` yapıyor
 
-### Gamma API Format DeÄŸiÅŸikliÄŸi
-- Polymarket `tokens[]` dÃ¶ndÃ¼rmÃ¼yor artÄ±k
-- **Ã‡Ã¶zÃ¼m**: scraper `outcomePrices` fallback ekledi, `bestBid=0` / `bestAsk=1` atlÄ±yor
+### Gamma API Format DeğiŞikliği
+- Polymarket `tokens[]` döndürmüyor artık
+- **Çözüm**: scraper `outcomePrices` fallback ekledi, `bestBid=0` / `bestAsk=1` atlıyor
 
 ### Take Profit Format String
-- `{pct:.1%}` 100 ile Ã§arpÄ±yordu (double multiply)
-- **Ã‡Ã¶zÃ¼m**: ratio kullanÄ±mÄ±, format `{pct:.1%}` artÄ±k ratio formatlÄ±yor
+- `{pct:.1%}` 100 ile çarpıyordu (double multiply)
+- **Çözüm**: ratio kullanımı, format `{pct:.1%}` artık ratio formatlıyor
 
 ---
 
-## DB Koruma KurallarÄ±
+## DB Koruma Kuralları
 
-1. **HiÃ§bir test production DB'ye dokunmaz** â€” `conftest.py` temp DB'ye yÃ¶nlendirir
-2. **Her test Ã¶ncesi backup** â€” `conftest.py` `_pre_test_backup()`
-3. **Reset Ã¶ncesi backup** â€” `api.py` ve `main.py` reset'ten Ã¶nce backup alÄ±r
-4. **Bot startup backup** â€” Her restart'ta `db_backup.py` Ã§alÄ±ÅŸÄ±r
+1. **Hiçbir test production DB'ye dokunmaz** — `conftest.py` temp DB'ye yönlendirir
+2. **Her test öncesi backup** — `conftest.py` `_pre_test_backup()`
+3. **Reset öncesi backup** — `api.py` ve `main.py` reset'ten önce backup alır
+4. **Bot startup backup** — Her restart'ta `db_backup.py` çalıŞır
 5. **Backup limiti**: MAX_BACKUPS = 10, eski olanlar otomatik temizlenir
 
 ```bash
 python db_backup.py           # Manuel backup
-python db_backup.py --list    # Backup'larÄ± listele
-python db_backup.py --restore # Son backup'Ä± geri yÃ¼kle
+python db_backup.py --list    # Backup'ları listele
+python db_backup.py --restore # Son backup'ı geri yükle
 ```
 
 ---
 
-## Bot BaÅŸlatma
+## Bot BaŞlatma
 
 ```bash
-python main.py bot             # Botu baÅŸlat
-python main.py reset           # Botu sÄ±fÄ±rla (backup alÄ±r)
+python main.py bot             # Botu baŞlat
+python main.py reset           # Botu sıfırla (backup alır)
 ```
 
-Port: 8091. API key: `.env` dosyasÄ±nda `asiabot_API_KEY`.
+Port: 8091. API key: `.env` dosyasında `asiabot_API_KEY`.
 
 ### Bot Durumu Kontrol
 
@@ -95,27 +95,27 @@ Get-Content logs\bot.log -Tail 10
 
 ---
 
-## Branch KullanÄ±mÄ±
+## Branch Kullanımı
 
-| Branch | AmaÃ§ |
+| Branch | Amaç |
 |--------|------|
-| `restore/05-clean-state` | Ana iÅŸ akÄ±ÅŸÄ± (production) |
+| `restore/05-clean-state` | Ana iŞ akıŞı (production) |
 | `ponytail-audit` | Ponytail audit + CI testleri |
-| `feature/partial-tp` | Partial take-profit Ã¶zelliÄŸi |
+| `feature/partial-tp` | Partial take-profit özelliği |
 
-### Push KuralÄ±
-1. `quick_check.py` 7/7 geÃ§meden push ETME
+### Push Kuralı
+1. `quick_check.py` 7/7 geçmeden push ETME
 2. DB'ye dokunmadan push ETME
-3. Yeni branch oluÅŸtur, `restore/05-clean-state`'e dokunma
+3. Yeni branch oluŞtur, `restore/05-clean-state`'e dokunma
 
 ---
 
-## Dosya YapÄ±sÄ±
+## Dosya Yapısı
 
 ```
 asiabot/
 â”œâ”€â”€ bot_loop.py           # Scan + settlement loop
-â”œâ”€â”€ main.py               # Bot giriÅŸ noktasÄ±
+â”œâ”€â”€ main.py               # Bot giriŞ noktası
 â”œâ”€â”€ api.py                # FastAPI endpoints
 â”œâ”€â”€ quick_check.py        # CI test suite (7 test)
 â”œâ”€â”€ db_backup.py          # Backup utility
@@ -125,7 +125,7 @@ asiabot/
 â”‚   â”œâ”€â”€ calculator.py     # Probability + edge hesaplama
 â”‚   â””â”€â”€ market_parser.py  # Polymarket parser
 â”œâ”€â”€ executor/
-â”‚   â”œâ”€â”€ bet_placer.py     # Bahis aÃ§ma
+â”‚   â”œâ”€â”€ bet_placer.py     # Bahis açma
 â”‚   â””â”€â”€ settler.py        # Bahis kapatma/settlement
 â”œâ”€â”€ jobs/
 â”‚   â””â”€â”€ scheduler.py      # run_cycle, risk_management

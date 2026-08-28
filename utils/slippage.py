@@ -301,7 +301,7 @@ def check_orderbook_depth(
         from data_pipeline.resolvedmarkets_ingest import ResolvedMarketsClient
 
         client = ResolvedMarketsClient()
-        ob = client.fetch_historical_orderbook(condition_id)  # type: ignore[attr-defined]
+        ob = client.get_live_orderbook(condition_id)
         if not ob:
             return True, 0.0
 
