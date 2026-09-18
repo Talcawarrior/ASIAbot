@@ -37,12 +37,8 @@ import threading
 logger = logging.getLogger(__name__)
 
 # Project root: two parents up from utils/ -> repo root.
-_WEIGHTS_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json")
-)
-_STRATEGY_PATH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json")
-)
+_WEIGHTS_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "model_weights.json"))
+_STRATEGY_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "data", "strategy_params.json"))
 
 # Diversification floor — no model may drop below this weight after save.
 # Set to 5% so the ensemble cannot collapse to a 1-2 model solution even
@@ -78,12 +74,21 @@ def load_strategy_params() -> dict[str, float] | None:
 
 
 def save_strategy_params(params: dict[str, float]):
-    """Save strategy parameters to disk."""
+    """Save strategy parameters to disk (MERGE: never wipe other tuned keys)."""
     with _lock:
         try:
             os.makedirs(os.path.dirname(_STRATEGY_PATH), exist_ok=True)
+            merged: dict = {}
+            try:
+                with open(_STRATEGY_PATH, encoding="utf-8") as f:
+                    old = json.load(f)
+                    if isinstance(old, dict):
+                        merged.update(old)
+            except Exception:
+                pass
+            merged.update(params)
             with open(_STRATEGY_PATH, "w", encoding="utf-8") as f:
-                json.dump(params, f, indent=2)
+                json.dump(merged, f, indent=2)
             logger.info("Strategy parameters persisted to %s", _STRATEGY_PATH)
         except Exception as e:
             logger.warning("Could not save strategy parameters: %s", e)
@@ -140,8 +145,7 @@ def _apply_floor(
     n = len(weights)
     if floor * n >= 1.0:
         logger.warning(
-            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, "
-            "falling back to uniform 1/%d",
+            "MIN_MODEL_WEIGHT=%.4f * n=%d >= 1.0 — floor not enforceable, falling back to uniform 1/%d",
             floor,
             n,
             n,

@@ -1,4 +1,4 @@
-﻿"""FastAPI application for asiabot - Polymarket weather betting bot.
+"""FastAPI application for asiabot - Polymarket weather betting bot.
 
 Provides REST API endpoints for status, markets, signals, history, cleanup,
 and WebSocket push. The bot runs fetch -> parse -> forecast -> analyze ->
@@ -63,7 +63,7 @@ TR_MONTHS = {
 }
 
 
-# â”€â”€ API Key Authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€ API Key Authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â
 # Protects sensitive POST endpoints (reset, asi/*, start, stop, cleanup).
 # asiabot_API_KEY MUST be set. If not set, a random key is generated at startup
 # and printed to console. Destructive endpoints are NEVER open.
@@ -71,11 +71,11 @@ TR_MONTHS = {
 API_KEY = os.getenv("asiabot_API_KEY", "")
 if not API_KEY:
     API_KEY = secrets.token_urlsafe(32)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("WARNING: asiabot_API_KEY not set. Generated random key:")
     print(f"  {API_KEY}")
     print(f"Add to .env: asiabot_API_KEY={API_KEY}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
 
 async def verify_api_key(x_api_key: str = Header(default="")):
@@ -89,7 +89,7 @@ async def verify_api_key(x_api_key: str = Header(default="")):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
-# â”€â”€ Global State tracking for FastAPI Web App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# â”€â”€ Global State tracking for FastAPI Web App â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class BotState:
     """Global bot state tracking running status, modules, and tasks."""
 
@@ -115,6 +115,12 @@ class BotState:
         self.sia_loop = None
         self.sia_last_run = None  # datetime of last SIA optimization
         self.sia_interval_hours = bot_config.sia_interval // 3600
+
+        # Karpathy Weekly state
+        self.karpathy_last_run = None  # datetime of last Karpathy run
+
+        # ASI-Evolve state
+        self.asi_evolve_last_run = None  # datetime of last ASI-Evolve run
 
         # ASI-Evolve engines
         self.orchestrator = None
@@ -387,6 +393,13 @@ def get_status():
             else:
                 scan_health = "dead"
 
+        # Toplam giris ucreti: dashboard "Toplam Fee" karti buradan beslenir.
+        # (Bet.entry_fee giriste resmi formulle yazilir; hic gerceklesmemis
+        # rejected/cancelled satirlar sayilmaz.)
+        fee_rows = db.query(Bet.entry_fee).filter(Bet.status.notin_(["rejected", "cancelled"])).all()
+        total_entry_fee = round(sum(float(r[0] or 0.0) for r in fee_rows), 2)
+        entry_fee_trade_count = sum(1 for r in fee_rows if float(r[0] or 0.0) > 0)
+
         return {
             "is_running": state.is_running,
             "locked": state.locked,
@@ -403,6 +416,8 @@ def get_status():
                 "total_pnl": total_pnl,
                 "total_roi": total_roi,
                 "exposure": float(exposure_db),
+                "total_entry_fee": total_entry_fee,
+                "entry_fee_trade_count": entry_fee_trade_count,
                 "max_exposure": round(
                     max_exposure_cap(
                         initial_capital,
@@ -885,6 +900,13 @@ def get_history():
             for a in db.query(Analysis).filter(Analysis.id.in_(bet_analysis_ids)).all():
                 bet_analyses[a.id] = a
 
+        # Batch-load markets for threshold display (N+1 fix)
+        bet_market_ids = [b.market_id for b in settled_bets if b.market_id]
+        bet_markets = {}
+        if bet_market_ids:
+            for m in db.query(WeatherMarket).filter(WeatherMarket.id.in_(bet_market_ids)).all():
+                bet_markets[m.id] = m
+
         history = []
         for bet in settled_bets:
             pnl = bet.pnl or bet.realized_pnl or 0.0
@@ -904,6 +926,8 @@ def get_history():
                     exit_type = "TS"
                 elif cr.startswith("time_decay"):
                     exit_type = "TD"
+                elif cr.startswith("signal_decay"):
+                    exit_type = "SD"
                 else:
                     exit_type = "OT"
             else:
@@ -915,6 +939,11 @@ def get_history():
                     "city": bet.city,
                     "outcome": bet.side or "YES",
                     "entry_price": bet.price,
+                    "threshold": (
+                        bet_markets.get(bet.market_id).threshold
+                        if bet.market_id and bet_markets.get(bet.market_id)
+                        else None
+                    ),
                     "stake_amount": stake,
                     "realized_pnl": pnl,
                     "roi": round(roi, 2),
@@ -956,6 +985,38 @@ def get_history():
         win_rate = win_rate_pct(total_won, total_won + total_lost)
         overall_roi = roi_pct(total_pnl_all, total_stake_all)
         profit_factor = round(total_win_pnl / total_loss_pnl, 2) if total_loss_pnl > 0 else 0.0
+
+        # Giris fiyat bandi kirilimi (dashboard "Fiyat bandi" tablosu).
+        bands: dict = {}
+        for bet in settled_bets:
+            p = float(bet.price or 0.0)
+            lo = min(0.9, int(p * 10) / 10)
+            key = f"{lo:.1f}-{lo + 0.1:.1f}"
+            b = bands.setdefault(key, {"trades": 0, "wins": 0, "stake": 0.0, "pnl": 0.0, "lo": lo})
+            b["trades"] += 1
+            if float(bet.pnl or 0.0) > 0:
+                b["wins"] += 1
+            b["stake"] += float(bet.amount or 0.0)
+            b["pnl"] += float(bet.pnl or 0.0)
+        roi_by_price_band = []
+        for key in sorted(bands):
+            b = bands[key]
+            losses = b["trades"] - b["wins"]
+            roi_by_price_band.append(
+                {
+                    "band": key,
+                    "min_price": b["lo"],
+                    "max_price": round(b["lo"] + 0.1, 1),
+                    "trades": b["trades"],
+                    "wins": b["wins"],
+                    "losses": losses,
+                    "stake": round(b["stake"], 2),
+                    "pnl": round(b["pnl"], 2),
+                    "roi": round(roi_pct(b["pnl"], b["stake"]), 2),
+                    "win_rate": round(win_rate_pct(b["wins"], b["trades"]), 2),
+                }
+            )
+
         return {
             "history": history,
             "stats": {
@@ -973,8 +1034,49 @@ def get_history():
                 "avg_edge": round(avg_edge * 100, 2) if avg_edge else 0.0,
                 "partial_tp_count": partial_tp_count,
                 "partial_tp_pnl": round(partial_tp_pnl, 2),
+                "roi_by_price_band": roi_by_price_band,
             },
         }
+    finally:
+        db.close()
+
+
+@app.get("/api/edge-calibration")
+def get_edge_calibration():
+    """Giris edge bucket'i vs gerceklesen win-rate (edge durustlugu).
+
+    Kapanmis her bet icin analizin edge'i alinir, %5'lik bucket'lara
+    konur; bucket basina win-rate + PnL doner. Edge yukselince win-rate
+    de yukselmiyorsa tahminler asiri guvenli demektir.
+    """
+    db = get_db_session()
+    try:
+        closed = (
+            db.query(Bet.pnl, Bet.amount, Analysis.edge)
+            .join(Analysis, Bet.analysis_id == Analysis.id)
+            .filter(Bet.status.in_(("won", "lost", "settled", "closed_early")))
+            .all()
+        )
+        bounds = [0.0, 0.05, 0.10, 0.15, 0.25, 99.0]
+        buckets = []
+        for i in range(len(bounds) - 1):
+            lo, hi = bounds[i], bounds[i + 1]
+            rows = [r for r in closed if r[2] is not None and lo <= float(r[2]) < hi]
+            n = len(rows)
+            wins = sum(1 for r in rows if float(r[0] or 0.0) > 0)
+            pnl = round(sum(float(r[0] or 0.0) for r in rows), 2)
+            stake = round(sum(float(r[1] or 0.0) for r in rows), 2)
+            buckets.append(
+                {
+                    "band": f"%{lo * 100:.0f}-%{hi * 100:.0f}" if hi < 99 else f"%{lo * 100:.0f}+",
+                    "trades": n,
+                    "wins": wins,
+                    "win_rate": round(100.0 * wins / n, 1) if n else 0.0,
+                    "pnl": pnl,
+                    "roi": round(100.0 * pnl / stake, 1) if stake else 0.0,
+                }
+            )
+        return {"buckets": buckets, "total": len(closed)}
     finally:
         db.close()
 
@@ -1087,7 +1189,7 @@ def get_slippage():
         for analysis, city, _bet_side, entry_price, bet_pnl, _bet_status in rows:
             # Use Analysis fields for expected values, Bet fields for actuals
             expected_price = round(float(analysis.market_implied_prob or 0), 4)
-            side = analysis.recommended_side or "Ã¢â‚¬â€"
+            side = (analysis.recommended_side or "-",)
             # entry_price: 0 if no bet placed (frontend expects number)
             entry_price_val = round(float(entry_price), 4) if entry_price is not None else 0.0
             # result: PENDING if no bet, WIN/LOSS if bet settled
@@ -1098,7 +1200,7 @@ def get_slippage():
             entries.append(
                 {
                     "id": str(analysis.id),
-                    "city": city or "Ã¢â‚¬â€",
+                    "city": city or "-",
                     "side": side,
                     "expected_price": expected_price,
                     "entry_price": entry_price_val,
@@ -1361,6 +1463,7 @@ def get_health_check():
             "stop_loss": "SL",
             "trailing_stop": "TS",
             "time_decay": "TD",
+            "signal_decay": "SD",
         }
         wins_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
         losses_by_exit = {"TP": 0, "SL": 0, "TS": 0, "TD": 0, "ST": 0}
@@ -1408,8 +1511,8 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"Son 48 saatte {recent_losses} kayÃ„Â±p "
-                        f"(toplam {recent_total} sonuÃƒÂ§lanan). "
+                        f"Son 48 saatte {recent_losses} kayip "
+                        f"(toplam {recent_total} sonuclanan). "
                         f"Calibration bozuk olabilir."
                     ),
                     "action": "Botu durdur ve kalibrasyonu kontrol et.",
@@ -1423,19 +1526,19 @@ def get_health_check():
                     {
                         "severity": "warning",
                         "message": (
-                            f"Son 24 saatte {any_analyses} analiz yapÃ„Â±ldÃ„Â±"
-                            f" ama hiÃƒÂ§ bet aÃƒÂ§Ã„Â±lmadÃ„Â±."
-                            f" Edge threshold ÃƒÂ§ok yÃƒÂ¼ksek olabilir."
+                            f"Son 24 saatte {any_analyses} analiz yapildi"
+                            f" ama hic bet acilmadi."
+                            f" Edge threshold cok yuksek olabilir."
                         ),
-                        "action": "min_edge'i dÃƒÂ¼Ã…Å¸ÃƒÂ¼r veya marketleri kontrol et.",
+                        "action": "min_edge'i dusur veya marketleri kontrol et.",
                     }
                 )
             else:
                 red_flags.append(
                     {
                         "severity": "info",
-                        "message": ("Son 24 saatte hiÃƒÂ§ analiz yapÃ„Â±lmadÃ„Â±. Market taramasÃ„Â± ÃƒÂ§alÃ„Â±Ã…Å¸Ã„Â±yor mu?"),
-                        "action": "Market taramasÃ„Â±nÃ„Â± kontrol et.",
+                        "message": ("Son 24 saatte hic analiz yapilmadi. Market taramasi calisiyor mu?"),
+                        "action": "Market taramasini kontrol et.",
                     }
                 )
 
@@ -1444,9 +1547,9 @@ def get_health_check():
                 {
                     "severity": "critical",
                     "message": (
-                        f"TÃƒÂ¼m net edge'ler %2.5 altÃ„Â±nda (ortalama: %{avg_net_edge:.1f}). Maliyeti karÃ…Å¸Ã„Â±lamÃ„Â±yor."
+                        f"Tum net edge'ler %2.5 altinda (ortalama: %{avg_net_edge:.1f}). Maliyeti karsilamiyor."
                     ),
-                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarÃ„Â±nÃ„Â± gÃƒÂ¶zden geÃƒÂ§ir."),
+                    "action": ("Botu durdur. min_edge veya kalibrasyon ayarlarini gozden gecir."),
                 }
             )
 
@@ -1454,8 +1557,8 @@ def get_health_check():
             red_flags.append(
                 {
                     "severity": "critical",
-                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuÃƒÂ§lanmÃ„Â±Ã…Å¸ bet). Model tahminleri gÃƒÂ¼venilmez."),
-                    "action": "Kalibrasyon verisini kontrol et, evrim ÃƒÂ§alÃ„Â±Ã…Å¸tÃ„Â±r.",
+                    "message": (f"Win rate %{win_rate_all:.1f} (5+ sonuclanmis bet). Model tahminleri guvenilmez."),
+                    "action": "Kalibrasyon verisini kontrol et, evrim calistir.",
                 }
             )
 
@@ -1486,13 +1589,13 @@ def get_health_check():
                 }
             )
 
-        # 6. Daily PnL Timeline â€” forward from today (17/07, 18/07, 19/07, ...)
-        # Shows 31 days: yesterday through 29 days ahead.
+        # 6. Daily PnL Timeline â€” forward from today (16/07, 17/07, ..., today, +29 days)
+        # Shows ~37 days: 7 days back through 29 days ahead.
         # Past days with data get real PnL bars; future days show $0.
-        from sqlalchemy import or_
+        from sqlalchemy import func, or_
 
         daily_pnl = []
-        for i in range(-1, 29):
+        for i in range(-7, 29):
             day_start = (now + timedelta(days=i)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = (now + timedelta(days=i + 1)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_bets = (
@@ -1510,10 +1613,24 @@ def get_health_check():
                 )
                 .all()
             )
-            day_pnl = sum(b.pnl or 0.0 for b in day_bets)
+            day_closed_pnl = sum(b.pnl or 0.0 for b in day_bets)
             day_stake = sum(b.amount or 0.0 for b in day_bets)
             day_wins = sum(1 for b in day_bets if b.pnl and b.pnl > 0)
             day_losses = sum(1 for b in day_bets if b.pnl is not None and b.pnl <= 0)
+
+            # Partial TP: open bets that were partially sold today
+            day_partial_tp = (
+                db.query(func.coalesce(func.sum(Bet.realized_pnl), 0.0))
+                .filter(
+                    Bet.status.in_(OPEN_BET_STATUSES),
+                    Bet.partial_tp_done.is_(True),
+                    Bet.placed_at >= day_start,
+                    Bet.placed_at < day_end,
+                )
+                .scalar()
+            ) or 0.0
+
+            day_pnl = day_closed_pnl + day_partial_tp
             day_total = day_wins + day_losses
             daily_pnl.append(
                 {
@@ -1537,7 +1654,7 @@ def get_health_check():
         else:
             verdict = "warning"
 
-        return {
+        resp = {
             "verdict": verdict,
             "is_running": state.is_running,
             "activity_24h": {
@@ -1567,11 +1684,87 @@ def get_health_check():
             "red_flags": red_flags,
             "daily_pnl_timeline": daily_pnl,
         }
+        try:
+            from utils.activity_log import peak_watch_list, recent_events
+
+            resp["peak_watch"] = peak_watch_list()
+            resp["activity_events"] = recent_events(100)
+        except Exception:
+            pass
+        return resp
     except Exception as e:
         logger.error("Health check error: %s", e)
         return JSONResponse(status_code=500, content={"error": str(e), "verdict": "error"})
     finally:
         db.close()
+
+
+@app.get("/api/forecast-archive")
+def get_forecast_archive(days: int = 7, city: str = "", source: str = ""):
+    """ForecastArchive gun gun tablo: hangi istasyon ne tahmin etti t0/t1/t2 hangileri tuttu sehir bazinda.
+
+    Query params: days (1-30), city (ICAO filter),
+    source (visual_crossing/weatherapi/openweather/nws/weathercom/pivotal_gfs/iem_mos)
+    Donus: {rows: [{city_code, city, target_date, horizon, source, predicted_max/min, actual_max/min, is_match}]}
+    """
+    from database.db import get_db_session as _get_db
+    from database.models import ForecastArchive
+
+    db = _get_db()
+    try:
+        from datetime import timedelta
+
+        end = datetime.now(timezone.utc).date()
+        start = end - timedelta(days=days - 1)
+        q = db.query(ForecastArchive).filter(
+            ForecastArchive.target_date >= datetime.combine(start, datetime.min.time()),
+            ForecastArchive.target_date <= datetime.combine(end, datetime.min.time()),
+        )
+        if city:
+            q = q.filter(ForecastArchive.city_code == city.upper())
+        if source:
+            q = q.filter(ForecastArchive.source == source)
+        rows = (
+            q.order_by(
+                ForecastArchive.target_date.desc(),
+                ForecastArchive.city_code,
+                ForecastArchive.horizon,
+                ForecastArchive.source,
+            )
+            .limit(2000)
+            .all()
+        )
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "city_code": r.city_code,
+                    "city": r.city,
+                    "target_date": r.target_date.date().isoformat() if r.target_date else None,
+                    "horizon": r.horizon,
+                    "source": r.source,
+                    "station_code": r.station_code,
+                    "predicted_max": r.predicted_max,
+                    "predicted_min": r.predicted_min,
+                    "actual_max": r.actual_max,
+                    "actual_min": r.actual_min,
+                    "is_match": r.is_match,
+                    "fetched_at": r.fetched_at.isoformat() if r.fetched_at else None,
+                }
+            )
+        return {"rows": out, "count": len(out), "days": days}
+    finally:
+        db.close()
+
+
+@app.get("/api/forecast-archive/report")
+def get_forecast_archive_report(days: int = 7):
+    """Gun gun sehir bazinda hangi kaynak t0/t1/t2 tuttu raporu (t_horizon_report)."""
+    from data_pipeline.t_horizon_report import generate_report
+
+    report_text = generate_report(days=days)
+    # Ayrica tablo icin ham satirlari da dondur
+    return {"report": report_text, "days": days}
 
 
 @app.websocket("/ws")
@@ -1592,5 +1785,3 @@ async def websocket_endpoint(websocket: WebSocket, api_key: str = ""):
 # Re-export loop functions from bot_loop module so existing
 # callers (e.g. bot_lifespan in main.py) can import from here.
 from bot_loop import scan_and_bet_loop, settlement_loop  # noqa: E402, F401
-
-

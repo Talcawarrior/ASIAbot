@@ -293,15 +293,11 @@ def _partial_close_early(bet, sess, reason, current_price):
     portfolio = sess.query(Portfolio).filter(Portfolio.id == 1).first()
     if portfolio:
         open_exposure = (
-            sess.query(func.coalesce(func.sum(Bet.amount), 0.0))
-            .filter(Bet.status.in_(OPEN_BET_STATUSES))
-            .scalar()
+            sess.query(func.coalesce(func.sum(Bet.amount), 0.0)).filter(Bet.status.in_(OPEN_BET_STATUSES)).scalar()
         ) or 0.0
-        portfolio.total_value = portfolio_total_value(
-            float(portfolio.cash_balance or 0.0), float(open_exposure)
-        )
+        portfolio.total_value = portfolio_total_value(float(portfolio.cash_balance or 0.0), float(open_exposure))
         portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
-        portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
+        # Partial TP does NOT count as won/lost yet — only final close counts
         portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
 
     sess.add(bet)
@@ -309,7 +305,13 @@ def _partial_close_early(bet, sess, reason, current_price):
         sess.add(portfolio)
     logger.info(
         "Partial TP bet=%s market=%s sold %.2f/%.2f shares (%.1f%%) realized=$%.2f fee=$%.2f (stays open)",
-        bet.id, bet.market_id, sold_shares, original_shares, fraction_to_sell * 100, realized, fee,
+        bet.id,
+        bet.market_id,
+        sold_shares,
+        original_shares,
+        fraction_to_sell * 100,
+        realized,
+        fee,
     )
     return True
 
@@ -364,6 +366,13 @@ def run_risk_management(session=None):
                 if rev_exit:
                     should_exit, reason = True, rev_reason
 
+            # Sinyal bozulma: model artik fiyatin altinda goruyorsa
+            # stop-loss gap'ini beklemeden kucuk zararla cik (once stop).
+            if not should_exit:
+                sig_exit, sig_reason = rm.check_signal_decay(bet, analysis, current_price)
+                if sig_exit:
+                    should_exit, reason = True, sig_reason
+
             if should_exit:
                 if reason.startswith("partial_take_profit"):
                     # Partial TP: recover principal, keep remainder open (trailing stop)
@@ -411,8 +420,11 @@ def run_risk_management(session=None):
                     bet.status = "closed_early"
                     bet.close_reason = reason
                     bet.closed_at = datetime.now(timezone.utc)
-                    bet.realized_pnl = realized
-                    bet.pnl = realized
+                    # Accumulate partial TP profit if exists (don't overwrite)
+                    prev_realized = float(bet.realized_pnl or 0.0)
+                    total_realized = round(prev_realized + realized, 2)
+                    bet.realized_pnl = total_realized
+                    bet.pnl = total_realized
                     bet.current_price = current_price
 
                     # Credit net proceeds (after fee) to cash via central accounting.
@@ -428,9 +440,11 @@ def run_risk_management(session=None):
                         portfolio.total_value = portfolio_total_value(
                             float(portfolio.cash_balance or 0.0), float(open_exposure)
                         )
+                        # Only remaining realized added (partial already added at partial TP time)
                         portfolio.total_realized_pnl = round((portfolio.total_realized_pnl or 0.0) + realized, 2)
-                        portfolio.total_won = (portfolio.total_won or 0) + (1 if realized > 0 else 0)
-                        portfolio.total_lost = (portfolio.total_lost or 0) + (1 if realized <= 0 else 0)
+                        # Count win/loss once per bet based on total realized
+                        portfolio.total_won = (portfolio.total_won or 0) + (1 if total_realized > 0 else 0)
+                        portfolio.total_lost = (portfolio.total_lost or 0) + (1 if total_realized <= 0 else 0)
                         portfolio.last_updated = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     sess.add(bet)

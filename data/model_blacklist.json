@@ -1,0 +1,283 @@
+{
+  "city_blacklist": [],
+  "model_blacklist": {
+    "CYVR": [
+      "openweather"
+    ],
+    "CYYZ": [
+      "jma_seamless"
+    ],
+    "EDDF": [
+      "openweather"
+    ],
+    "EDDM": [
+      "cma_grapes_global",
+      "icon_seamless",
+      "meteofrance_seamless"
+    ],
+    "EFHK": [
+      "icon_seamless",
+      "weatherapi"
+    ],
+    "EGLL": [
+      "cma_grapes_global",
+      "icon_seamless"
+    ],
+    "EHAM": [
+      "cma_grapes_global",
+      "icon_seamless",
+      "jma_seamless"
+    ],
+    "EPWA": [
+      "gfs_seamless",
+      "icon_seamless",
+      "jma_seamless",
+      "openweather",
+      "weatherapi"
+    ],
+    "FACT": [
+      "icon_seamless",
+      "jma_seamless",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "HECA": [
+      "openweather",
+      "weatherapi"
+    ],
+    "KATL": [
+      "nws"
+    ],
+    "KAUS": [
+      "openweather"
+    ],
+    "KBOS": [
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "KDEN": [
+      "nws"
+    ],
+    "KIAH": [
+      "gfs_seamless",
+      "openweather"
+    ],
+    "KLAS": [
+      "weatherapi"
+    ],
+    "KLAX": [
+      "ecmwf_ifs025",
+      "nws",
+      "openweather",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "KORD": [
+      "nws"
+    ],
+    "KSEA": [
+      "meteofrance_seamless",
+      "nws"
+    ],
+    "KSFO": [
+      "ecmwf_ifs025",
+      "gem_global",
+      "gfs_seamless",
+      "jma_seamless",
+      "nws",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "LEBL": [
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "LEMD": [
+      "icon_seamless"
+    ],
+    "LFPG": [
+      "cma_grapes_global",
+      "icon_seamless"
+    ],
+    "LIMC": [
+      "cma_grapes_global",
+      "icon_seamless",
+      "visual_crossing",
+      "weatherapi"
+    ],
+    "LIRF": [
+      "openweather",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "LLBG": [
+      "icon_seamless"
+    ],
+    "LSZH": [
+      "weatherapi"
+    ],
+    "LTAI": [
+      "weatherapi"
+    ],
+    "LTFM": [
+      "jma_msm",
+      "jma_seamless",
+      "pivotal_gfs",
+      "ukmo_seamless",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "MMMX": [
+      "openweather",
+      "pivotal_gfs",
+      "weathercom"
+    ],
+    "MPMG": [
+      "jma_seamless"
+    ],
+    "NZWN": [
+      "weatherapi"
+    ],
+    "OEJN": [
+      "icon_seamless",
+      "jma_seamless",
+      "weatherapi"
+    ],
+    "OMDB": [
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "OPKC": [
+      "icon_seamless",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "OTHH": [
+      "openweather"
+    ],
+    "RJTT": [
+      "meteofrance_seamless"
+    ],
+    "RKPK": [
+      "cma_grapes_global",
+      "gem_global",
+      "gfs_seamless",
+      "icon_global",
+      "jma_seamless",
+      "meteofrance_seamless",
+      "ukmo_seamless",
+      "visual_crossing"
+    ],
+    "RKSS": [
+      "gfs_seamless",
+      "ukmo_seamless"
+    ],
+    "SBGL": [
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "SBGR": [
+      "weatherapi"
+    ],
+    "SCEL": [
+      "weatherapi"
+    ],
+    "UUEE": [
+      "icon_seamless"
+    ],
+    "VABB": [
+      "weatherapi"
+    ],
+    "VHHH": [
+      "openweather",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "VIDP": [
+      "openweather",
+      "pivotal_gfs",
+      "visual_crossing",
+      "weatherapi",
+      "weathercom"
+    ],
+    "VILK": [
+      "gem_global",
+      "icon_global",
+      "meteofrance_seamless"
+    ],
+    "VTBS": [
+      "weatherapi"
+    ],
+    "WIII": [
+      "openweather",
+      "weatherapi"
+    ],
+    "WMKK": [
+      "icon_seamless",
+      "jma_seamless"
+    ],
+    "WSSS": [
+      "icon_seamless",
+      "jma_seamless",
+      "weatherapi"
+    ],
+    "ZBAA": [
+      "icon_seamless",
+      "jma_seamless"
+    ],
+    "ZGGG": [
+      "pivotal_gfs",
+      "visual_crossing",
+      "weathercom"
+    ],
+    "ZHCC": [
+      "gfs_seamless",
+      "icon_seamless",
+      "openweather",
+      "visual_crossing",
+      "weatherapi"
+    ],
+    "ZHHH": [
+      "icon_seamless",
+      "openweather",
+      "visual_crossing"
+    ],
+    "ZSQD": [
+      "icon_seamless",
+      "visual_crossing",
+      "weatherapi"
+    ],
+    "ZUCK": [
+      "gem_global",
+      "icon_seamless",
+      "visual_crossing",
+      "weatherapi"
+    ],
+    "ZUUU": [
+      "cma_grapes_global",
+      "gem_global",
+      "icon_global",
+      "icon_seamless",
+      "jma_seamless",
+      "openweather",
+      "ukmo_seamless",
+      "visual_crossing",
+      "weatherapi"
+    ]
+  }
+}

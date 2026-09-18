@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Junbo — Dashboard",
+  title: "ASIAbot — Dashboard",
   description: "Polymarket Hava Ticaret Botu Dashboard",
 };
 

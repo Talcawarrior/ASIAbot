@@ -112,6 +112,7 @@ class Calculator:
 
             # Her kaynaktan en son tahmini al + agirliklari topla
             latest_by_source = {}
+            latest_fetched = {}
             source_weights = {}
             for f in forecasts:
                 if f.source not in latest_by_source:
@@ -132,6 +133,7 @@ class Calculator:
                         logger.debug("Calibration skipped for %s: %s", f.source, exc)
                         cal_val = f.predicted_value
                     latest_by_source[f.source] = cal_val
+                    latest_fetched[f.source] = f.fetched_at
                     source_weights[f.source] = f.model_weight or 0.0
 
             # ── Model blacklist filter ────────────────────────────────────
@@ -151,6 +153,16 @@ class Calculator:
                         ", ".join(removed),
                         len(latest_by_source),
                     )
+                    try:
+                        from utils.activity_log import log_event
+
+                        log_event(
+                            "blacklist",
+                            market.city,
+                            f"{market.city_code}: {', '.join(removed)} disi ({len(latest_by_source)} kaynak kaldi)",
+                        )
+                    except Exception:
+                        pass
 
             forecast_values = list(latest_by_source.values())
 
@@ -219,7 +231,11 @@ class Calculator:
                 if market.threshold_low is not None and market.threshold_high is not None:
                     range_low = float(market.threshold_low)
                     range_high = float(market.threshold_high)
-            total_std = float(std_val) if std_val is not None else 2.0
+            # Sigma tabani 1.0C: ensemble uyeleri bagimli (ayni model
+            # aileleri) oldugu icin ham dagilim gercek belirsizligi kucuk
+            # gosterir (gozlenen MAE ~1.2-1.7). Taban dar bucket'larda
+            # asiri guvenli edge'leri onler.
+            total_std = max(1.0, float(std_val)) if std_val is not None else 2.0
             estimated_prob = _estimate_probability(
                 mean=avg,
                 std=total_std,
@@ -230,9 +246,9 @@ class Calculator:
                 range_high=range_high,
             )
 
-            # Per-model probabilities
+            # Per-model probabilities (ayni sigma tabani gecerli)
             model_temps = {src: float(val) for src, val in latest_by_source.items() if val is not None}
-            total_std = float(std_val) if std_val is not None else 2.0
+            total_std = max(1.0, float(std_val)) if std_val is not None else 2.0
             model_probs = {}
             for mn, mt in model_temps.items():
                 mp = _estimate_probability(
@@ -312,6 +328,26 @@ class Calculator:
             ) >= bot_config.strategy.min_liquidity or bot_config.strategy.min_liquidity <= 0
             effective_min_edge = self._compute_effective_min_edge(market, std_val)
 
+            # Bilgi tazeligi kapisi: piyasa fiyati tahminlerimizden YENI ise
+            # baskasi ayni bilgiyi coktan fiyatlamis olabilir; esik x1.5.
+            # (Gecikme arbitraji: taze bilgi + bayat fiyat = gercek edge.)
+            _stale_price = False
+            try:
+                _fts = [v for v in latest_fetched.values() if v is not None]
+                if _fts and market.last_updated:
+                    _newest = max(
+                        v.replace(tzinfo=timezone.utc) if getattr(v, "tzinfo", None) is None else v for v in _fts
+                    )
+                    _px_ts = market.last_updated
+                    if getattr(_px_ts, "tzinfo", None) is None:
+                        _px_ts = _px_ts.replace(tzinfo=timezone.utc)
+                    if _px_ts > _newest:
+                        effective_min_edge = round(effective_min_edge * 1.5, 4)
+                        _stale_price = True
+            except Exception:
+                _stale_price = False
+                pass
+
             # 8-hour pre-settlement guard
             settlement_hours_left = None
             try:
@@ -341,6 +377,8 @@ class Calculator:
                 reason_parts.append(
                     f"Net edge dusuk: {net_edge:.2%} (raw={raw_edge:.2%}, slip={slippage_est.slippage_pct:.2%})"
                 )
+                if _stale_price:
+                    reason_parts.append("fiyat taze, bilgi bayat (esik x1.5)")
             if len(forecast_values) < bot_config.strategy.min_sources:
                 reason_parts.append(f"Az kaynak: {len(forecast_values)}")
             if days_ahead > bot_config.strategy.max_days_ahead:
@@ -348,7 +386,7 @@ class Calculator:
             if (market.liquidity or 0) < bot_config.strategy.min_liquidity:
                 reason_parts.append(f"Dusuk likidite: ${market.liquidity}")
             if not settlement_ok:
-                reason_parts.append(f"Settlement'a {settlement_hours_left:.1f}s kaldi (8s min)")
+                reason_parts.append(f"Settlement'a {settlement_hours_left:.1f}sa kaldi (8sa min)")
 
             avg_val = sum(forecast_values) / len(forecast_values) if forecast_values else None
 
@@ -542,11 +580,52 @@ class WeatherEngine:
         if target_date is None:
             target_date = datetime.now(timezone.utc).replace(tzinfo=None)
 
+        # Istasyon hassasiyeti: marketin kayitli kapanis istasyonu sehir
+        # merkezinden 25km+ uzaktaysa tahminler istasyon koordinatiyla
+        # cekilir (kapanis o istasyondan okunur).
+        try:
+            if market_ids and db_session is not None:
+                import json as _js2
+                from math import asin as _asin, cos as _cos, radians as _rad, sin as _sin, sqrt as _sq
+
+                from database.models import WeatherMarket as _WM
+
+                for _mid in market_ids:
+                    _m = db_session.query(_WM).filter(_WM.id == _mid).first()
+                    if not _m or not _m.raw_data:
+                        continue
+                    try:
+                        _blob = _js2.loads(_m.raw_data) if isinstance(_m.raw_data, str) else {}
+                    except Exception:
+                        continue
+                    _st = (_blob.get("resolution_station") or "").upper()
+                    _cc = (bot_config.icao_coords or {}).get(_st)
+                    if not _st or not _cc:
+                        continue
+                    _dlat = _rad(float(_cc[0]) - latitude)
+                    _dlon = _rad(float(_cc[1]) - longitude)
+                    _a = _sin(_dlat / 2) ** 2 + _cos(_rad(latitude)) * _cos(_rad(float(_cc[0]))) * _sin(_dlon / 2) ** 2
+                    _km = 2 * 6371.0 * _asin(_sq(_a))
+                    if _km > 25:
+                        latitude, longitude = float(_cc[0]), float(_cc[1])
+                        logger.info(
+                            "Station override %s -> %s (%.0fkm)",
+                            city_code,
+                            _st,
+                            _km,
+                        )
+                    break
+        except Exception:
+            pass
+
         global _RATE_LIMITED_UNTIL, _time
-        # Global rate-limit kontrolu
-        if _time.monotonic() < _RATE_LIMITED_UNTIL:
-            logger.debug("Rate-limited, skipping API call for %s", city_code)
-            return None
+        # Global rate-limit kontrolu: Open-Meteo cagrisini atla, ama fallback kaynaklari dene
+        rate_limited = _time.monotonic() < _RATE_LIMITED_UNTIL
+        if rate_limited:
+            logger.debug("Rate-limited, skipping Open-Meteo call for %s (trying fallbacks)", city_code)
+            data = None
+        else:
+            data = None  # will be set below
 
         api_model_names = []
         for internal_name in self.model_weights.keys():
@@ -561,7 +640,7 @@ class WeatherEngine:
         if cache_key in self._forecast_cache:
             data = self._forecast_cache[cache_key]
             logger.debug("Ensemble cache hit for %s", cache_key)
-        else:
+        elif not rate_limited:
             url = f"{Config.OPEN_METEO_API}/forecast"
             params = {
                 "latitude": latitude,
@@ -579,27 +658,30 @@ class WeatherEngine:
                             # Global rate-limit: tum dongu boyunca API'yi engelle
                             _RATE_LIMITED_UNTIL = _time.monotonic() + 300  # 5dk
                             logger.warning("Ensemble 429 — all API calls paused for 5min")
-                            return None
-                        if resp.status != 200:
-                            return None
-                        data = await resp.json()
-                        self._forecast_cache[cache_key] = data
+                            data = None
+                        elif resp.status != 200:
+                            data = None
+                        else:
+                            data = await resp.json()
+                            self._forecast_cache[cache_key] = data
             except Exception as e:
                 logger.error("get_multi_model_forecast fetch error: %s", e)
-                return None
+                data = None
+        else:
+            data = None
 
         try:
             model_temps = {}
-            daily_data = data.get("daily", {})
+            daily_data = data.get("daily", {}) if data else {}
             times = daily_data.get("time", [])
-            if not times:
-                return None
 
+            # Try Open-Meteo models first if we have data
             target_idx = None
-            for i, t in enumerate(times):
-                if t.startswith(target_str):
-                    target_idx = i
-                    break
+            if times:
+                for i, t in enumerate(times):
+                    if t.startswith(target_str):
+                        target_idx = i
+                        break
 
             # Timezone robustness fix: Open-Meteo with `timezone=auto` returns
             # daily buckets in *local* time. For cities east of UTC (e.g. Seoul
@@ -640,18 +722,19 @@ class WeatherEngine:
                 except Exception as e:
                     logger.debug("Timezone fallback failed: %s", e)
 
-            if target_idx is None:
+            if target_idx is None and times:
                 logger.warning(
                     "get_multi_model_forecast: target_date=%s not found in API dates %s",
                     target_str,
                     times[:5],
                 )
-                return None
+                # Don't return None here - fallback sources might still work
 
-            for internal_name in self.model_weights.keys():
-                if internal_name in ("visual_crossing", "nws"):
-                    continue  # handled below via dedicated APIs
-                api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
+            if target_idx is not None:
+                for internal_name in self.model_weights.keys():
+                    if internal_name in ("visual_crossing", "nws"):
+                        continue  # handled below via dedicated APIs
+                    api_name = OPEN_METEO_MODEL_MAP.get(internal_name, internal_name)
                 # Use the metric requested to pick the right daily data key
                 # although we fetch both max and min.
                 api_metric = "temperature_2m_max"

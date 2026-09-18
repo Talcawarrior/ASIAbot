@@ -180,7 +180,8 @@ class StrategyConfig:
     # ramps to edge_escalation_multiplier * min_edge at 0h.
     edge_escalation_hours: int = 24
     edge_escalation_multiplier: float = 2.0
-    min_sources: int = 2  # En az 2 kaynak (openmeteo + weatherapi ile calisiyor)
+    min_sources: int = 1  # En az 1 kaynak (VC global, NWS US-only fallback).
+    # Non-US sehirler icin VC tek basina yeterli.
 
     # ── Polymarket Dynamic Fee Rate (fetched from API) ──────────────────
     # Default: 5% (Weather category). Fetch from Polymarket API at startup.
@@ -286,7 +287,12 @@ _ICAO_COORDS = {
     "SPJC": (-12.0219, -77.1143),
     # Europe (15)
     "EGLL": (51.4700, -0.4543),
+    "EGLC": (51.5053, 0.0553),
     "LFPG": (49.0099, 2.5479),
+    "LFPB": (48.93405, 2.43584),
+    "EPWA": (52.1658, 20.9671),
+    "EFHK": (60.29414, 25.04099),
+    "LIMC": (45.631, 8.728),
     "EDDT": (52.5597, 13.2877),
     "UUEE": (55.9726, 37.4146),
     "EDDF": (50.0379, 8.5622),
@@ -308,7 +314,20 @@ _ICAO_COORDS = {
     "RJTT": (35.5533, 139.7811),
     "RJOO": (34.7882, 135.4381),
     "ZSPD": (31.1434, 121.8052),
+    "ZSQD": (36.362, 120.087),
     "ZBAA": (40.0799, 116.6031),
+    "ZGGG": (23.3924, 113.2988),
+    "ZGSZ": (22.639, 113.803),
+    "ZHHH": (30.7838, 114.2081),
+    "ZHCC": (34.5197, 113.8409),
+    "ZUUU": (30.5785, 103.9471),
+    "ZUCK": (29.7192, 106.6417),
+    "RKSI": (37.4492, 126.4510),
+    "RKPK": (35.179, 128.938),
+    "RPLL": (14.5050, 121.0045),
+    "WMKK": (2.7456, 101.7099),
+    "OPKC": (24.90655, 67.1608),
+    "VILK": (26.7606, 80.8893),
     "RKSS": (37.4602, 126.4407),
     "VHHH": (22.3080, 113.9185),
     "RCTP": (25.0764, 121.2338),
@@ -321,9 +340,15 @@ _ICAO_COORDS = {
     "YSSY": (-33.9399, 151.1753),
     "YMML": (-37.6690, 144.8410),
     "NZAA": (-37.0082, 174.7918),
+    "NZWN": (-41.3272, 174.8053),
     # Africa (2)
     "HECA": (30.1219, 31.4056),
     "FACT": (-33.9694, 18.5972),
+    # USA extra + Middle East extra + S. America (verified)
+    "KHOU": (29.6524, -95.2772),
+    "KAUS": (30.1831, -97.68063),
+    "OEJN": (21.685, 39.166),
+    "MPMG": (9.0714, -79.3834),
 }
 
 _CITY_ICAO_MAP = {
@@ -332,6 +357,7 @@ _CITY_ICAO_MAP = {
     "izmir": "LTBJ",
     "antalya": "LTAI",
     "dallas": "KDAL",
+    "austin": "KAUS",
     "miami": "KMIA",
     "chicago": "KORD",
     "new york": "KLGA",
@@ -359,6 +385,9 @@ _CITY_ICAO_MAP = {
     "lima": "SPJC",
     "london": "EGLL",
     "paris": "LFPG",
+    "milan": "LIMC",
+    "warsaw": "EPWA",
+    "helsinki": "EFHK",
     "berlin": "EDDT",
     "moscow": "UUEE",
     "frankfurt": "EDDF",
@@ -378,20 +407,35 @@ _CITY_ICAO_MAP = {
     "tokyo": "RJTT",
     "osaka": "RJOO",
     "shanghai": "ZSPD",
+    "qingdao": "ZSQD",
     "beijing": "ZBAA",
+    "guangzhou": "ZGGG",
+    "shenzhen": "ZGSZ",
+    "wuhan": "ZHHH",
+    "zhengzhou": "ZHCC",
+    "chengdu": "ZUUU",
+    "chongqing": "ZUCK",
     "seoul": "RKSS",
+    "busan": "RKPK",
     "hong kong": "VHHH",
     "taipei": "RCTP",
+    "manila": "RPLL",
+    "kuala lumpur": "WMKK",
     "singapore": "WSSS",
     "bangkok": "VTBS",
     "jakarta": "WIII",
     "mumbai": "VABB",
     "delhi": "VIDP",
+    "karachi": "OPKC",
+    "lucknow": "VILK",
     "sydney": "YSSY",
     "melbourne": "YMML",
     "auckland": "NZAA",
+    "wellington": "NZWN",
     "cairo": "HECA",
     "cape town": "FACT",
+    "jeddah": "OEJN",
+    "panama city": "MPMG",
 }
 
 
@@ -488,11 +532,29 @@ class BotConfig:
                 "meteofrance_seamless": 0.02,
                 "visual_crossing": 0.12,
                 "nws": 0.08,
+                "weatherapi": 0.05,
+                "openweather": 0.05,
+                "weathercom": 0.03,
+                "pivotal_gfs": 0.03,
+                "iem_mos": 0.03,
             }
         if self.icao_coords is None:
             self.icao_coords = _ICAO_COORDS
         if self.city_icao_map is None:
             self.city_icao_map = _CITY_ICAO_MAP
+        # Otomatik cozulmus yeni sehirleri ekle (data/resolved_cities.json).
+        # Dosya yoksa sessizce gecilir; resolver tarafindan yonetilir.
+        try:
+            import json as _json
+
+            _rp = os.path.join(os.path.dirname(__file__), os.pardir, "data", "resolved_cities.json")
+            if os.path.exists(_rp):
+                with open(_rp, encoding="utf-8") as _fh:
+                    for _k, _v in _json.load(_fh).items():
+                        if isinstance(_v, dict) and _v.get("icao") and _k not in self.city_icao_map:
+                            self.city_icao_map[_k] = _v["icao"]
+        except Exception:
+            pass
 
         # --------------------------------------------------------------------------------
         s = self.strategy

@@ -32,6 +32,7 @@ class BetDecision:
     market_id: str = ""
     should_bet: bool = True
     rejected_reason: str = ""
+    city: str = ""
     gates: dict[str, bool] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
     proposed_amount: float = 0.0
@@ -63,3 +64,15 @@ class BetDecision:
             "final_amount": self.final_amount,
         }
         logger.log(level, json.dumps(data, default=str))
+        # Dashboard aktivite akisi: her karar tek satir (bet_opened / bet_blocked).
+        try:
+            from utils.activity_log import log_event
+
+            if self.should_bet:
+                side = self.params.get("side", "")
+                amt = self.final_amount or self.proposed_amount
+                log_event("bet_opened", self.city or None, f"{self.market_id} | {side} ${amt:.2f}")
+            else:
+                log_event("bet_blocked", self.city or None, f"{self.market_id} | {self.rejected_reason}")
+        except Exception:
+            pass

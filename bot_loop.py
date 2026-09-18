@@ -257,12 +257,35 @@ async def settlement_loop(state):
                 await asyncio.to_thread(auto_cleanup, hot_days=10, cold_days=120)
                 last_cleanup_date = today
 
+            # SIA: Strict 24h cycle at 01:00 UTC
             if state.sia_loop is not None and (
                 state.sia_last_run is None
-                or (now_utc - state.sia_last_run).total_seconds() >= state.sia_interval_hours * 3600
+                or (
+                    now_utc.hour == 1
+                    and now_utc.minute < 30
+                    and (state.sia_last_run.date() != now_utc.date() if state.sia_last_run else True)
+                )
             ):
                 await asyncio.to_thread(state.sia_loop.run_optimization_cycle)
                 state.sia_last_run = datetime.now(timezone.utc).replace(tzinfo=None)
+                logger.info("SIA weight optimization completed at %s", state.sia_last_run)
+
+            # Karpathy Weekly: Run on Sundays at 02:00 UTC
+            if state.karpathy_last_run is None or (
+                now_utc.weekday() == 6
+                and now_utc.hour == 2
+                and now_utc.minute < 30
+                and (state.karpathy_last_run.date() != now_utc.date() if state.karpathy_last_run else True)
+            ):
+                try:
+                    from asi_engine.karpathy_weekly import run_karpathy_weekly
+
+                    logger.info("Starting Karpathy Weekly (Sunday)...")
+                    await asyncio.to_thread(run_karpathy_weekly, rounds=10, use_llm=False, seed=42)
+                    state.karpathy_last_run = datetime.now(timezone.utc).replace(tzinfo=None)
+                    logger.info("Karpathy Weekly completed at %s", state.karpathy_last_run)
+                except Exception as e:
+                    logger.error("Karpathy Weekly failed: %s", e, exc_info=True)
 
         except asyncio.CancelledError:
             logger.info("Settlement loop cancelled")
@@ -288,6 +311,15 @@ async def forecast_collector_loop(state):
 
             await asyncio.to_thread(collect_once)
             logger.info("forecast_collector: t0/t1/t2 toplandi (8 VC key rotasyon)")
+            try:
+                from data_pipeline.t_horizon_collector import bridge_archive_to_forecasts
+
+                bridged = await asyncio.to_thread(bridge_archive_to_forecasts)
+                logger.info("forecast_collector: kopru %d WeatherForecast satiri yazdi", bridged)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("forecast_collector bridge error: %s", e, exc_info=True)
         except asyncio.CancelledError:
             break
         except Exception as e:
@@ -301,7 +333,10 @@ async def forecast_collector_loop(state):
 
 
 async def t_horizon_report_loop(state):
-    """Gun sonu WU uyumu raporu - her gun 00:30 UTC'de dun'un actual'ini doldur."""
+    """Gun sonu WU uyumu raporu - her gun 00:30 UTC'de dun'un actual'ini doldur.
+
+    After report completes, triggers ASI-Evolve for daily evolution cycle.
+    """
     last_report_date = None
     while state.is_running:
         try:
@@ -313,6 +348,29 @@ async def t_horizon_report_loop(state):
                 report = await asyncio.to_thread(run_daily_job)
                 logger.info("t_horizon_report:\n%s", report)
                 last_report_date = now.date()
+
+                # Gunluk kalibrasyon + blacklist yenileme (tum kaynaklar)
+                try:
+                    from data_pipeline.t_horizon_collector import renew_calibration_and_blacklist
+
+                    renew_stats = await asyncio.to_thread(renew_calibration_and_blacklist)
+                    logger.info("daily calibration/blacklist renewed: %s", renew_stats)
+                except asyncio.CancelledError:
+                    break
+                except Exception as e:
+                    logger.error("daily calibration renew error: %s", e, exc_info=True)
+
+                # Hook: Trigger ASI-Evolve after t-horizon report
+                if state.orchestrator is not None and (
+                    state.asi_evolve_last_run is None or state.asi_evolve_last_run.date() != now.date()
+                ):
+                    try:
+                        logger.info("Triggering ASI-Evolve daily cycle...")
+                        await asyncio.to_thread(state.orchestrator.run_evolution_pipeline)
+                        state.asi_evolve_last_run = datetime.now(timezone.utc).replace(tzinfo=None)
+                        logger.info("ASI-Evolve completed at %s", state.asi_evolve_last_run)
+                    except Exception as e:
+                        logger.error("ASI-Evolve failed: %s", e, exc_info=True)
         except asyncio.CancelledError:
             break
         except Exception as e:

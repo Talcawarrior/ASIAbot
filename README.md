@@ -1,6 +1,21 @@
 ﻿# asiabot - Self-Evolving Weather Prediction Bot
 
-**Port: 8091** | **Framework: FastAPI + Next.js** | **Dry-Run Mode: Enabled**
+**Port: 8092** | **Framework: FastAPI + Next.js** | **Dry-Run Mode: Enabled**
+
+> Not: 8091 portu kardes Junbo botuna aittir, dokunulmaz. ASIAbot her zaman 8092 kullanir.
+
+---
+
+## Guncel Durum (2026-09)
+
+- **Dashboard:** Junbo UI kopyasi + ASIAbot ismi; 4 sekme (Genel Bakis, Islem Gecmisi, Model Performansi, Saglik). `npm run build` ile `out/` uretilir, backend ayni origin'den sunar.
+- **Veri kaynaklari (11):** 8 Open-Meteo modeli + visual_crossing + nws + weatherapi + openweather + weathercom + pivotal_gfs (+iem_mos). t-horizon collector `ForecastArchive` yazar; kopru (`bridge_archive_to_forecasts`, saatlik) `WeatherForecast` tablosuna tasir.
+- **Kalibrasyon:** `historical_calibrations` (kaynak×sehir MBE) + gunluk yenileme (`renew_calibration_and_blacklist`, her gun 00:30). Bias haritasi: `data/asi_calibration.json` (`POST /api/asi/calibration/recalculate`).
+- **Kara liste:** `data/model_blacklist.json` (sehir ICAO → modeller, son 30 gun MAE>2.5, n>=5). Calculator kotu eslesmeleri eler; gunluk yenilenir.
+- **Strateji kapilari:** min_edge (SIA canli ayarlar) + min_entry_price 0.20 (`data/strategy_params.json`) + sigma tabani 1.0C + SIA/Karpathy agirliklari. Cikis: stop-loss, trailing-stop, time-decay, model-reversal, signal-decay (karda pozisyona dokunmaz).
+- **Endpoint'ler (ek):** `GET /api/edge-calibration` (giris-edge vs win-rate), `GET /api/equity-curve`, history satirinda `threshold`, stats'ta `roi_by_price_band`, status'ta `total_entry_fee`.
+- **Supervisor:** tek `service.ps1` (30 sn saglik, 3-strike restart); `main.py` mutex ile tek instance garantisi (`ASIAbotBotSingleton`). `restart.bat` once `preflight_check.py` kosar (basarisizsa eski bot oldurulmez).
+- **Testler:** `preflight_check.py` (deploy kapisi) + `tests/test_dashboard_contract.py` (API↔UI sozlesme) + kismi `pytest`.
 
 ---
 

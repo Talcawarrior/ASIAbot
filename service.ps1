@@ -4,8 +4,8 @@
 $BotDir = "C:\Users\fdemir\Documents\New project\asiabot"
 $LogFile = "$BotDir\logs\service.log"
 $MaxRestarts = 1000
-$RestartDelay = 10
-$StartupWait = 30  # Bot'un baÅŸlamasÄ± iÃ§in bekleme sÃ¼resi
+$RestartDelay = 600  # 10 dk (StartupWait ile esit) — bot baslamadan supervisor oldurmesin
+$StartupWait = 600  # 10 dk SIA+Karpathy+kalibrasyon'un baÅŸlamasÄ± iÃ§in bekleme sÃ¼resi
 
 function Write-Log {
     param($Message)
@@ -17,17 +17,18 @@ function Write-Log {
 
 function Start-Bot {
     Write-Log "Starting bot..."
-    $proc = Start-Process -FilePath "python" -ArgumentList "main.py bot" `
+    $proc = Start-Process -FilePath "pythonw" -ArgumentList "main.py bot" `
         -WorkingDirectory $BotDir `
-        -PassThru `
-        -WindowStyle Hidden
+        -RedirectStandardOutput "$BotDir\logs\bot_console.log" `
+        -RedirectStandardError "$BotDir\logs\bot_console.err.log" `
+        -PassThru
     Write-Log "Bot started (PID: $($proc.Id))"
     return $proc
 }
 
 function Test-BotRunning {
     try {
-        $response = Invoke-WebRequest -Uri "http://127.0.0.1:8091/api/status" -TimeoutSec 5 -UseBasicParsing
+        $response = Invoke-WebRequest -Uri "http://127.0.0.1:8092/api/status" -TimeoutSec 5 -UseBasicParsing
         return $response.StatusCode -eq 200
     } catch {
         return $false
@@ -50,14 +51,19 @@ while ($restartCount -lt $MaxRestarts) {
         
         # Monitor loop
         $checkCount = 0
+        $failCount = 0
         while ($true) {
             Start-Sleep -Seconds 30
             $checkCount++
-            
+
             if (-not (Test-BotRunning)) {
-                Write-Log "Bot health check failed! Restarting..."
+                $failCount++
+                Write-Log "Bot health check failed ($failCount/3)..."
+                if ($failCount -lt 3) { continue }
+                Write-Log "Bot down 3 checks in a row! Restarting..."
                 break
             }
+            $failCount = 0
             
             # Check if process is still alive
             if ($proc.HasExited) {
@@ -82,5 +88,3 @@ while ($restartCount -lt $MaxRestarts) {
 }
 
 Write-Log "=== Service stopped (max restarts reached) ==="
-
-

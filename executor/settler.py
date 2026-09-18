@@ -333,7 +333,13 @@ class SettlementEngine:
             )
             return None
 
-        market.raw_data = json.dumps(
+        try:
+            keep = json.loads(market.raw_data) if market.raw_data else {}
+            if not isinstance(keep, dict):
+                keep = {}
+        except Exception:
+            keep = {}
+        keep.update(
             {
                 "source": "fallback_price" if force else "polymarket",
                 "outcome": outcome,
@@ -342,6 +348,7 @@ class SettlementEngine:
                 "settled_at": datetime.now(timezone.utc).isoformat(),
             }
         )
+        market.raw_data = json.dumps(keep, default=str)
         return outcome
 
     def _call_gamma_api(self, market) -> dict | None:

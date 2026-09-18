@@ -40,11 +40,13 @@ import {
   type OpenPosition,
   type ActivityItem,
   type EdgeBucket,
+  type EdgeCalibBand,
   type TradeHistoryEntry,
   type ModelScore,
   type HealthResponse,
   type Signal,
   type HistoryEntry,
+  type HistoryStats,
 } from "@/lib/api";
 import {
   TrendingUp,
@@ -131,8 +133,11 @@ function ChartSkeleton({ height }: { height?: number }) {
 
 // ---- Client-only chart wrapper (skeleton until hydrated) ----
 function ChartWrapper({ children, height, width }: { children: React.ReactNode; height?: number; width?: number }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const mounted = React.useSyncExternalStore(
+    React.useCallback(() => () => {}, []),
+    React.useCallback(() => true, []),
+    React.useCallback(() => false, []),
+  );
   if (!mounted) return <ChartSkeleton height={height} />;
   return <div className="w-full" style={{ height: height ?? 260, width: width ?? "100%" }}>{children}</div>;
 }
@@ -208,6 +213,81 @@ function MetricTooltip({ children, title, description, formula, example }: {
   );
 }
 
+// ---- Hoisted render helpers (declared outside render to satisfy react-hooks/static-components) ----
+function OverviewSortIcon({ field, sortField, sortDir }: { field: string; sortField: string; sortDir: "asc" | "desc" }) {
+  return (
+    <span className="ml-1 text-[9px]" style={{ color: sortField === field ? TEXT_PRIMARY : TEXT_MUTED }}>
+      {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
+    </span>
+  );
+}
+
+function TradeSortIcon({ col, sortBy, sortDir }: { col: "date" | "pnl"; sortBy: "date" | "pnl"; sortDir: "asc" | "desc" }) {
+  if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
+  return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
+}
+
+function HealthDonutChart({ data, total, title, titleColor }: { data: { name: string; value: number; color: string }[]; total: number; title: string; titleColor: string }) {
+  if (total === 0) return null;
+  return (
+    <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
+      <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>{title}</p>
+      <div className="flex items-center gap-3">
+        <div className="shrink-0">
+          <PieChart width={110} height={110}>
+            <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={48} paddingAngle={2} dataKey="value" strokeWidth={0}>
+              {data.map((entry, i) => (
+                <Cell key={i} fill={entry.color} />
+              ))}
+            </Pie>
+          </PieChart>
+        </div>
+        <div className="flex-1 space-y-1">
+          {data.map((d) => (
+            <div key={d.name} className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
+              </div>
+              <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
+                <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{fmtInt(d.value)}</span>
+                <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HealthPnlTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload?: { wins?: number; losses?: number; total?: number; stake?: number; win_rate?: number; roi?: number } }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  const p = payload[0].payload ?? {};
+  const total = p.total ?? 0;
+  const wins = p.wins ?? 0;
+  const losses = p.losses ?? 0;
+  const winRate = p.win_rate ?? 0;
+  const roi = p.roi ?? 0;
+  const stake = p.stake ?? 0;
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs space-y-1">
+      <p className="font-medium text-gray-500 mb-1">{label}</p>
+      <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
+        {fmtUsd(payload[0].value)} PnL
+      </p>
+      {total > 0 && (
+        <>
+          <p className="text-gray-400">{fmtInt(total)} işlem ({fmtInt(wins)}W / {fmtInt(losses)}L)</p>
+          <p className="text-gray-400">Win rate: %{winRate} &middot; ROI: %{roi}</p>
+          {stake > 0 && <p className="text-gray-400">Stake: ${stake.toFixed(2)}</p>}
+        </>
+      )}
+      {total === 0 && <p className="text-gray-400">İşlem yok</p>}
+    </div>
+  );
+}
+
 // ==========================================
 // OVERVIEW TAB
 // ==========================================
@@ -219,6 +299,42 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
   edgeDistribution: EdgeBucket[];
   isLoading?: boolean;
 }) {
+  const [sortField, setSortField] = useState<string>("city");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const handleSort = (field: string) => {
+    if (sortField === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+  };
+
+  const sortedPositions = useMemo(() => {
+    const arr = [...openPositions];
+    arr.sort((a, b) => {
+      let aVal: string | number = "";
+      let bVal: string | number = "";
+      switch (sortField) {
+        case "city": aVal = a.city || ""; bVal = b.city || ""; break;
+        case "metric": aVal = a.metric || ""; bVal = b.metric || ""; break;
+        case "threshold": aVal = a.threshold || 0; bVal = b.threshold || 0; break;
+        case "placed_at": aVal = a.openedAt || ""; bVal = b.openedAt || ""; break;
+        case "side": aVal = a.side || ""; bVal = b.side || ""; break;
+        case "entry": aVal = a.entryPrice || 0; bVal = b.entryPrice || 0; break;
+        case "current": aVal = a.currentPrice || 0; bVal = b.currentPrice || 0; break;
+        case "amount": aVal = a.amount || 0; bVal = b.amount || 0; break;
+        case "pnl": aVal = a.pnl || 0; bVal = b.pnl || 0; break;
+        case "settled_at": aVal = a.timeLeft || ""; bVal = b.timeLeft || ""; break;
+        default: aVal = a.city || ""; bVal = b.city || "";
+      }
+      if (typeof aVal === "string") return sortDir === "asc" ? aVal.localeCompare(bVal as string) : (bVal as string).localeCompare(aVal);
+      return sortDir === "asc" ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+    });
+    return arr;
+  }, [openPositions, sortField, sortDir]);
+
   const winLossData = [
     { name: "Kazanan", value: kpiData.wins, color: TEAL },
     { name: "Kaybeden", value: kpiData.losses, color: RED },
@@ -238,125 +354,108 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
         </>
       ) : (
         <>
-          {/* Unified Metric Cards - first row */}
-          <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/*           {/* Unified Metric Cards - tek satir */}
+          <section className="grid grid-cols-3 sm:grid-cols-6 gap-2">
             {[
-              { 
-                label: "Portföy Değeri", 
-                value: `$${kpiData.portfolioValue.toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`, 
-                icon: <Wallet className="h-4 w-4" />, 
-                color: TEAL, 
-                sub: `Toplam: ${fmtUsd(kpiData.totalPnl)}`,
-                tooltip: "Nakit + açık pozisyon PnL = güncel portföy değeri"
-              },
-              { 
-                label: "Bugünkü PnL", 
-                value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`, 
-                icon: <TrendingUp className="h-4 w-4" />, 
-                color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED, 
+              {
+                label: "Sermaye",
+                value: `$${kpiData.initial.toLocaleString("tr-TR", { minimumFractionDigits: 0 })}`,
+                icon: <Wallet className="h-3 w-3" />,
+                color: TEAL,
                 sub: "",
-                tooltip: "Son 24 saatteki gerçekleşen + iri PnL"
+                tooltip: "Baslangic sermayesi"
               },
-              { 
-                label: "Açık Bahisler", 
-                value: fmtInt(kpiData.openPositions), 
-                icon: <Activity className="h-4 w-4" />, 
-                color: TEXT_PRIMARY, 
+              {
+                label: "Net kapanmis PnL",
+                value: fmtUsd(kpiData.realizedPnl),
+                icon: <TrendingUp className="h-3 w-3" />,
+                color: kpiData.realizedPnl >= 0 ? "#16A34A" : RED,
                 sub: "",
-                tooltip: "Henüz çözülmemiş (open/pending) bahis sayısı"
+                tooltip: "Kapanan betlerden net PnL"
               },
-              { 
-                label: "Win Rate", 
-                value: `%${fmtNum(kpiData.winRate, 1)}`, 
-                icon: <Target className="h-4 w-4" />, 
-                color: TEXT_PRIMARY, 
-                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
-                tooltip: "Kapanan bahislerde kazanan oranı (closed_early dahil). Örn: 30W/20L = %60"
-              }, 
-            ].map((kpi) => (
-              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-                <CardContent className="px-3 pb-0 pt-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
-                    <span style={{ color: kpi.color }}>{kpi.icon}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
-                  </div>
-                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
-                </CardContent>
-              </Card>
-            ))}
-          </section>
-
-          {/* Summary row - single row with all 4 cards */}
-          <section className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-2">
-            <Card className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-              <CardContent className="px-3 pb-0 pt-0">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title="Tüm açık pozisyonların toplam stake tutarı (toplam kilitli nakit)">Açık Bet Toplam Değeri</p>
-                  <span style={{ color: TEAL }}><Activity className="h-4 w-4" /></span>
-                </div>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-lg font-bold tabular-nums" style={{ color: TEAL }}>{fmtUsd(kpiData.openPositionsValue)}</span>
-                </div>
-                <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: TEXT_MUTED }}>Max: {fmtUsd(kpiData.maxOpenableUsd)}</p>
-              </CardContent>
-            </Card>
-            {/* Total PnL — custom card with breakdown */}
-            <Card className="py-3 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
-              <CardContent className="px-4 pb-0 pt-0">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }}>Toplam PnL</p>
-                  <span style={{ color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED }}><TrendingUp className="h-4 w-4" /></span>
-                </div>
-                <p className="text-lg font-bold tabular-nums" style={{ color: kpiData.totalPnlValue >= 0 ? "#16A34A" : RED }}>
-                  {fmtUsd(kpiData.totalPnlValue)}
-                </p>
-                <div className="flex flex-col gap-0.5 mt-1 text-[10px] tabular-nums">
-                  <div className="flex justify-between">
-                    <span style={{ color: TEXT_MUTED }}>Kapalı (Realized)</span>
-                    <span style={{ color: kpiData.realizedPnl >= 0 ? TEAL : RED }}>
-                      {fmtUsd(kpiData.realizedPnl)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span style={{ color: TEXT_MUTED }}>Açık (Unrealized)</span>
-                    <span style={{ color: kpiData.unrealizedPnl >= 0 ? TEAL : RED }}>
-                      {fmtUsd(kpiData.unrealizedPnl)}
-                    </span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-            {[
-              { 
-                label: "Total ROI", 
-                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${fmtNum(kpiData.totalRoi)}%`, 
-                icon: <TrendingUp className="h-4 w-4" />, 
-                color: kpiData.totalRoi >= 0 ? TEAL : RED, 
+              {
+                label: "Toplam sermaye",
+                value: fmtUsd(kpiData.portfolioValue),
+                icon: <Wallet className="h-3 w-3" />,
+                color: TEAL,
+                sub: `PnL: ${fmtUsd(kpiData.totalPnl)}`,
+                tooltip: "Baslangic sermayesi + toplam PnL"
+              },
+              {
+                label: "Acik bet toplami",
+                value: fmtUsd(kpiData.openPositionsValue),
+                icon: <Activity className="h-3 w-3" />,
+                color: TEXT_PRIMARY,
+                sub: `${fmtInt(kpiData.openPositions)} bet`,
+                tooltip: "Acik betlerin toplam stake degeri"
+              },
+              {
+                label: "Kullanilabilir",
+                value: fmtUsd(kpiData.availableCash),
+                icon: <Wallet className="h-3 w-3" />,
+                color: TEAL,
                 sub: "",
-                tooltip: "Toplam yatırıma oranlı getiri. Formül: Total PnL / Toplam Stake × 100. Örn: +36.31% = her $100 için $36 kar"
+                tooltip: "Yeni bet acmak icin kullanilabilir nakit"
               },
-              { 
-                label: "Kapalı Bahis", 
-                value: fmtInt(kpiData.closedBets), 
-                icon: <BarChart3 className="h-4 w-4" />, 
-                color: TEXT_PRIMARY, 
-                sub: `${fmtInt(kpiData.closedWins)}W / ${fmtInt(kpiData.closedLosses)}L`,
-                tooltip: "Sonuçlanan toplam bahis (won+lost+closed_early). 50 = 30 kazanan + 20 kaybeden"
+              {
+                label: "Acik bet PnL",
+                value: fmtUsd(kpiData.unrealizedPnl),
+                icon: <TrendingUp className="h-3 w-3" />,
+                color: kpiData.unrealizedPnl >= 0 ? "#16A34A" : RED,
+                sub: "",
+                tooltip: "Acik pozisyonlarin kagit uzerindeki PnL"
+              },
+              {
+                label: "Kapali+Acik PnL",
+                value: fmtUsd(kpiData.totalPnl),
+                icon: <TrendingUp className="h-3 w-3" />,
+                color: kpiData.totalPnl >= 0 ? "#16A34A" : RED,
+                sub: "",
+                tooltip: "Kapanan + acik pozisyonlarin toplam PnL"
+              },
+              {
+                label: "Bugunku PnL",
+                value: `${kpiData.dailyPnl >= 0 ? "▲" : "▼"} ${fmtUsd(kpiData.dailyPnl)}`,
+                icon: <TrendingUp className="h-3 w-3" />,
+                color: kpiData.dailyPnl >= 0 ? "#16A34A" : RED,
+                sub: "",
+                tooltip: "Son 24 saat PnL"
+              },
+              {
+                label: "Win %",
+                value: `%${fmtNum(kpiData.winRate, 0)}`,
+                icon: <Target className="h-3 w-3" />,
+                color: TEXT_PRIMARY,
+                sub: `${fmtInt(kpiData.closedWins)}W/${fmtInt(kpiData.closedLosses)}L`,
+                tooltip: "Kazanma oran"
+              },
+              {
+                label: "ROI",
+                value: `${kpiData.totalRoi >= 0 ? "+" : ""}${fmtNum(kpiData.totalRoi, 0)}%`,
+                icon: <TrendingUp className="h-3 w-3" />,
+                color: kpiData.totalRoi >= 0 ? TEAL : RED,
+                sub: "",
+                tooltip: "Toplam getiri oran"
+              },
+              {
+                label: "Toplam Fee",
+                value: fmtUsd(kpiData.totalEntryFee),
+                icon: <Wallet className="h-3 w-3" />,
+                color: RED,
+                sub: `${kpiData.entryFeeTradeCount} islem`,
+                tooltip: "Tum betlerden kesilen giris ucreti (fee PnL icindedir)"
               },
             ].map((kpi) => (
-              <Card key={kpi.label} className="py-3 gap-2 shadow-sm" style={{ borderColor: BORDER }}>
-                <CardContent className="px-3 pb-0 pt-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-[10px] font-medium" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
+              <Card key={kpi.label} className="py-2 gap-1 shadow-sm" style={{ borderColor: BORDER }}>
+                <CardContent className="px-2 pb-0 pt-0">
+                  <div className="flex items-center justify-between">
+                    <p className="text-[10px] font-semibold" style={{ color: TEXT_MUTED }} title={kpi.tooltip}>{kpi.label}</p>
                     <span style={{ color: kpi.color }}>{kpi.icon}</span>
                   </div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-lg font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    <span className="text-sm font-bold tabular-nums" style={{ color: kpi.color }}>{kpi.value}</span>
                   </div>
-                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums" style={{ color: kpi.color }}>{kpi.sub}</p>}
+                  {kpi.sub && <p className="text-[10px] mt-0.5 tabular-nums font-medium" style={{ color: TEXT_PRIMARY }}>{kpi.sub}</p>}
                 </CardContent>
               </Card>
             ))}
@@ -365,34 +464,33 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
       )}
 
       {/* Open Positions + Activity Feed — ÜSTTE */}
-      <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
         <Card className="lg:col-span-3 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
             <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Açık Pozisyonlar</CardTitle>
           </CardHeader>
           <CardContent className="px-3">
-            <div className="max-h-[380px] overflow-y-auto custom-scroll">
+            <div className="max-h-[760px] overflow-y-auto custom-scroll">
               {openPositions.length === 0 ? (
                 <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>Açık pozisyon yok</div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center" style={{ color: TEXT_MUTED }}>H/L</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>°C</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Açılış</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Yön</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Güncel</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Edge</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Bet</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>PnL</TableHead>
-                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("city")}>Şehir<OverviewSortIcon field="city" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("metric")}>H/L<OverviewSortIcon field="metric" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("threshold")}>°C<OverviewSortIcon field="threshold" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("placed_at")}>Açılış<OverviewSortIcon field="placed_at" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("side")}>Yön<OverviewSortIcon field="side" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("entry")}>Giriş<OverviewSortIcon field="entry" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("current")}>Güncel<OverviewSortIcon field="current" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("amount")}>Bet<OverviewSortIcon field="amount" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("pnl")}>PnL<OverviewSortIcon field="pnl" sortField={sortField} sortDir={sortDir} /></TableHead>
+                      <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => handleSort("settled_at")}>Kapanış<OverviewSortIcon field="settled_at" sortField={sortField} sortDir={sortDir} /></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {openPositions.map((pos) => (
+                    {sortedPositions.map((pos) => (
                       <TableRow key={pos.id}>
                         <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{pos.city}</TableCell>
                         <TableCell className="text-center">
@@ -413,7 +511,6 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
                         </TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.entryPrice)}</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtPrice(pos.currentPrice)}</TableCell>
-                        <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{pos.edge}%</TableCell>
                         <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{fmtUsd(pos.amount)}</TableCell>
                         <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: pos.pnl >= 0 ? TEAL : RED }}>{fmtUsd(pos.pnl)}</TableCell>
                         <TableCell className="text-right text-[11px] tabular-nums whitespace-nowrap" style={{ color: TEXT_MUTED }}>{pos.timeLeft}</TableCell>
@@ -426,12 +523,12 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2 shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
+        <Card className="lg:col-span-2 shadow-sm py-4 gap-3 h-full" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
             <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Aktivite Akışı</CardTitle>
           </CardHeader>
           <CardContent className="px-4">
-            <div className="space-y-0 max-h-[380px] overflow-y-auto pr-1 custom-scroll">
+            <div className="max-h-[760px] overflow-y-auto pr-1 custom-scroll">
               {activityFeed.length === 0 ? (
                 <div className="text-center py-10 text-sm" style={{ color: TEXT_MUTED }}>Henüz aktivite yok</div>
               ) : (
@@ -512,25 +609,33 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
         </Card>
       </section>
 
-      {/* Edge Distribution */}
+      {/* Giriş fiyatına göre ROI tablosu */}
       <Card className="shadow-sm py-4 gap-3" style={{ borderColor: BORDER }}>
         <CardHeader className="pb-0 pt-0 px-5">
-          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Edge Dağılımı</CardTitle>
+          <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Giriş fiyatına göre ROI</CardTitle>
+          <p className="text-[11px]" style={{ color: TEXT_MUTED }}>Yalnızca kapanmış YES betleri · ROI = net PnL / stake</p>
         </CardHeader>
-        <CardContent className="px-4">
-          <ChartWrapper height={220}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={edgeDistribution} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
-                <XAxis dataKey="range" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} width={30} />
-                <Tooltip content={<EdgeTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-                <Bar dataKey="count" fill={GREEN} radius={[4, 4, 0, 0]} barSize={40} />
-              </BarChart>
-            </ResponsiveContainer>
-          </ChartWrapper>
+        <CardContent className="px-3 overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow className="hover:bg-transparent">
+              {['Fiyat bandı', 'İşlem', 'Win %', 'Net PnL', 'ROI'].map((h) => <TableHead key={h} className="text-[11px] font-semibold text-right first:text-left" style={{ color: TEXT_MUTED }}>{h}</TableHead>)}
+            </TableRow></TableHeader>
+            <TableBody>
+              {kpiData.roiByPriceBand.map((row) => (
+                <TableRow key={row.band}>
+                  <TableCell className="font-mono text-xs font-semibold" style={{ color: TEXT_PRIMARY }}>{row.band}</TableCell>
+                  <TableCell className="text-right text-xs tabular-nums">{fmtInt(row.trades)}</TableCell>
+                  <TableCell className="text-right text-xs tabular-nums">%{fmtNum(row.win_rate, 1)}</TableCell>
+                  <TableCell className="text-right text-xs font-mono tabular-nums" style={{ color: row.pnl >= 0 ? GREEN : RED }}>{fmtUsd(row.pnl)}</TableCell>
+                  <TableCell className="text-right text-xs font-mono font-semibold tabular-nums" style={{ color: row.roi >= 0 ? TEAL : RED }}>{row.roi >= 0 ? '+' : ''}%{fmtNum(row.roi, 1)}</TableCell>
+                </TableRow>
+              ))}
+              {kpiData.roiByPriceBand.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-xs py-6" style={{ color: TEXT_MUTED }}>Henüz kapanmış işlem yok</TableCell></TableRow>}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
+
     </div>
   );
 }
@@ -541,11 +646,11 @@ function OverviewTab({ kpiData, portfolioData, openPositions, activityFeed, edge
 function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: TradeHistoryEntry[]; historyStats: HistoryStats | null; totalPnl: number }) {
   const [filterResult, setFilterResult] = useState<"ALL" | "WIN" | "LOSS" | "PARTIAL_TP">("ALL");
   const [filterSide, setFilterSide] = useState<"ALL" | "YES" | "NO">("ALL");
-  const [filterExit, setFilterExit] = useState<"ALL" | "ST" | "TP" | "SL" | "TS" | "TD">("ALL");
+  const [filterExit, setFilterExit] = useState<"ALL" | "ST" | "TP" | "SL" | "TS" | "TD" | "RT" | "TL" | "CL" | "PT" | "SD">("ALL");
   const [filterDate, setFilterDate] = useState<string>("");
   const dateInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"date" | "pnl" | "edge">("date");
+  const [sortBy, setSortBy] = useState<"date" | "pnl">("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const filtered = useMemo(() => {
@@ -563,17 +668,23 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
     if (filterExit !== "ALL") data = data.filter((t) => t.exitType === filterExit);
     if (filterDate) {
       data = data.filter((t) => {
-        if (!t.closedAtISO) return false;
-        const iso = t.closedAtISO.slice(0, 10);
+        // Kapanmamis PT satirlarinda kapanis tarihi yoktur; acilis tarihi kullanilir.
+        const iso = ((t.closedAtISO || t.placedAtISO || "") as string).slice(0, 10);
         return iso === filterDate;
       });
     }
-    if (search) data = data.filter((t) => t.city.toLowerCase().includes(search.toLowerCase()) || t.strategy.toLowerCase().includes(search.toLowerCase()));
+    if (search) {
+      const q = search.toLowerCase().trim();
+      data = data.filter((t) =>
+        t.id.toLowerCase().includes(q) ||
+        t.city.toLowerCase().includes(q) ||
+        t.strategy.toLowerCase().includes(q)
+      );
+    }
     data.sort((a, b) => {
       let cmp = 0;
       if (sortBy === "date") cmp = 0;
       else if (sortBy === "pnl") cmp = a.pnl - b.pnl;
-      else if (sortBy === "edge") cmp = a.edge - b.edge;
       return sortDir === "desc" ? -cmp : cmp;
     });
     return data;
@@ -587,15 +698,10 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
   const filteredPnl = filtered.reduce((s, t) => s + t.pnl, 0);
   const winCount = filtered.filter((t) => t.result === "WIN").length;
 
-  function toggleSort(col: "date" | "pnl" | "edge") {
+  function toggleSort(col: "date" | "pnl") {
     if (sortBy === col) setSortDir((d) => (d === "desc" ? "asc" : "desc"));
     else { setSortBy(col); setSortDir("desc"); }
   }
-
-  const SortIcon = ({ col }: { col: "date" | "pnl" | "edge" }) => {
-    if (sortBy !== col) return <Minus className="h-3 w-3 inline ml-1 opacity-30" />;
-    return sortDir === "desc" ? <ArrowDownRight className="h-3 w-3 inline ml-1" /> : <ArrowUpRight className="h-3 w-3 inline ml-1" />;
-  };
 
   return (
     <div className="space-y-4">
@@ -635,7 +741,7 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
               <input
                 type="text"
-                placeholder="Şehir veya strateji ara..."
+                placeholder="Bet #, şehir veya strateji ara..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 className="w-full pl-8 pr-3 py-1.5 text-xs border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-teal-300"
@@ -676,10 +782,9 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
               {([
                 { value: "ALL" as const, label: "Tümü" },
                 { value: "ST" as const, label: "Settlement" },
-                { value: "TP" as const, label: "Take Profit" },
-                { value: "SL" as const, label: "Stop Loss" },
-                { value: "TS" as const, label: "Trailing Stop" },
-                { value: "TD" as const, label: "Time Decay" },
+                { value: "RT" as const, label: "Rotation" },
+                { value: "PT" as const, label: "Partial TP" },
+                { value: "SD" as const, label: "Sinyal" },
               ]).map((v) => (
                 <button key={v.value} onClick={() => setFilterExit(v.value)}
                   className="px-2.5 py-1 text-[11px] font-medium rounded-md border transition-colors"
@@ -760,14 +865,15 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("date")}>Tarih <SortIcon col="date" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>#</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("date")}>Tarih <TradeSortIcon col="date" sortBy={sortBy} sortDir={sortDir} /></TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Şehir</TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sıcaklık</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Taraf</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Giriş</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right" style={{ color: TEXT_MUTED }}>Çıkış</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL <SortIcon col="pnl" /></TableHead>
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("pnl")}>PnL <TradeSortIcon col="pnl" sortBy={sortBy} sortDir={sortDir} /></TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Sonuç</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-right cursor-pointer select-none" style={{ color: TEXT_MUTED }} onClick={() => toggleSort("edge")}>Edge <SortIcon col="edge" /></TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-center" style={{ color: TEXT_MUTED }}>Neden</TableHead>
                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Kapanış</TableHead>
                   </TableRow>
@@ -775,8 +881,10 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                 <TableBody>
                   {filtered.map((t) => (
                     <TableRow key={t.id}>
+                      <TableCell className="text-xs tabular-nums font-mono" style={{ color: TEXT_MUTED }}>{t.id}</TableCell>
                       <TableCell className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>{t.timestamp}</TableCell>
                       <TableCell className="font-medium text-sm" style={{ color: TEXT_PRIMARY }}>{t.city}</TableCell>
+                      <TableCell className="text-xs tabular-nums" style={{ color: TEXT_MUTED }}>{t.strikeTemp != null ? t.strikeTemp + "°C" : "—"}</TableCell>
                       <TableCell>
                         <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.side === "YES" ? TEAL_LIGHT : RED_LIGHT, color: t.side === "YES" ? TEAL : RED, border: `1px solid ${t.side === "YES" ? TEAL : RED}33` }}>{t.side}</Badge>
                       </TableCell>
@@ -785,20 +893,23 @@ function TradesTab({ tradeHistory, historyStats, totalPnl }: { tradeHistory: Tra
                       <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: t.pnl >= 0 ? TEAL : RED }}>{fmtUsd(t.pnl)}</TableCell>
                       <TableCell>
                         <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: t.result === "WIN" ? GREEN_LIGHT : t.result === "PARTIAL_TP" ? "#FFF7ED" : RED_LIGHT, color: t.result === "WIN" ? "#16A34A" : t.result === "PARTIAL_TP" ? "#D97706" : RED, border: `1px solid ${t.result === "WIN" ? "#16A34A" : t.result === "PARTIAL_TP" ? "#D97706" : RED}33` }}>
-                          {t.result === "WIN" ? "✓ WIN" : t.result === "PARTIAL_TP" ? "◐ PT" : "✗ LOSS"}
+                          {t.result === "WIN" ? "✓ WIN" : t.result === "PARTIAL_TP" ? "◐ PT" : t.result === "ROTATION" ? "↻ ROTATION" : "✗ LOSS"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>{t.edge}%</TableCell>
                       <TableCell className="text-center">
                         {(() => {
-                          const exitLabels: Record<string, { label: string; color: string; bg: string }> = {
-                            ST: { label: "ST", color: "#6B7280", bg: "#F3F4F6" },
-                            TP: { label: "TP", color: "#16A34A", bg: "#DCFCE7" },
-                            PT: { label: "PT", color: "#D97706", bg: "#FFF7ED" },
-                            SL: { label: "SL", color: "#DC2626", bg: "#FEE2E2" },
-                            TS: { label: "TS", color: "#D97706", bg: "#FEF3C7" },
-                            TD: { label: "TD", color: "#7C3AED", bg: "#EDE9FE" },
-                          };
+const exitLabels: Record<string, { label: string; color: string; bg: string }> = {
+  ST: { label: "ST", color: "#6B7280", bg: "#F3F4F6" },
+  TP: { label: "TP", color: "#16A34A", bg: "#DCFCE7" },
+  PT: { label: "PT", color: "#D97706", bg: "#FFF7ED" },
+  SL: { label: "SL", color: "#DC2626", bg: "#FEE2E2" },
+  TS: { label: "TS", color: "#D97706", bg: "#FEF3C7" },
+  TD: { label: "TD", color: "#7C3AED", bg: "#EDE9FE" },
+  SD: { label: "SD", color: "#0891B2", bg: "#CFFAFE" },
+  RT: { label: "RT", color: "#2563EB", bg: "#DBEAFE" },
+  TL: { label: "TL", color: "#9333EA", bg: "#F3E8FF" },
+  CL: { label: "CL", color: "#6B7280", bg: "#F3F4F6" },
+};
                           const e = exitLabels[t.exitType] || exitLabels.ST;
                           return (
                             <Badge className="text-[10px] font-bold px-2 py-0.5 h-5" style={{ backgroundColor: e.bg, color: e.color, border: `1px solid ${e.color}33` }}>
@@ -855,8 +966,8 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
                     </div>
                     <div>
                       <p className="text-[10px]" style={{ color: TEXT_MUTED }}>Brier Score</p>
-                      <p className="text-sm font-bold font-mono tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
-                        {m.brierScore.toFixed(3)}
+                      <p className="text-sm font-bold font-mono tabular-nums" style={{ color: m.brierScore != null && m.brierScore <= 0.16 ? TEAL : m.brierScore != null && m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
+                        {m.brierScore != null ? m.brierScore.toFixed(3) : "—"}
                       </p>
                     </div>
                   </div>
@@ -921,8 +1032,8 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
                           {m.name}
                         </div>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: m.brierScore <= 0.16 ? TEAL : m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
-                        {m.brierScore.toFixed(3)}
+                      <TableCell className="text-right font-mono text-sm font-semibold tabular-nums" style={{ color: m.brierScore != null && m.brierScore <= 0.16 ? TEAL : m.brierScore != null && m.brierScore <= 0.19 ? TEXT_PRIMARY : RED }}>
+                        {m.brierScore != null ? m.brierScore.toFixed(3) : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm tabular-nums" style={{ color: TEXT_PRIMARY }}>%{m.weight}</TableCell>
                       <TableCell>
@@ -950,7 +1061,7 @@ function ModelsTab({ modelScores }: { modelScores: ModelScore[] }) {
 // ==========================================
 // HEALTH TAB
 // ==========================================
-function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData?: KpiData }) {
+function HealthTab({ health, kpiData, edgeCalib }: { health: HealthResponse | null; kpiData?: KpiData; edgeCalib?: EdgeCalibBand[] }) {
   const pnlScrollRef = useRef<HTMLDivElement>(null);
   const h = health ?? {
     verdict: "healthy" as const,
@@ -958,7 +1069,9 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
     verdict_color: "#9CA3AF",
     activity_24h: { bets_opened: 0, pass_reasons: [], total_analyses: 0 },
     edge_distribution: { avg_net_edge_pct: 0, min_net_edge_pct: 0, max_net_edge_pct: 0, count: 0 },
-    summary_all: { total_settled: 0, wins: 0, losses: 0, win_rate_pct: 0, total_pnl: 0, total_stake: 0, roi_pct: 0, avg_net_edge_pct: 0 },
+    activity_events: [],
+    peak_watch: [],
+    summary_all: { total_settled: 0, wins: 0, losses: 0, win_rate_pct: 0, total_pnl: 0, total_stake: 0, roi_pct: 0, avg_net_edge_pct: 0, wins_by_exit: {}, losses_by_exit: {} },
     red_flags: [],
     daily_pnl_timeline: [],
   };
@@ -975,33 +1088,6 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
     warning: { bg: "rgba(245,158,11,0.12)", color: "#d97706", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
     info: { bg: "rgba(59,130,246,0.1)", color: "#3b82f6", icon: <Info className="h-3.5 w-3.5" /> },
   };
-
-  function PnlTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ value: number; payload?: { wins?: number; losses?: number; total?: number; stake?: number; win_rate?: number; roi?: number } }>; label?: string }) {
-    if (!active || !payload?.length) return null;
-    const p = payload[0].payload ?? {};
-    const total = p.total ?? 0;
-    const wins = p.wins ?? 0;
-    const losses = p.losses ?? 0;
-    const winRate = p.win_rate ?? 0;
-    const roi = p.roi ?? 0;
-    const stake = p.stake ?? 0;
-    return (
-      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg text-xs space-y-1">
-        <p className="font-medium text-gray-500 mb-1">{label}</p>
-        <p className="font-mono font-semibold" style={{ color: payload[0].value >= 0 ? TEAL : RED }}>
-          {fmtUsd(payload[0].value)} PnL
-        </p>
-        {total > 0 && (
-          <>
-            <p className="text-gray-400">{fmtInt(total)} işlem ({fmtInt(wins)}W / {fmtInt(losses)}L)</p>
-            <p className="text-gray-400">Win rate: %{winRate} &middot; ROI: %{roi}</p>
-            {stake > 0 && <p className="text-gray-400">Stake: ${stake.toFixed(2)}</p>}
-          </>
-        )}
-        {total === 0 && <p className="text-gray-400">İşlem yok</p>}
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -1047,8 +1133,8 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
 
             {/* Kazanan/Kaybeden Exit Type Donut Charts */}
             {(() => {
-              const exitColors: Record<string, string> = { TP: "#16A34A", SL: "#DC2626", TS: "#D97706", TD: "#7C3AED", ST: "#6B7280" };
-              const exitLabels: Record<string, string> = { TP: "Take Profit", SL: "Stop Loss", TS: "Trailing Stop", TD: "Time Decay", ST: "Settlement" };
+              const exitColors: Record<string, string> = { TP: "#16A34A", SL: "#DC2626", TS: "#D97706", TD: "#7C3AED", ST: "#6B7280", RT: "#2563EB", TL: "#9333EA", CL: "#6B7280" };
+              const exitLabels: Record<string, string> = { TP: "Take Profit", SL: "Stop Loss", TS: "Trailing Stop", TD: "Time Decay", ST: "Settlement", RT: "Rotation", TL: "Tie Loser", CL: "Closed" };
 
               function makePieData(src: Record<string, number>) {
                 return Object.entries(src)
@@ -1061,54 +1147,41 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
               const winTotal = winData.reduce((s, d) => s + d.value, 0);
               const lossTotal = lossData.reduce((s, d) => s + d.value, 0);
 
-              function DonutChart({ data, total, title, titleColor }: { data: { name: string; value: number; color: string }[]; total: number; title: string; titleColor: string }) {
-                if (total === 0) return null;
-                return (
-                  <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>{title}</p>
-                    <div className="flex items-center gap-3">
-                      <div className="shrink-0">
-                        <PieChart width={110} height={110}>
-                          <Pie data={data} cx="50%" cy="50%" innerRadius={30} outerRadius={48} paddingAngle={2} dataKey="value" strokeWidth={0}>
-                            {data.map((entry, i) => (
-                              <Cell key={i} fill={entry.color} />
-                            ))}
-                          </Pie>
-                        </PieChart>
-                      </div>
-                      <div className="flex-1 space-y-1">
-                        {data.map((d) => (
-                          <div key={d.name} className="flex items-center justify-between text-[11px]">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
-                              <span style={{ color: TEXT_PRIMARY }}>{d.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 tabular-nums" style={{ color: TEXT_MUTED }}>
-                              <span className="font-semibold" style={{ color: TEXT_PRIMARY }}>{fmtInt(d.value)}</span>
-                              <span className="text-[10px]">({total > 0 ? fmtNum((d.value / total) * 100, 1) : 0}%)</span>
-                            </div>
+              return (
+                <>
+                  <HealthDonutChart data={winData} total={winTotal} title="Kazanan Dağılımı" titleColor="#16A34A" />
+                  <HealthDonutChart data={lossData} total={lossTotal} title="Kaybeden Dağılımı" titleColor={RED} />
+                  {(edgeCalib ?? []).length > 0 && (
+                    <div className="mt-4 pt-3 border-t" style={{ borderColor: BORDER }}>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: TEXT_MUTED }}>
+                        Edge Kalibrasyonu (giris edge vs gerceklesen win)
+                      </p>
+                      <div className="space-y-1">
+                        {(edgeCalib ?? []).map((b) => (
+                          <div key={b.band} className="flex items-center justify-between text-[11px]">
+                            <span className="font-mono" style={{ color: TEXT_PRIMARY }}>{b.band}</span>
+                            <span style={{ color: TEXT_MUTED }}>
+                              {b.trades} islem · %{b.win_rate} win ·{" "}
+                              <span className="font-semibold" style={{ color: b.pnl >= 0 ? TEAL : RED }}>
+                                {b.pnl >= 0 ? "+" : ""}${b.pnl.toFixed(2)}
+                              </span>
+                            </span>
                           </div>
                         ))}
                       </div>
                     </div>
-                  </div>
-                );
-              }
-
-              return (
-                <>
-                  <DonutChart data={winData} total={winTotal} title="Kazanan Dağılımı" titleColor="#16A34A" />
-                  <DonutChart data={lossData} total={lossTotal} title="Kaybeden Dağılımı" titleColor={RED} />
+                  )}
                 </>
               );
             })()}
           </CardContent>
         </Card>
 
-        {/* 24h Activity — wider center */}
+        {/* Tum islemler ozeti — veri TUM zamanlar (api health settled_all filtreli
+            degil); etiket yaniltici olmasin. 2026-08-19 kullanici tespiti. */}
         <Card className="shadow-sm py-4 gap-3 lg:col-span-2" style={{ borderColor: BORDER }}>
           <CardHeader className="pb-0 pt-0 px-5">
-            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>24 Saatlik Aktivite</CardTitle>
+            <CardTitle className="text-sm font-semibold" style={{ color: TEXT_PRIMARY }}>Tum Islemler Ozeti</CardTitle>
           </CardHeader>
           <CardContent className="px-4">
             <div className="grid grid-cols-2 gap-2">
@@ -1139,11 +1212,58 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                   <div key={i} className="flex items-start gap-2 text-[11px] py-0.5 border-b last:border-0" style={{ borderColor: `${BORDER}60` }}>
                     <span className="tabular-nums shrink-0 pt-0.5 font-mono" style={{ color: TEXT_MUTED, fontSize: 10 }}>{pr.time ? new Date(pr.time).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) : "?"}</span>
                     <span style={{ color: TEXT_PRIMARY }} className="flex-1">{pr.reason}</span>
-                    <Badge className="text-[9px] px-1.5 py-0 h-4 font-mono shrink-0" style={{ backgroundColor: TEAL_LIGHT, color: TEAL }}>
-                      %{fmtNum(pr.edge_pct, 1)}
-                    </Badge>
                   </div>
                 ))
+              )}
+            </div>
+            {/* 2026-08-19: Peak Takibi — canli sicaklik + yon + kilit durumu */}
+            <div className="space-y-0.5 pt-1">
+              <p className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>
+                Peak Takibi (canli — yon: ↑ yukseliyor / ↓ dusuyor)
+              </p>
+              {(h.peak_watch ?? []).length === 0 ? (
+                <p className="text-xs py-2" style={{ color: TEXT_MUTED }}>Kayit yok</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-x-3">
+                  {(h.peak_watch ?? []).map((w: any, i: number) => (
+                    <div key={i} className="flex items-center gap-1 text-[15px] py-0.5 border-b last:border-0" style={{ borderColor: `${BORDER}60` }}>
+                      <span className="font-mono shrink-0" style={{ color: w.direction === "UP" ? RED : w.direction === "DOWN" ? TEAL : TEXT_MUTED }}>
+                        {w.direction === "UP" ? "↑" : w.direction === "DOWN" ? "↓" : "="}
+                      </span>
+                      <span className="font-semibold shrink-0" style={{ color: TEXT_PRIMARY }}>{w.city}</span>
+                      <span className="font-mono shrink-0" style={{ color: TEXT_PRIMARY }}>{w.cur?.toFixed?.(1) ?? w.cur}°C</span>
+                      <span className="shrink-0" style={{ color: w.status?.startsWith("zirve") ? RED : w.status?.startsWith("kilitli") ? "#f59e0b" : TEXT_MUTED }}>
+                        {w.status?.startsWith("zirve")
+                          ? `⚠️${w.status.replace("zirve asildi -> ", "")}`
+                          : w.status?.startsWith("kilitli")
+                            ? `🔒${w.status.replace("kilitli peak=", "")}`
+                            : w.status?.startsWith("kara liste")
+                              ? "🚫"
+                              : ""}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* 2026-08-19: Aktivite Akisi — peak bulundu / bet engellendi / hata */}
+            <div className="space-y-0.5 pt-1">
+              <p className="text-[12px] font-semibold uppercase tracking-wider" style={{ color: TEXT_MUTED }}>Aktivite Akışı (peak / bet / hata)</p>
+              {(h.activity_events ?? []).length === 0 ? (
+                <p className="text-xs py-2" style={{ color: TEXT_MUTED }}>Kayıt yok</p>
+              ) : (
+                (h.activity_events ?? []).map((ev: any, i: number) => {
+                  const color = ev.category === "error" ? RED : ev.category === "bet_opened" ? TEAL : ev.category === "peak_found" ? "#f59e0b" : TEXT_MUTED;
+                  const icon = ev.category === "error" ? "✕" : ev.category === "bet_opened" ? "✓" : ev.category === "bet_blocked" ? "⊘" : ev.category === "bet_closed" ? "✎" : "▲";
+                  return (
+                    <div key={i} className="flex items-start gap-2 text-[13px] py-0.5 border-b last:border-0" style={{ borderColor: `${BORDER}60` }}>
+                      <span className="tabular-nums shrink-0 pt-0.5 font-mono" style={{ color: TEXT_MUTED, fontSize: 12 }}>{ev.ts?.slice(11, 16) ?? "?"}</span>
+                      <span style={{ color }} className="shrink-0">{icon}</span>
+                      <span className="shrink-0 font-semibold" style={{ color: TEXT_PRIMARY }}>{ev.city ?? ""}</span>
+                      <span style={{ color: TEXT_MUTED }} className="flex-1">{ev.detail}</span>
+                    </div>
+                  );
+                })
               )}
             </div>
           </CardContent>
@@ -1256,7 +1376,7 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
                         <CartesianGrid strokeDasharray="3 3" stroke={BORDER} vertical={false} />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={{ stroke: BORDER }} tickLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
                         <YAxis tick={{ fontSize: 11, fill: TEXT_MUTED }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v}`} width={50} />
-                        <Tooltip content={<PnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
+                        <Tooltip content={<HealthPnlTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
                         <Bar dataKey="pnl" radius={[4, 4, 0, 0]} barSize={36}>
                           {h.daily_pnl_timeline.map((entry, i) => (
                             <Cell key={i} fill={entry.pnl >= 0 ? TEAL : RED} />
@@ -1317,9 +1437,10 @@ function HealthTab({ health, kpiData }: { health: HealthResponse | null; kpiData
           )}
         </CardContent>
       </Card>
+
     </div>
   );
-}
+};
 
 // ==========================================
 // MAIN DASHBOARD
@@ -1348,39 +1469,57 @@ export default function DashboardPage() {
     <div className="min-h-screen flex flex-col bg-gray-50/50 dark:bg-gray-900/50" style={{ fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* ---- HEADER ---- */}
       <header className="sticky top-0 z-50 bg-white dark:bg-gray-900 border-b" style={{ borderColor: BORDER }}>
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 sm:px-6 h-14">
-          <div className="flex items-center gap-3">
-            <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">Junbo</h1>
-            <div className="flex items-center gap-1.5">
-              {data.isLoading && !data.status ? (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin" style={{ color: TEXT_MUTED }} />
-                  <span className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Bağlanıyor...</span>
-                </>
-              ) : data.status?.is_running ? (
-                <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                  </span>
-                  <span className="text-xs font-medium text-green-600 dark:text-green-400">ÇALIŞIYOR</span>
-                </>
-              ) : (
-                <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400" />
-                  </span>
-                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">DURDURULDU</span>
-                </>
-              )}
+        <div className="flex items-center justify-between px-4 sm:px-6 h-12">
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-100">ASIAbot</h1>
+              <div className="flex items-center gap-1.5">
+                {data.isLoading && !data.status ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" style={{ color: TEXT_MUTED }} />
+                    <span className="text-xs font-medium" style={{ color: TEXT_MUTED }}>Bağlanıyor...</span>
+                  </>
+                ) : data.status?.is_running ? (
+                  <>
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                    </span>
+                    <span className="text-xs font-medium text-green-600 dark:text-green-400">Çalışıyor</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="relative flex h-2 w-2">
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-gray-400" />
+                    </span>
+                    <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Durduruldu</span>
+                  </>
+                )}
+              </div>
             </div>
+            <nav className="flex gap-0">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap"
+                  style={{
+                    borderColor: activeTab === tab.id ? TEAL : "transparent",
+                    color: activeTab === tab.id ? TEAL : TEXT_MUTED,
+                  }}
+                >
+                  {tab.icon}
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+          </div>
+          <div className="flex items-center gap-3">
             {data.error && (
               <Badge className="text-[10px] px-2 py-0.5 h-5" style={{ backgroundColor: RED_LIGHT, color: RED }}>
                 API Hatası
               </Badge>
             )}
-          </div>
-          <div className="flex items-center gap-2">
             {data.lastUpdated && (
               <span className="text-[10px] tabular-nums text-gray-500 dark:text-gray-400">
                 Son güncelleme: {data.lastUpdated.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
@@ -1405,30 +1544,8 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* ---- TAB NAVIGATION ---- */}
-      <nav className="bg-white dark:bg-gray-900 border-b sticky top-14 z-40" style={{ borderColor: BORDER }}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex gap-0 overflow-x-auto">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className="flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap"
-                style={{
-                  borderColor: activeTab === tab.id ? TEAL : "transparent",
-                  color: activeTab === tab.id ? TEAL : TEXT_MUTED,
-                }}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </nav>
-
       {/* ---- MAIN CONTENT ---- */}
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-6">
+      <main className="flex-1 w-full py-4">
         {activeTab === "overview" && (
           <OverviewTab
             isLoading={data.isLoading && !data.status}
@@ -1441,13 +1558,13 @@ export default function DashboardPage() {
         )}
         {activeTab === "trades" && <TradesTab tradeHistory={data.tradeHistory} historyStats={data.historyStats} totalPnl={data.historyStats?.total_pnl ?? 0} />}
         {activeTab === "models" && <ModelsTab modelScores={data.modelScores} />}
-        {activeTab === "health" && <HealthTab health={data.health} kpiData={data.kpiData} />}
+        {activeTab === "health" && <HealthTab health={data.health} kpiData={data.kpiData} edgeCalib={data.edgeCalib} />}
       </main>
 
       {/* ---- FOOTER ---- */}
       <footer className="mt-auto py-4 text-center">
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          Junbo — Polymarket Hava Ticaret Botu - SIA Modeli ile Otomatik İşlem
+          ASIAbot — Polymarket Hava Ticaret Botu - SIA Modeli ile Otomatik İşlem
         </p>
       </footer>
     </div>

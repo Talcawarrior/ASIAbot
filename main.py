@@ -13,6 +13,7 @@ import os
 import platform
 import signal
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 
@@ -114,7 +115,25 @@ def _kill_port_owner(port: int, host: str = "127.0.0.1") -> bool:
 
 
 def _ensure_port_free(port: int, host: str = "127.0.0.1") -> None:
-    """Ensure *port* is free before starting uvicorn. Kill stale processes."""
+    """Ensure *port* is free before starting uvicorn. Kill only STALE holders.
+
+    Onceki davranis portu tutani sorgusuz olduruyordu; iki supervisor ayni
+    anda dogurunca birbirini olduren sonsuz savas cikiyordu. Simdi: holder
+    saglikli yanit veriyorsa 10 dk sirayla beklenir, hala saglikliysa sessizce
+    cekilinir (exit 0). Olu holder varsa temizlenir.
+    """
+    import ctypes as _ct
+
+    _held = False
+    try:
+        _k32 = _ct.windll.kernel32
+        _h = _k32.CreateMutexW(None, 1, "ASIAbotBotSingleton")
+        _held = _h != 0 and _k32.GetLastError() != 183  # 183 = zaten var
+    except Exception:
+        _held = False
+    if not _held:
+        logger.info("Baska canli bot instance var - cekiliniliyor")
+        sys.exit(0)
     if _kill_port_owner(port, host):
         logger.info("Port %d cleared â€” stale process removed", port)
 

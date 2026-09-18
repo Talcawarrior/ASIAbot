@@ -1,4 +1,4 @@
-﻿"""asiabot Bot Watchdog - Bot'u izler, Ã§Ã¶kerse yeniden baÅŸlatÄ±r.
+"""asiabot Bot Watchdog - Bot'u izler, Ã§Ã¶kerse yeniden baÅŸlatÄ±r.
 
 Bu script baÄŸÄ±msÄ±z Ã§alÄ±ÅŸÄ±r ve bot'u izler.
 Bot 2 dakika yanÄ±t vermezse otomatik olarak yeniden baÅŸlatÄ±r.
@@ -17,7 +17,7 @@ import socket
 from datetime import datetime
 
 BOT_DIR = os.path.dirname(os.path.abspath(__file__))
-BOT_URL = "http://127.0.0.1:8091"
+BOT_URL = "http://127.0.0.1:8092"
 CHECK_INTERVAL = 30  # saniye
 TIMEOUT = 120  # 2 dakika yanÄ±t yoksa restart
 
@@ -35,7 +35,7 @@ def is_bot_running() -> bool:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3)
-        result = sock.connect_ex(('127.0.0.1', 8091))
+        result = sock.connect_ex(("127.0.0.1", 8092))
         sock.close()
         return result == 0
     except Exception:
@@ -89,6 +89,7 @@ def watchdog_loop():
                 # Bot health check (HTTP)
                 try:
                     import urllib.request
+
                     req = urllib.request.urlopen(f"{BOT_URL}/api/status", timeout=5)
                     if req.status == 200:
                         log("Bot OK")
@@ -119,5 +120,3 @@ def watchdog_loop():
 
 if __name__ == "__main__":
     watchdog_loop()
-
-
